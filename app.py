@@ -4,15 +4,11 @@ import os
 
 app = Flask(__name__)
 
-# 首页
 @app.route("/")
 def index():
     return render_template("index.html")
 
 
-# =========================
-# DeepSeek 真流式接口
-# =========================
 @app.route("/chat_stream")
 def chat_stream():
 
@@ -22,14 +18,7 @@ def chat_stream():
         for chunk in ask_ai_stream(text):
             yield chunk
 
-    return Response(
-        generate(),
-        mimetype="text/plain",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no"
-        }
-    )
+    return Response(generate(), mimetype="text/plain")
 
 
 if __name__ == "__main__":
