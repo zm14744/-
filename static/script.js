@@ -1,8 +1,10 @@
 let sessions = [];
 let currentId = null;
 
+// =======================
+// 打字机
+// =======================
 function typeWriter(el, text, speed = 10) {
-
     let i = 0;
     el.innerText = "";
 
@@ -17,7 +19,30 @@ function typeWriter(el, text, speed = 10) {
     run();
 }
 
-// 新对话（默认名）
+// =======================
+// 本地存储
+// =======================
+function saveSessions() {
+    localStorage.setItem("sessions", JSON.stringify(sessions));
+}
+
+// =======================
+// 初始化加载
+// =======================
+function loadSessions() {
+    const data = localStorage.getItem("sessions");
+
+    if (data) {
+        sessions = JSON.parse(data);
+        currentId = sessions[0]?.id || null;
+    } else {
+        newChat();
+    }
+}
+
+// =======================
+// 新对话
+// =======================
 function newChat() {
     const id = Date.now();
 
@@ -28,15 +53,20 @@ function newChat() {
     });
 
     currentId = id;
+    saveSessions();
     renderAll();
 }
 
+// =======================
 // 当前会话
+// =======================
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
-// 发送（回车修复）
+// =======================
+// 发送消息
+// =======================
 function send() {
 
     const input = document.getElementById("text");
@@ -49,7 +79,9 @@ function send() {
 
     const s = getCurrent();
 
+    // 用户消息
     s.messages.push({ role: "user", text });
+    saveSessions();
 
     renderChat();
 
@@ -57,22 +89,32 @@ function send() {
         .then(r => r.text())
         .then(res => {
 
-            s.messages.push({ role: "ai", text: res });
+            s.messages.push({
+                role: "ai",
+                text: res,
+                typed: false
+            });
+
+            saveSessions();
 
             renderChat();
             renderInfo();
         });
 }
 
-// 回车只在输入框触发
-document.getElementById("text").addEventListener("keydown", function(e){
+// =======================
+// 回车发送
+// =======================
+document.getElementById("text").addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
         e.preventDefault();
         send();
     }
 });
 
+// =======================
 // 渲染聊天
+// =======================
 function renderChat() {
 
     const chat = document.getElementById("chat");
@@ -82,24 +124,36 @@ function renderChat() {
     if (!s) return;
 
     s.messages.forEach(m => {
+
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
-        if (m.role === "ai") {
-            typeWriter(div, m.text);
-        } else {
+
+        if (m.role === "user") {
             div.innerText = m.text;
+        } else {
+
+            if (!m.typed) {
+                typeWriter(div, m.text);
+                m.typed = true;
+            } else {
+                div.innerText = m.text;
+            }
         }
+
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
 
-    if (window.MathJax){
+    // ⭐MathJax
+    if (window.MathJax) {
         MathJax.typeset();
     }
 }
 
-// 渲染会话列表（双击改名）
+// =======================
+// 会话列表
+// =======================
 function renderSessions() {
 
     const box = document.getElementById("sessions");
@@ -111,28 +165,35 @@ function renderSessions() {
         div.className = "session";
         div.innerText = s.name;
 
+        // 选中会话
         div.onclick = () => {
             currentId = s.id;
             renderChat();
             renderInfo();
         };
 
-        // 双击改名
+        // 重命名
         div.ondblclick = () => {
             const name = prompt("修改名称：", s.name);
-            if (name) {
-                s.name = name;
-                renderSessions();
-            }
+            if (!name) return;
+
+            s.name = name;
+            saveSessions();
+            renderSessions();
         };
 
         // 删除
         const del = document.createElement("button");
         del.className = "del";
+
         del.onclick = (e) => {
             e.stopPropagation();
+
             sessions = sessions.filter(x => x.id !== s.id);
+
             if (currentId === s.id) currentId = null;
+
+            saveSessions();
             renderAll();
         };
 
@@ -141,48 +202,28 @@ function renderSessions() {
     });
 }
 
-// OCR（优化体验，不自动触发）
-/*function ocr() {
-
-    const file = document.getElementById("img").files[0];
-    if (!file) return;
-
-    document.getElementById("ocrResult").innerText = "识别中...";
-
-    const form = new FormData();
-    form.append("file", file);
-
-    fetch("/ocr", {
-        method: "POST",
-        body: form
-    })
-    .then(r => r.json())
-    .then(d => {
-        document.getElementById("ocrResult").innerText = d.text || "无结果";
-    });
-}*/
-
-// 显示文件名
-function showFileName() {
-    const file = document.getElementById("img").files[0];
-    if (file) {
-        document.getElementById("fileName").innerText = file.name;
-    }
-}
-
-// 信息
+// =======================
+// 信息栏
+// =======================
 function renderInfo() {
     const s = getCurrent();
     if (!s) return;
+
     document.getElementById("info").innerText =
         "名称: " + s.name + "\n消息数: " + s.messages.length;
 }
 
-// 初始化
+// =======================
+// 全局刷新
+// =======================
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-newChat();
+// =======================
+// 启动
+// =======================
+loadSessions();
+renderAll();
