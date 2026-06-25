@@ -2,23 +2,7 @@ let sessions = [];
 let currentId = null;
 
 // =========================
-// 文本清洗（解决 #### / ** / \{ \} 问题）
-// =========================
-function formatText(text) {
-
-    return text
-        // Markdown标题 ####
-        .replace(/#{1,6}\s?/g, "")
-
-        // 加粗
-        .replace(/\*\*/g, "")
-
-        // 多余反斜杠（但保留 LaTeX 结构）
-        .replace(/\\(?![a-zA-Z])/g, "")
-
-        .replace(/\r/g, "");
-}
-
+// 新对话
 // =========================
 function newChat() {
 
@@ -35,6 +19,7 @@ function newChat() {
     renderAll();
 }
 
+// =========================
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
@@ -74,7 +59,7 @@ function send() {
                     aiMsg.text += decoder.decode(value);
 
                     renderChat();
-                    renderInfo(); // ✅ 实时更新右侧
+                    renderInfo(); // ✔ 右侧实时更新
 
                     return read();
                 });
@@ -85,12 +70,11 @@ function send() {
 }
 
 // =========================
-// 回车发送
+// 回车
+// =========================
 document.addEventListener("DOMContentLoaded", () => {
 
-    const input = document.getElementById("text");
-
-    input.addEventListener("keydown", function (e) {
+    document.getElementById("text").addEventListener("keydown", function (e) {
         if (e.key === "Enter") {
             e.preventDefault();
             send();
@@ -99,7 +83,19 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // =========================
+// ⭐ 核心：格式化（修 #### / **，保 LaTeX）
+// =========================
+function formatText(text) {
+
+    return text
+        .replace(/#{1,6}\s?/g, "")   // markdown标题
+        .replace(/\*\*/g, "")       // 加粗
+        .replace(/\r/g, "");
+}
+
+// =========================
 // 渲染聊天
+// =========================
 function renderChat() {
 
     const chat = document.getElementById("chat");
@@ -113,15 +109,15 @@ function renderChat() {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
 
-        // ✅ 修复 Markdown + 保留 LaTeX
-        div.innerText = formatText(m.text);
+        // ⭐ 必须 innerHTML（否则数学无法渲染）
+        div.innerHTML = formatText(m.text);
 
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
 
-    // MathJax 渲染
+    // ⭐ MathJax渲染
     if (window.MathJax) {
         MathJax.typeset();
     }
@@ -129,6 +125,7 @@ function renderChat() {
 
 // =========================
 // 左侧会话
+// =========================
 function renderSessions() {
 
     const box = document.getElementById("sessions");
@@ -158,7 +155,6 @@ function renderSessions() {
 
         del.onclick = (e) => {
             e.stopPropagation();
-
             sessions = sessions.filter(x => x.id !== s.id);
 
             if (currentId === s.id) currentId = null;
@@ -172,7 +168,8 @@ function renderSessions() {
 }
 
 // =========================
-// 右侧信息（实时）
+// 右侧信息
+// =========================
 function renderInfo() {
 
     const s = getCurrent();
@@ -191,4 +188,5 @@ function renderAll() {
     renderInfo();
 }
 
+// =========================
 newChat();
