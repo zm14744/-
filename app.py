@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, Response, jsonify
-from ai import ask_ai_stream
+from ai import ask_ai
 #from ocr import ocr_text
 
 app = Flask(__name__)
@@ -23,7 +23,7 @@ def chat_stream():
     text = request.args.get("text", "")
 
     def generate():
-        for chunk in ask_ai_stream(text):
+        for chunk in ask_ai(text):
             yield chunk
 
     return Response(generate(), mimetype="text/plain")
