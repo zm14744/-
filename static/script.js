@@ -1,6 +1,25 @@
 let sessions = [];
 let currentId = null;
 
+// =========================
+// 文本清洗（解决 #### / ** / \{ \} 问题）
+// =========================
+function formatText(text) {
+
+    return text
+        // Markdown标题 ####
+        .replace(/#{1,6}\s?/g, "")
+
+        // 加粗
+        .replace(/\*\*/g, "")
+
+        // 多余反斜杠（但保留 LaTeX 结构）
+        .replace(/\\(?![a-zA-Z])/g, "")
+
+        .replace(/\r/g, "");
+}
+
+// =========================
 function newChat() {
 
     const id = Date.now();
@@ -20,6 +39,8 @@ function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
+// =========================
+// 发送（流式）
 function send() {
 
     const input = document.getElementById("text");
@@ -53,7 +74,7 @@ function send() {
                     aiMsg.text += decoder.decode(value);
 
                     renderChat();
-                    renderInfo(); // ✅ 实时更新右侧信息
+                    renderInfo(); // ✅ 实时更新右侧
 
                     return read();
                 });
@@ -63,6 +84,8 @@ function send() {
         });
 }
 
+// =========================
+// 回车发送
 document.addEventListener("DOMContentLoaded", () => {
 
     const input = document.getElementById("text");
@@ -73,9 +96,10 @@ document.addEventListener("DOMContentLoaded", () => {
             send();
         }
     });
-
 });
 
+// =========================
+// 渲染聊天
 function renderChat() {
 
     const chat = document.getElementById("chat");
@@ -89,19 +113,22 @@ function renderChat() {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
 
-        div.innerText = m.text;
+        // ✅ 修复 Markdown + 保留 LaTeX
+        div.innerText = formatText(m.text);
 
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
 
-    // ✅ MathJax渲染
+    // MathJax 渲染
     if (window.MathJax) {
         MathJax.typeset();
     }
 }
 
+// =========================
+// 左侧会话
 function renderSessions() {
 
     const box = document.getElementById("sessions");
@@ -144,6 +171,8 @@ function renderSessions() {
     });
 }
 
+// =========================
+// 右侧信息（实时）
 function renderInfo() {
 
     const s = getCurrent();
@@ -155,6 +184,7 @@ function renderInfo() {
         "名称: " + s.name + "\n消息数: " + s.messages.length;
 }
 
+// =========================
 function renderAll() {
     renderSessions();
     renderChat();
