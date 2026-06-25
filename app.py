@@ -18,10 +18,15 @@ def ocr():
 
 # AI流式接口
 @app.route("/chat_stream")
-def chat():
+def chat_stream():
 
-    text = request.args.get("text")
-    return text
+    text = request.args.get("text", "")
+
+    def generate():
+        for chunk in ask_ai_stream(text):
+            yield chunk
+
+    return Response(generate(), mimetype="text/plain")
 
 
 if __name__ == "__main__":
