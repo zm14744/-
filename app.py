@@ -10,11 +10,11 @@ def index():
     return render_template("index.html")
 
 # OCR接口
-@app.route("/ocr", methods=["POST"])
+"""@app.route("/ocr", methods=["POST"])
 def ocr():
     file = request.files["file"]
     text = ocr_text(file)
-    return jsonify({"text": text})
+    return jsonify({"text": text})"""
 
 # AI流式接口
 @app.route("/chat_stream")
