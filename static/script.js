@@ -1,6 +1,22 @@
 let sessions = [];
 let currentId = null;
 
+function typeWriter(el, text, speed = 10) {
+
+    let i = 0;
+    el.innerText = "";
+
+    function run() {
+        if (i < text.length) {
+            el.innerText += text[i];
+            i++;
+            setTimeout(run, speed);
+        }
+    }
+
+    run();
+}
+
 // 新对话（默认名）
 function newChat() {
     const id = Date.now();
@@ -68,11 +84,19 @@ function renderChat() {
     s.messages.forEach(m => {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
-        div.innerText = m.text;
+        if (m.role === "ai") {
+            typeWriter(div, m.text);
+        } else {
+            div.innerText = m.text;
+        }
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
+
+    if (window.MathJax){
+        MathJax.typeset();
+    }
 }
 
 // 渲染会话列表（双击改名）
