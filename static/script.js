@@ -118,7 +118,7 @@ function renderSessions() {
 }
 
 // OCR（优化体验，不自动触发）
-function ocr() {
+/*function ocr() {
 
     const file = document.getElementById("img").files[0];
     if (!file) return;
@@ -136,7 +136,7 @@ function ocr() {
     .then(d => {
         document.getElementById("ocrResult").innerText = d.text || "无结果";
     });
-}
+}*/
 
 // 显示文件名
 function showFileName() {
