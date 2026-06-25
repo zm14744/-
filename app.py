@@ -18,9 +18,6 @@ def chat_stream():
 
     text = request.args.get("text", "")
 
-    if not text:
-        return "请输入内容"
-
     def generate():
         for chunk in ask_ai_stream(text):
             yield chunk
@@ -33,16 +30,6 @@ def chat_stream():
             "X-Accel-Buffering": "no"
         }
     )
-
-
-# OCR（保留，不影响）
-"""
-@app.route("/ocr", methods=["POST"])
-def ocr():
-    file = request.files["file"]
-    text = ocr_text(file)
-    return jsonify({"text": text})
-"""
 
 
 if __name__ == "__main__":
