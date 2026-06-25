@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, Response, jsonify
 from ai import ask_ai_stream
-from ocr import ocr_text
+#from ocr import ocr_text
 
 app = Flask(__name__)
 
