@@ -1,4 +1,5 @@
 flask
+requests
 easyocr
 numpy
 opencv-python
