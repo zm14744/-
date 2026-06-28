@@ -37,28 +37,31 @@ body {
 }
 
 .session {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: 10px;
     background: #111827;
     border-radius: 8px;
     margin-bottom: 8px;
+    cursor: default;
+}
+
+.session span {
+    flex: 1;
     cursor: pointer;
-    position: relative;
 }
 
-.session:hover {
-    background: #1f2937;
-}
-
-.del {
-    position: absolute;
-    right: 8px;
-    top: 8px;
-    width: 18px;
-    height: 18px;
+.session .del {
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: #ef4444;
     border: none;
+    color: white;
+    font-size: 12px;
     cursor: pointer;
+    flex-shrink: 0;
 }
 
 /* 中间 */
@@ -80,6 +83,7 @@ body {
     margin: 6px;
     border-radius: 10px;
     white-space: pre-wrap;
+    word-wrap: break-word;
 }
 
 .user {
@@ -90,6 +94,14 @@ body {
 .ai {
     background: #1f2937;
 }
+
+/* Markdown 内容样式 */
+.ai h1, .ai h2, .ai h3 { margin: 8px 0; font-weight: bold; }
+.ai ul, .ai ol { padding-left: 20px; margin: 6px 0; }
+.ai code { background: #2d3748; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+.ai pre { background: #1a202c; padding: 10px; border-radius: 8px; overflow-x: auto; }
+.ai strong { font-weight: bold; color: #fbbf24; }
+.ai em { font-style: italic; }
 
 /* 输入 */
 .input {
@@ -114,11 +126,12 @@ input {
 .small {
     font-size: 13px;
     color: #aaa;
+    white-space: pre-wrap;
 }
 </style>
 
 <!-- ========================= -->
-<!-- MathJax（必须） -->
+<!-- MathJax -->
 <!-- ========================= -->
 <script>
 window.MathJax = {
@@ -128,6 +141,11 @@ window.MathJax = {
 };
 </script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+<!-- ========================= -->
+<!-- Markdown 渲染库 -->
+<!-- ========================= -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 </head>
 
