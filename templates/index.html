@@ -38,23 +38,31 @@ body { margin:0; font-family:Arial, sans-serif; background:#0f172a; color:white;
 .user { background:#3b82f6; margin-left:auto; }
 .ai { background:#1f2937; }
 
-/* ===== 关键修复：强制代码块/预格式化文本换行 ===== */
+/* ===== 修复：强制代码块换行 ===== */
 .ai pre, .ai code {
-  white-space: pre-wrap !important;   /* 保留空格但允许换行 */
+  white-space: pre-wrap !important;
   word-break: break-word !important;
   max-width: 100% !important;
-  overflow-x: auto;                   /* 若实在过长，横向滚动而非溢出 */
 }
-.ai pre {
-  background: #1a202c;
-  padding: 10px;
-  border-radius: 8px;
+.ai pre { background:#1a202c; padding:10px; border-radius:8px; overflow-x:auto; }
+.ai code { background:#2d3748; padding:2px 6px; border-radius:4px; font-family:monospace; }
+
+/* ===== 修复：长公式横向滚动（不撑破容器） ===== */
+.ai .MathJax, .ai .MathJax_SVG, .ai .MathJax_Display {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  max-width: 100% !important;
+  display: block !important;
 }
-.ai code {
-  background: #2d3748;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: monospace;
+/* 对块级公式（display模式）增加滚动 */
+.ai .MathJax_Display {
+  display: block !important;
+  white-space: nowrap; /* 保持公式一行，横向滚动 */
+}
+/* 对于内部 SVG，强制宽度限制 */
+.ai .MathJax svg {
+  max-width: 100% !important;
+  height: auto !important;
 }
 
 /* 其他 Markdown 样式 */
@@ -103,7 +111,7 @@ window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$','$']] } };
   </div>
 
   <div class="right">
-    <div style="margin-bottom:8px;">📋 会话信息</div>
+    <div style="margin-bottom:8px;">会话信息</div>
     <div id="info" class="small"></div>
   </div>
 </div>
