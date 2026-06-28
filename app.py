@@ -5,13 +5,14 @@ app = Flask(__name__)
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    text = request.json.get("text", "")
+    data = request.json
+    text = data.get("text", "")
 
-    # 一次性返回完整结果
-    result = ask_ai(text)
+    # ⚠️ 一次性返回（稳定）
+    reply = ask_ai(text)
 
-    return jsonify({"text": result})
+    return jsonify({"reply": reply})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(debug=True)
