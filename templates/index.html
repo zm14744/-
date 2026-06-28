@@ -21,16 +21,26 @@ body { margin:0; font-family:Arial, sans-serif; background:#0f172a; color:white;
 .session:hover { background:#1f2937; }
 .session span { flex:1; cursor:pointer; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* 删除按钮美化 */
+/* 删除按钮：纯红色圆点，无文字 */
 .session .del {
-  width:24px; height:24px; border-radius:50%;
-  border:none; background:#374151; color:#aaa;
-  font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center;
-  transition: all .2s;
-  flex-shrink:0; margin-left:6px;
+  width:20px;
+  height:20px;
+  border-radius:50%;
+  border:none;
+  background:#ef4444;
+  cursor:pointer;
+  padding:0;
+  transition: transform 0.2s, box-shadow 0.2s;
+  flex-shrink:0;
+  margin-left:8px;
 }
-.session .del:hover { background:#ef4444; color:white; transform:scale(1.1); }
-.session .del:active { transform:scale(0.9); }
+.session .del:hover {
+  transform:scale(1.2);
+  box-shadow: 0 0 8px rgba(239,68,68,0.6);
+}
+.session .del:active {
+  transform:scale(0.9);
+}
 
 /* 中间 */
 .center { flex:1; display:flex; flex-direction:column; min-width:0; }
