@@ -1,27 +1,37 @@
 // ===== 配置 =====
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// 将 $...$ 转换为 \(...\)，$$...$$ 转换为 \[...\]
-function convertMathDelimiters(text) {
-    // 先处理块级公式 $$...$$
-    text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        return '\\[' + content + '\\]';
-    });
-    // 再处理行内公式 $...$
-    text = text.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        return '\\(' + content + '\\)';
-    });
-    return text;
-}
-
-// 修复常见错误 LaTeX 命令
+// 修复常见错误命令
 function fixCommonLaTeXErrors(text) {
     return text.replace(/\\textrightarrow/g, '\\rightarrow')
                .replace(/\\textleftarrow/g, '\\leftarrow')
                .replace(/\\textbackslash/g, '\\backslash');
 }
 
-// 保护公式内的下划线（在 \(...\) 内）
+// 增强版：检测任何 LaTeX 命令或数学环境，若没有美元符号则用 $...$ 包裹
+function ensureMathDelimiters(text) {
+    if (!text || typeof text !== 'string') return text;
+    // 如果已经包含 $ 或 \( 则跳过
+    if (/\$/.test(text) || /\\\(/.test(text) || /\\\[/.test(text)) return text;
+    // 检测常见 LaTeX 命令或数学符号
+    const hasLatex = /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
+    if (!hasLatex) return text;
+    // 如果包含换行，可能为块级公式，用 $$，否则用 $
+    if (text.includes('\n')) {
+        return '$$' + text + '$$';
+    } else {
+        return '$' + text + '$';
+    }
+}
+
+// 将 $ 转换为 \( 和 \[
+function convertMathDelimiters(text) {
+    text = text.replace(/\$\$([\s\S]*?)\$\$/g, '\\[' + '$1' + '\\]');
+    text = text.replace(/\$([^\$]*?)\$/g, '\\(' + '$1' + '\\)');
+    return text;
+}
+
+// 保护公式内的下划线
 function escapeUnderscoresInMath(text) {
     return text.replace(/\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g, (match, inline, display) => {
         let content = inline || display;
@@ -30,17 +40,18 @@ function escapeUnderscoresInMath(text) {
     });
 }
 
-// 完整预处理流水线
+// 完整预处理流水线（带日志）
 function prepareMathContent(text) {
+    console.log('原始内容:', text);
     let processed = fixCommonLaTeXErrors(text);
-    if (/\$/.test(processed)) {
-        processed = convertMathDelimiters(processed);
-    }
+    processed = ensureMathDelimiters(processed);
+    processed = convertMathDelimiters(processed);
     processed = escapeUnderscoresInMath(processed);
+    console.log('处理后内容:', processed);
     return processed;
 }
 
-// ===== 以下为原有状态和逻辑（未改动，但确认所有渲染调用 prepareMathContent）=====
+// ===== 以下为原有状态和逻辑（完全保留）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
