@@ -1,43 +1,30 @@
-import requests
+from flask import Flask, request, jsonify, render_template
+from ai import ask_ai
+import traceback
 
-API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86" 
-API_URL = "https://api.deepseek.com/v1/chat/completions"
+app = Flask(__name__)
 
-SYSTEM_PROMPT = """你是离散数学专业助手，回答要结构清晰且排版优美。
+@app.route("/")
+def index():
+    return render_template("index.html")
 
-**重要规则**：
-- 所有数学公式必须用 `$...$` 包裹（行内）或 `$$...$$` 包裹（独立成行）。
-- 矩阵、行列式、大括号等复杂结构必须用 `\\begin{...} ... \\end{...}` 并整体置于 `$$...$$` 中。
-- 示例：
-  - 子集关系：$C \\subseteq V$
-  - 二项式：$\\binom{n}{k}$
-  - 矩阵：$$\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$$
-- 禁止返回裸 LaTeX 命令（未用 `$` 包裹）。"""
-
-def ask_ai(text):
+@app.route("/chat", methods=["POST"])
+def chat():
     try:
-        headers = {
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "model": "deepseek-chat",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text}
-            ]
-        }
-        res = requests.post(API_URL, headers=headers, json=data, timeout=30)
-        res.raise_for_status()
-        result = res.json()
-        if "error" in result:
-            return f"❌ API 错误: {result['error'].get('message', '未知错误')}"
-        return result["choices"][0]["message"]["content"]
-    except requests.exceptions.Timeout:
-        return "❌ 请求超时，请稍后再试"
-    except requests.exceptions.RequestException as e:
-        return f"❌ 网络请求失败: {str(e)}"
-    except (KeyError, IndexError, ValueError) as e:
-        return f"❌ 响应解析失败: {str(e)}"
+        data = request.get_json()
+        if not data:
+            return jsonify({"reply": "⚠️ 请求缺少 JSON 数据"}), 400
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"reply": "⚠️ 请输入内容"}), 400
+
+        reply = ask_ai(text)
+        return jsonify({"reply": reply})
+
     except Exception as e:
-        return f"❌ 未知错误: {str(e)}"
+        # 打印错误到日志（Render 会捕获）
+        print("❌ /chat 路由错误:", traceback.format_exc())
+        return jsonify({"reply": f"❌ 服务器内部错误: {str(e)}"}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True)
