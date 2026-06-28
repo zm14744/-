@@ -7,23 +7,20 @@ client = OpenAI(
 
 SYSTEM_PROMPT = """
 你是离散数学专精AI助手。
-要求：
-1. 回答集合论、关系、函数、图论、逻辑、组合数学
-2. 使用规范数学表达
-3. 必要时使用LaTeX
+回答必须结构清晰：
+定义 → 推导 → 结论。
 """
 
-def ask_ai_stream(text):
 
-    stream = client.chat.completions.create(
+def ask_ai(text):
+
+    response = client.chat.completions.create(
         model="deepseek-chat",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": text}
         ],
-        stream=True
+        stream=False
     )
 
-    for chunk in stream:
-        if chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+    return response.choices[0].message.content 
