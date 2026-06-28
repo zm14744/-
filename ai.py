@@ -1,9 +1,12 @@
 import requests
 
-API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"
+API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"   # 请替换
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-SYSTEM_PROMPT = "你是离散数学专业助手，回答要结构清晰。"
+# ⭐ 关键修改：增加公式包裹要求
+SYSTEM_PROMPT = """你是离散数学专业助手，回答要结构清晰。
+所有数学公式请使用 $...$ 包裹行内公式，使用 $$...$$ 包裹行间公式。
+例如：集合包含关系应写为 $C \\subseteq V$，二项式应写为 $\\binom{n}{k}$。"""
 
 def ask_ai(text):
     try:
@@ -35,4 +38,3 @@ def ask_ai(text):
         return f"❌ 响应解析失败: {str(e)}"
     except Exception as e:
         return f"❌ 未知错误: {str(e)}"
-
