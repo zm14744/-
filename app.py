@@ -1,11 +1,11 @@
-from flask import Flask, request, jsonify, render_template  # 新增 render_template
+from flask import Flask, request, jsonify, render_template
 from ai import ask_ai
 
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return render_template("index.html")   # 渲染首页
+    return render_template("index.html")
 
 @app.route("/chat", methods=["POST"])
 def chat():
