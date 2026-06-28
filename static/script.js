@@ -73,12 +73,22 @@ function send() {
     input.value = "";   // 清空输入框
     enableInput(false);
 
+    // ====== 修改的 fetch 部分 ======
     fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
     })
-    .then(res => res.json())
+    .then(res => {
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+            // 后端返回了 HTML（错误页面），读取内容以便报错
+            return res.text().then(html => {
+                throw new Error(`服务器返回了 HTML（状态 ${res.status}），请检查后端日志。`);
+            });
+        }
+        return res.json();
+    })
     .then(data => {
         const reply = data.reply || "（未收到回复）";
         startTyping(reply, s);
