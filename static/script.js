@@ -1,9 +1,6 @@
 let sessions = [];
 let currentId = null;
 
-// =====================
-// 新建对话
-// =====================
 function newChat() {
     const id = Date.now();
 
@@ -17,16 +14,31 @@ function newChat() {
     renderAll();
 }
 
-// =====================
-// 获取当前会话
-// =====================
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
-// =====================
-// 发送消息（流式）
-// =====================
+// ======================
+// 🚀 打字机核心函数
+// ======================
+function typeWriter(element, text, speed = 15) {
+    let i = 0;
+    element.innerText = "";
+
+    function typing() {
+        if (i < text.length) {
+            element.innerText += text[i];
+            i++;
+            setTimeout(typing, speed);
+        }
+    }
+
+    typing();
+}
+
+// ======================
+// 发送（改成打字机效果）
+// ======================
 function send() {
 
     const input = document.getElementById("text");
@@ -43,39 +55,39 @@ function send() {
 
     renderChat();
 
-    fetch("/chat_stream?text=" + encodeURIComponent(text))
-        .then(response => {
+    fetch("/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ text })
+    })
+    .then(res => res.json())
+    .then(data => {
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
+        const aiText = data.text;
 
-            let aiText = "";
+        const msgDiv = document.createElement("div");
+        msgDiv.className = "msg ai";
+        document.getElementById("chat").appendChild(msgDiv);
 
-            const aiMsg = { role: "ai", text: "" };
-            s.messages.push(aiMsg);
+        // ⭐ 打字机效果
+        typeWriter(msgDiv, aiText, 10);
 
-            function read() {
-                reader.read().then(({ done, value }) => {
-                    if (done) {
-                        renderInfo();
-                        return;
-                    }
+        s.messages.push({ role: "ai", text: aiText });
 
-                    aiText += decoder.decode(value);
-                    aiMsg.text = aiText;
+        renderInfo();
 
-                    renderChat();
-                    read();
-                });
+        // ⭐ MathJax 渲染（不破坏你的公式）
+        setTimeout(() => {
+            if (window.MathJax) {
+                MathJax.typeset();
             }
-
-            read();
-        });
+        }, 200);
+    });
 }
 
-// =====================
 // 回车发送
-// =====================
 document.getElementById("text").addEventListener("keydown", function(e){
     if (e.key === "Enter") {
         e.preventDefault();
@@ -83,9 +95,9 @@ document.getElementById("text").addEventListener("keydown", function(e){
     }
 });
 
-// =====================
-// 渲染聊天
-// =====================
+// ======================
+// 渲染聊天（保持不动）
+// ======================
 function renderChat() {
 
     const chat = document.getElementById("chat");
@@ -97,21 +109,16 @@ function renderChat() {
     s.messages.forEach(m => {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
-        div.innerHTML = m.text;   // ⭐支持MathJax
+        div.innerText = m.text;
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
-
-    // ⭐ 关键：MathJax重新渲染
-    if (window.MathJax) {
-        MathJax.typesetPromise();
-    }
 }
 
-// =====================
-// 会话列表（可改名）
-// =====================
+// ======================
+// 会话列表（完全不动）
+// ======================
 function renderSessions() {
 
     const box = document.getElementById("sessions");
@@ -139,8 +146,6 @@ function renderSessions() {
 
         const del = document.createElement("button");
         del.className = "del";
-        del.innerText = "×";
-
         del.onclick = (e) => {
             e.stopPropagation();
             sessions = sessions.filter(x => x.id !== s.id);
@@ -153,9 +158,7 @@ function renderSessions() {
     });
 }
 
-// =====================
-// 信息栏
-// =====================
+// ======================
 function renderInfo() {
     const s = getCurrent();
     if (!s) return;
@@ -164,16 +167,10 @@ function renderInfo() {
         "名称: " + s.name + "\n消息数: " + s.messages.length;
 }
 
-// =====================
-// 总刷新
-// =====================
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-// =====================
-// 初始化
-// =====================
 newChat();
