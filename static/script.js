@@ -1,36 +1,46 @@
 // ===== 配置 =====
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-function fixCommonLaTeXErrors(text) {
-    return text.replace(/\\textrightarrow/g, '\\rightarrow')
-               .replace(/\\textleftarrow/g, '\\leftarrow');
+// 将 $...$ 转换为 \(...\)，$$...$$ 转换为 \[...\]
+function convertMathDelimiters(text) {
+    // 先处理块级公式 $$...$$
+    text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
+        return '\\[' + content + '\\]';
+    });
+    // 再处理行内公式 $...$
+    text = text.replace(/\$([^\$]*?)\$/g, (match, content) => {
+        return '\\(' + content + '\\)';
+    });
+    return text;
 }
 
-function escapeMathUnderscores(text) {
-    return text.replace(/\$\$([\s\S]*?)\$\$|\$([^\$]*?)\$/g, (match, display, inline) => {
-        let content = display || inline;
+// 修复常见错误 LaTeX 命令
+function fixCommonLaTeXErrors(text) {
+    return text.replace(/\\textrightarrow/g, '\\rightarrow')
+               .replace(/\\textleftarrow/g, '\\leftarrow')
+               .replace(/\\textbackslash/g, '\\backslash');
+}
+
+// 保护公式内的下划线（在 \(...\) 内）
+function escapeUnderscoresInMath(text) {
+    return text.replace(/\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g, (match, inline, display) => {
+        let content = inline || display;
         content = content.replace(/_/g, '\\_');
-        return display ? '$$' + content + '$$' : '$' + content + '$';
+        return inline ? '\\(' + content + '\\)' : '\\[' + content + '\\]';
     });
 }
 
-function ensureMathDelimiters(text) {
-    if (!text || typeof text !== 'string') return text;
-    if (/\$/.test(text)) return text;
-    const hasLatex = /\\[a-zA-Z]|\\begin|\\end/.test(text);
-    if (!hasLatex) return text;
-    return text.includes('\n') ? '$$' + text + '$$' : '$' + text + '$';
-}
-
+// 完整预处理流水线
 function prepareMathContent(text) {
     let processed = fixCommonLaTeXErrors(text);
-    if (!/\$/.test(processed)) {
-        processed = ensureMathDelimiters(processed);
+    if (/\$/.test(processed)) {
+        processed = convertMathDelimiters(processed);
     }
-    return escapeMathUnderscores(processed);
+    processed = escapeUnderscoresInMath(processed);
+    return processed;
 }
 
-// ===== 全局状态 =====
+// ===== 以下为原有状态和逻辑（未改动，但确认所有渲染调用 prepareMathContent）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
