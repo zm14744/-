@@ -8,7 +8,6 @@ def chat():
     data = request.json
     text = data.get("text", "")
 
-    # ⚠️ 一次性返回（稳定）
     reply = ask_ai(text)
 
     return jsonify({"reply": reply})
