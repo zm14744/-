@@ -34,22 +34,30 @@ def ask_ai_stream(text):
         stream=True
     )
 
-    for line in response.iter_lines():
+    buffer = ""
 
-        if not line:
+    for chunk in response.iter_content(chunk_size=1024):
+
+        if not chunk:
             continue
 
-        line = line.decode("utf-8")
+        buffer += chunk.decode("utf-8")
 
-        if "data: " in line:
+        while "\n\n" in buffer:
+            line, buffer = buffer.split("\n\n", 1)
+
+            if not line.startswith("data: "):
+                continue
+
             data = line.replace("data: ", "")
 
             if data == "[DONE]":
-                break
+                return
 
             try:
                 obj = json.loads(data)
-                chunk = obj["choices"][0]["delta"].get("content", "")
-                yield chunk
+                content = obj["choices"][0]["delta"].get("content", "")
+                if content:
+                    yield content
             except:
                 continue
