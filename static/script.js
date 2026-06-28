@@ -1,7 +1,7 @@
 let sessions = [];
 let currentId = null;
 
-// 新对话
+// ===== 新对话 =====
 function newChat() {
     const id = Date.now();
 
@@ -15,12 +15,12 @@ function newChat() {
     renderAll();
 }
 
-// 当前会话
+// ===== 当前会话 =====
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
-// 发送
+// ===== 发送 =====
 function send() {
 
     const input = document.getElementById("text");
@@ -34,11 +34,7 @@ function send() {
     const s = getCurrent();
 
     s.messages.push({ role: "user", text });
-    renderChat();
 
-    // AI占位
-    const aiMsg = { role: "ai", text: "" };
-    s.messages.push(aiMsg);
     renderChat();
 
     fetch("/chat", {
@@ -51,46 +47,50 @@ function send() {
     .then(r => r.json())
     .then(res => {
 
-        const fullText = res.reply;
+        const reply = res.reply;
 
-        typeWriter(fullText, aiMsg, () => {
+        // ===== 打字机效果核心 =====
+        typeWriter(reply, (finalText) => {
+
+            s.messages.push({ role: "ai", text: finalText });
+
+            renderChat();
             renderInfo();
         });
     });
 }
 
-// ⭐ 打字机效果（核心）
-function typeWriter(text, msgObj, callback) {
+// ===== 打字机效果 =====
+function typeWriter(text, callback) {
+
+    const s = getCurrent();
+    const chat = document.getElementById("chat");
+
+    const div = document.createElement("div");
+    div.className = "msg ai";
+    chat.appendChild(div);
 
     let i = 0;
-    msgObj.text = "";
+    let output = "";
 
     function step() {
 
         if (i < text.length) {
-            msgObj.text += text[i];
+
+            output += text[i];
+            div.innerText = output;
+
             i++;
-
-            renderChat();
-
-            setTimeout(step, 20); // 控制速度
+            setTimeout(step, 15); // 速度控制
         } else {
-            callback && callback();
+            callback(output);
         }
     }
 
     step();
 }
 
-// 回车
-document.getElementById("text").addEventListener("keydown", function(e){
-    if (e.key === "Enter") {
-        e.preventDefault();
-        send();
-    }
-});
-
-// 渲染聊天
+// ===== 渲染聊天 =====
 function renderChat() {
 
     const chat = document.getElementById("chat");
@@ -100,21 +100,23 @@ function renderChat() {
     if (!s) return;
 
     s.messages.forEach(m => {
+
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
+
         div.innerText = m.text;
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
 
-    // ⭐ 关键：MathJax重新渲染（不破坏你原功能）
+    // ⭐ MathJax刷新（你原来的功能保留）
     if (window.MathJax) {
         MathJax.typesetPromise();
     }
 }
 
-// 会话列表
+// ===== 会话列表 =====
 function renderSessions() {
 
     const box = document.getElementById("sessions");
@@ -140,22 +142,13 @@ function renderSessions() {
             }
         };
 
-        const del = document.createElement("button");
-        del.className = "del";
-        del.onclick = (e) => {
-            e.stopPropagation();
-            sessions = sessions.filter(x => x.id !== s.id);
-            if (currentId === s.id) currentId = null;
-            renderAll();
-        };
-
-        div.appendChild(del);
         box.appendChild(div);
     });
 }
 
-// 信息栏
+// ===== 信息 =====
 function renderInfo() {
+
     const s = getCurrent();
     if (!s) return;
 
@@ -163,11 +156,12 @@ function renderInfo() {
         "名称: " + s.name + "\n消息数: " + s.messages.length;
 }
 
-// 总渲染
+// ===== 全刷新 =====
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
+// 初始化
 newChat();
