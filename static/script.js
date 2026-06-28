@@ -1,6 +1,18 @@
 // ===== 配置 =====
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
+// 保护公式内的下划线不被 Markdown 解析
+function escapeMathUnderscores(text) {
+    // 匹配行内公式 $...$ 和块级公式 $$...$$
+    return text.replace(/\$\$([\s\S]*?)\$\$|\$([^\$]*?)\$/g, (match, display, inline) => {
+        let content = display || inline;
+        // 将公式内的 _ 替换为 \_
+        content = content.replace(/_/g, '\\_');
+        if (display) return '$$' + content + '$$';
+        else return '$' + content + '$';
+    });
+}
+
 function ensureMathDelimiters(text) {
     if (!text || typeof text !== 'string') return text;
     if (/\$/.test(text)) return text;
@@ -70,10 +82,9 @@ function send() {
     try {
         renderInfo();
     } catch (e) { console.error('renderInfo 错误:', e); }
-    input.value = "";   // 清空输入框
+    input.value = "";
     enableInput(false);
 
-    // ====== 修改的 fetch 部分 ======
     fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,7 +93,6 @@ function send() {
     .then(res => {
         const contentType = res.headers.get("content-type");
         if (!contentType || !contentType.includes("application/json")) {
-            // 后端返回了 HTML（错误页面），读取内容以便报错
             return res.text().then(html => {
                 throw new Error(`服务器返回了 HTML（状态 ${res.status}），请检查后端日志。`);
             });
@@ -138,9 +148,12 @@ function startTyping(text, session) {
     function finish() {
         try {
             let processed = typingFullText;
+            // 先确保公式分隔符
             if (!/\$/.test(processed)) {
                 processed = ensureMathDelimiters(processed);
             }
+            // 转义公式内的下划线
+            processed = escapeMathUnderscores(processed);
             typingDiv.innerHTML = marked.parse(processed);
         } catch (e) {
             console.error('Markdown 渲染失败:', e);
@@ -172,6 +185,7 @@ function forceCompleteTyping() {
             if (!/\$/.test(processed)) {
                 processed = ensureMathDelimiters(processed);
             }
+            processed = escapeMathUnderscores(processed);
             typingDiv.innerHTML = marked.parse(processed);
         } catch (e) {
             typingDiv.innerText = typingFullText;
@@ -212,9 +226,12 @@ function renderChat() {
             div.innerText = m.text;
         } else {
             let content = m.text;
+            // 先确保公式分隔符
             if (!/\$/.test(content)) {
                 content = ensureMathDelimiters(content);
             }
+            // 转义公式内的下划线
+            content = escapeMathUnderscores(content);
             try {
                 div.innerHTML = marked.parse(content);
             } catch (e) {
