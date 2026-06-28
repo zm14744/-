@@ -1,21 +1,17 @@
-from flask import Flask, request, Response, jsonify
-from ai import ask_ai_stream
+from flask import Flask, request, jsonify
+from ai import ask_ai
 
 app = Flask(__name__)
 
-# ===== AI流式接口 =====
-@app.route("/chat_stream", methods=["GET"])
-def chat_stream():
-    text = request.args.get("text", "")
+@app.route("/chat", methods=["POST"])
+def chat():
+    text = request.json.get("text", "")
 
-    def generate():
-        for chunk in ask_ai_stream(text):
-            yield chunk
+    # 一次性返回完整结果
+    result = ask_ai(text)
 
-    return Response(generate(), mimetype="text/plain")
+    return jsonify({"text": result})
 
 
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=10000)
