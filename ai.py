@@ -5,22 +5,15 @@ client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-SYSTEM_PROMPT = """
-你是离散数学专精AI助手。
-回答必须结构清晰：
-定义 → 推导 → 结论。
-"""
-
+SYSTEM_PROMPT = "你是离散数学助手，回答要结构化"
 
 def ask_ai(text):
-
     response = client.chat.completions.create(
         model="deepseek-chat",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": text}
-        ],
-        stream=False
+        ]
     )
 
-    return response.choices[0].message.content 
+    return response.choices[0].message.content
