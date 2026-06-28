@@ -1,9 +1,26 @@
 // 配置 marked
 marked.setOptions({
-  gfm: true,
-  breaks: true,
-  sanitize: false
+    gfm: true,
+    breaks: true,
+    sanitize: false
 });
+
+// 自动补全缺失的 $ 分隔符
+function ensureMathDelimiters(text) {
+    // 如果已经包含 $ 或 $$，跳过预处理
+    if (/\$/.test(text)) return text;
+    // 检测常见的 LaTeX 命令或环境
+    const hasLatex = /\\[a-zA-Z]|\\begin|\\end/.test(text);
+    if (hasLatex) {
+        // 如果是多行，用 $$...$$，否则用 $...$
+        if (text.includes('\n')) {
+            return '$$' + text + '$$';
+        } else {
+            return '$' + text + '$';
+        }
+    }
+    return text;
+}
 
 let sessions = [];
 let currentId = null;
@@ -79,18 +96,22 @@ function startTyping(text, session) {
         } else {
             clearInterval(typingTimer);
             typingTimer = null;
+            // 预处理补充分隔符
+            let processed = typingFullText;
+            if (!/\$/.test(processed)) {
+                processed = ensureMathDelimiters(processed);
+            }
             try {
-                typingDiv.innerHTML = marked.parse(typingFullText);
+                typingDiv.innerHTML = marked.parse(processed);
             } catch(e) {
                 typingDiv.innerText = typingFullText;
             }
             const s = sessions.find(s => s.id === typingSessionId);
             if (s) {
-                s.messages.push({ role: "ai", text: typingFullText });
+                s.messages.push({ role: "ai", text: typingFullText }); // 保存原始文本
             }
             typingDiv = null;
             typingSessionId = null;
-            // 重新渲染整个聊天区（触发公式全局渲染）
             renderChat();
             renderInfo();
             enableInput(true);
@@ -103,8 +124,12 @@ function forceCompleteTyping() {
     clearInterval(typingTimer);
     typingTimer = null;
     if (typingDiv) {
+        let processed = typingFullText;
+        if (!/\$/.test(processed)) {
+            processed = ensureMathDelimiters(processed);
+        }
         try {
-            typingDiv.innerHTML = marked.parse(typingFullText);
+            typingDiv.innerHTML = marked.parse(processed);
         } catch(e) {
             typingDiv.innerText = typingFullText;
         }
@@ -134,8 +159,13 @@ function renderChat() {
         if (m.role === "user") {
             div.innerText = m.text;
         } else {
+            let content = m.text;
+            // 如果内容没有 $，尝试自动补充分隔符
+            if (!/\$/.test(content)) {
+                content = ensureMathDelimiters(content);
+            }
             try {
-                div.innerHTML = marked.parse(m.text);
+                div.innerHTML = marked.parse(content);
             } catch {
                 div.innerText = m.text;
             }
@@ -151,7 +181,7 @@ function renderChat() {
         typingDiv = newDiv;
     }
 
-    // ⭐ 强制对整个聊天容器进行公式渲染（包括所有已保存消息和临时消息）
+    // 强制对整个聊天容器进行公式渲染
     if (window.MathJax) {
         MathJax.typesetPromise([chat]).catch(console.error);
     }
