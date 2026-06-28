@@ -33,12 +33,6 @@ def ask_ai(text):
         if "error" in result:
             return f"❌ API 错误: {result['error'].get('message', '未知错误')}"
         return result["choices"][0]["message"]["content"]
-    except requests.exceptions.Timeout:
-        return "❌ 请求超时，请稍后再试"
-    except requests.exceptions.RequestException as e:
-        return f"❌ 网络请求失败: {str(e)}"
-    except (KeyError, IndexError, ValueError) as e:
-        return f"❌ 响应解析失败: {str(e)}"
     except Exception as e:
-        return f"❌ 未知错误: {str(e)}"
+        return f"❌ 请求失败: {str(e)}"
 
