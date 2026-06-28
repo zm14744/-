@@ -21,42 +21,49 @@ body { margin:0; font-family:Arial, sans-serif; background:#0f172a; color:white;
 .session:hover { background:#1f2937; }
 .session span { flex:1; cursor:pointer; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* 删除按钮：纯红色圆点，无文字 */
+/* 删除按钮：纯红色圆点 */
 .session .del {
-  width:20px;
-  height:20px;
-  border-radius:50%;
-  border:none;
-  background:#ef4444;
-  cursor:pointer;
-  padding:0;
+  width:20px; height:20px; border-radius:50%; border:none;
+  background:#ef4444; cursor:pointer; padding:0;
   transition: transform 0.2s, box-shadow 0.2s;
-  flex-shrink:0;
-  margin-left:8px;
+  flex-shrink:0; margin-left:8px;
 }
-.session .del:hover {
-  transform:scale(1.2);
-  box-shadow: 0 0 8px rgba(239,68,68,0.6);
-}
-.session .del:active {
-  transform:scale(0.9);
-}
+.session .del:hover { transform:scale(1.2); box-shadow: 0 0 8px rgba(239,68,68,0.6); }
+.session .del:active { transform:scale(0.9); }
 
 /* 中间 */
 .center { flex:1; display:flex; flex-direction:column; min-width:0; }
 .chat { flex:1; overflow-y:auto; padding:10px; }
-.msg { max-width:75%; padding:10px; margin:6px 0; border-radius:12px; word-wrap:break-word; }
+.msg { max-width:75%; padding:10px; margin:6px 0; border-radius:12px; word-wrap:break-word; overflow-wrap:break-word; }
 .user { background:#3b82f6; margin-left:auto; }
 .ai { background:#1f2937; }
 
-/* Markdown 样式 */
+/* ===== 关键修复：强制代码块/预格式化文本换行 ===== */
+.ai pre, .ai code {
+  white-space: pre-wrap !important;   /* 保留空格但允许换行 */
+  word-break: break-word !important;
+  max-width: 100% !important;
+  overflow-x: auto;                   /* 若实在过长，横向滚动而非溢出 */
+}
+.ai pre {
+  background: #1a202c;
+  padding: 10px;
+  border-radius: 8px;
+}
+.ai code {
+  background: #2d3748;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+/* 其他 Markdown 样式 */
 .ai h1,.ai h2,.ai h3 { margin:8px 0; font-weight:bold; }
 .ai ul,.ai ol { padding-left:20px; margin:6px 0; }
-.ai code { background:#2d3748; padding:2px 6px; border-radius:4px; font-family:monospace; }
-.ai pre { background:#1a202c; padding:10px; border-radius:8px; overflow-x:auto; }
 .ai strong { font-weight:bold; color:#fbbf24; }
 .ai em { font-style:italic; }
 
+/* 输入 */
 .input { display:flex; padding:10px; background:#0b1220; gap:8px; }
 .input input { flex:1; padding:8px 12px; border:none; border-radius:6px; outline:none; background:#1f2937; color:white; }
 .input input:disabled { opacity:0.5; cursor:not-allowed; }
