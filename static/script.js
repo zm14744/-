@@ -1,6 +1,7 @@
 let sessions = [];
 let currentId = null;
 
+// 新对话
 function newChat() {
     const id = Date.now();
 
@@ -14,31 +15,12 @@ function newChat() {
     renderAll();
 }
 
+// 当前会话
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
-// ======================
-// 🚀 打字机核心函数
-// ======================
-function typeWriter(element, text, speed = 15) {
-    let i = 0;
-    element.innerText = "";
-
-    function typing() {
-        if (i < text.length) {
-            element.innerText += text[i];
-            i++;
-            setTimeout(typing, speed);
-        }
-    }
-
-    typing();
-}
-
-// ======================
-// 发送（改成打字机效果）
-// ======================
+// 发送
 function send() {
 
     const input = document.getElementById("text");
@@ -52,7 +34,11 @@ function send() {
     const s = getCurrent();
 
     s.messages.push({ role: "user", text });
+    renderChat();
 
+    // AI占位
+    const aiMsg = { role: "ai", text: "" };
+    s.messages.push(aiMsg);
     renderChat();
 
     fetch("/chat", {
@@ -62,32 +48,41 @@ function send() {
         },
         body: JSON.stringify({ text })
     })
-    .then(res => res.json())
-    .then(data => {
+    .then(r => r.json())
+    .then(res => {
 
-        const aiText = data.text;
+        const fullText = res.reply;
 
-        const msgDiv = document.createElement("div");
-        msgDiv.className = "msg ai";
-        document.getElementById("chat").appendChild(msgDiv);
-
-        // ⭐ 打字机效果
-        typeWriter(msgDiv, aiText, 10);
-
-        s.messages.push({ role: "ai", text: aiText });
-
-        renderInfo();
-
-        // ⭐ MathJax 渲染（不破坏你的公式）
-        setTimeout(() => {
-            if (window.MathJax) {
-                MathJax.typeset();
-            }
-        }, 200);
+        typeWriter(fullText, aiMsg, () => {
+            renderInfo();
+        });
     });
 }
 
-// 回车发送
+// ⭐ 打字机效果（核心）
+function typeWriter(text, msgObj, callback) {
+
+    let i = 0;
+    msgObj.text = "";
+
+    function step() {
+
+        if (i < text.length) {
+            msgObj.text += text[i];
+            i++;
+
+            renderChat();
+
+            setTimeout(step, 20); // 控制速度
+        } else {
+            callback && callback();
+        }
+    }
+
+    step();
+}
+
+// 回车
 document.getElementById("text").addEventListener("keydown", function(e){
     if (e.key === "Enter") {
         e.preventDefault();
@@ -95,9 +90,7 @@ document.getElementById("text").addEventListener("keydown", function(e){
     }
 });
 
-// ======================
-// 渲染聊天（保持不动）
-// ======================
+// 渲染聊天
 function renderChat() {
 
     const chat = document.getElementById("chat");
@@ -114,11 +107,14 @@ function renderChat() {
     });
 
     chat.scrollTop = chat.scrollHeight;
+
+    // ⭐ 关键：MathJax重新渲染（不破坏你原功能）
+    if (window.MathJax) {
+        MathJax.typesetPromise();
+    }
 }
 
-// ======================
-// 会话列表（完全不动）
-// ======================
+// 会话列表
 function renderSessions() {
 
     const box = document.getElementById("sessions");
@@ -158,7 +154,7 @@ function renderSessions() {
     });
 }
 
-// ======================
+// 信息栏
 function renderInfo() {
     const s = getCurrent();
     if (!s) return;
@@ -167,6 +163,7 @@ function renderInfo() {
         "名称: " + s.name + "\n消息数: " + s.messages.length;
 }
 
+// 总渲染
 function renderAll() {
     renderSessions();
     renderChat();
