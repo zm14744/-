@@ -1,4 +1,4 @@
-// 配置 marked 不转义特殊字符
+// 配置 marked
 marked.setOptions({
   gfm: true,
   breaks: true,
@@ -81,10 +81,6 @@ function startTyping(text, session) {
             typingTimer = null;
             try {
                 typingDiv.innerHTML = marked.parse(typingFullText);
-                // 单独渲染此元素内的公式
-                if (window.MathJax) {
-                    MathJax.typesetPromise([typingDiv]).catch(console.error);
-                }
             } catch(e) {
                 typingDiv.innerText = typingFullText;
             }
@@ -94,6 +90,7 @@ function startTyping(text, session) {
             }
             typingDiv = null;
             typingSessionId = null;
+            // 重新渲染整个聊天区（触发公式全局渲染）
             renderChat();
             renderInfo();
             enableInput(true);
@@ -108,9 +105,6 @@ function forceCompleteTyping() {
     if (typingDiv) {
         try {
             typingDiv.innerHTML = marked.parse(typingFullText);
-            if (window.MathJax) {
-                MathJax.typesetPromise([typingDiv]).catch(console.error);
-            }
         } catch(e) {
             typingDiv.innerText = typingFullText;
         }
@@ -134,7 +128,6 @@ function renderChat() {
         chat.innerHTML = '<div class="empty-tip">暂无对话，请新建</div>';
         return;
     }
-    const aiElements = []; // 收集所有 AI 消息元素以便单独渲染公式
     s.messages.forEach(m => {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
@@ -143,7 +136,6 @@ function renderChat() {
         } else {
             try {
                 div.innerHTML = marked.parse(m.text);
-                aiElements.push(div); // 加入待渲染列表
             } catch {
                 div.innerText = m.text;
             }
@@ -151,7 +143,6 @@ function renderChat() {
         chat.appendChild(div);
     });
 
-    // 如果正在打字且属于当前会话，重新挂载打字临时消息
     if (typingTimer && typingDiv && typingSessionId === currentId) {
         const newDiv = document.createElement("div");
         newDiv.className = "msg ai";
@@ -160,9 +151,9 @@ function renderChat() {
         typingDiv = newDiv;
     }
 
-    // 单独渲染所有 AI 消息中的公式
-    if (window.MathJax && aiElements.length > 0) {
-        MathJax.typesetPromise(aiElements).catch(console.error);
+    // ⭐ 强制对整个聊天容器进行公式渲染（包括所有已保存消息和临时消息）
+    if (window.MathJax) {
+        MathJax.typesetPromise([chat]).catch(console.error);
     }
 
     chat.scrollTop = chat.scrollHeight;
@@ -190,7 +181,6 @@ function renderSessions() {
             if (newName) { s.name = newName; renderSessions(); }
         };
 
-        // 删除按钮 —— 纯红色圆点，无文字
         const del = document.createElement("button");
         del.className = "del";
         del.title = "删除对话";
