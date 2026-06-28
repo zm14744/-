@@ -8,46 +8,64 @@ function fixCommonLaTeXErrors(text) {
                .replace(/\\textbackslash/g, '\\backslash');
 }
 
-// 自动包裹裸 LaTeX 片段（未含 $ 或 \( 的）
-function ensureMathDelimiters(text) {
-    if (!text || typeof text !== 'string') return text;
-    if (/\$/.test(text) || /\\\(/.test(text) || /\\\[/.test(text)) return text;
-    const hasLatex = /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
-    if (!hasLatex) return text;
-    return text.includes('\n') ? '$$' + text + '$$' : '$' + text + '$';
+// 检测是否包含 LaTeX 命令或数学符号
+function hasLatex(text) {
+    return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// 核心：将 $...$ 和 $$...$$ 转换为 <span class="math-tex">\(...\)</span> 和 <span class="math-tex">\[...\]</span>
-function convertMathToProtectedSpans(text) {
-    // 先处理块级公式
-    text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        return '<span class="math-tex">\\[' + content + '\\]</span>';
-    });
-    // 再处理行内公式（注意不匹配嵌套）
-    text = text.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        return '<span class="math-tex">\\(' + content + '\\)</span>';
-    });
-    return text;
-}
-
-// 对已有的 \(...\) 和 \[...\] 也进行保护
-function protectExistingMath(text) {
-    text = text.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
-        return '<span class="math-tex">\\(' + content + '\\)</span>';
-    });
+// 核心：将所有公式模式转换为 <span class="math-tex">\(...\)</span> 或 <span class="math-tex">\[...\]</span>
+function convertAllMathToSpans(text) {
+    // 1. 保护标准块级公式 \[...\] 和 \(...\)
     text = text.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
         return '<span class="math-tex">\\[' + content + '\\]</span>';
     });
-    return text;
+    text = text.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
+        return '<span class="math-tex">\\(' + content + '\\)</span>';
+    });
+
+    // 2. 保护 $$...$$ 和 $...$
+    text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
+        return '<span class="math-tex">\\[' + content + '\\]</span>';
+    });
+    text = text.replace(/\$([^\$]*?)\$/g, (match, content) => {
+        return '<span class="math-tex">\\(' + content + '\\)</span>';
+    });
+
+    // 3. 保护未转义的块级公式 [ ... ] 但内部有 LaTeX 命令
+    // 注意：不匹配嵌套，且只处理没有其他公式分隔符的片段
+    text = text.replace(/\[([^\]]*?)\]/g, (match, content) => {
+        // 如果内部包含 LaTeX 命令且尚未被保护（不包含 <span class="math-tex">）
+        if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
+            return '<span class="math-tex">\\[' + content + '\\]</span>';
+        }
+        return match; // 否则保留原样
+    });
+
+    // 4. 对剩余文本中裸 LaTeX 命令（未包裹的）自动加 $...$ 并转 span
+    // 为避免重复处理，只处理不包含 <span 的片段
+    const parts = text.split(/(<span[^>]*>[\s\S]*?<\/span>)/g);
+    const processed = parts.map(part => {
+        if (part.startsWith('<span')) return part; // 已保护部分跳过
+        // 如果检测到 LaTeX 且还没有被保护，用 $ 包裹
+        if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
+            // 判断是否多行
+            if (part.includes('\n')) {
+                return '<span class="math-tex">\\[' + part + '\\]</span>';
+            } else {
+                return '<span class="math-tex">\\(' + part + '\\)</span>';
+            }
+        }
+        return part;
+    }).join('');
+
+    return processed;
 }
 
-// 完整预处理流水线（带日志方便调试）
+// 完整预处理流水线（带日志）
 function prepareMathContent(text) {
     console.log('原始内容:', text);
     let processed = fixCommonLaTeXErrors(text);
-    processed = ensureMathDelimiters(processed);
-    processed = convertMathToProtectedSpans(processed);
-    processed = protectExistingMath(processed);
+    processed = convertAllMathToSpans(processed);
     console.log('处理后内容:', processed);
     return processed;
 }
