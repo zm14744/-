@@ -8,7 +8,7 @@ function fixCommonLaTeXErrors(text) {
                .replace(/\\textbackslash/g, '\\backslash');
 }
 
-// 自动包裹未包裹的 LaTeX 片段
+// 自动包裹裸 LaTeX 片段（未含 $ 或 \( 的）
 function ensureMathDelimiters(text) {
     if (!text || typeof text !== 'string') return text;
     if (/\$/.test(text) || /\\\(/.test(text) || /\\\[/.test(text)) return text;
@@ -23,7 +23,7 @@ function convertMathToProtectedSpans(text) {
     text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
         return '<span class="math-tex">\\[' + content + '\\]</span>';
     });
-    // 再处理行内公式
+    // 再处理行内公式（注意不匹配嵌套）
     text = text.replace(/\$([^\$]*?)\$/g, (match, content) => {
         return '<span class="math-tex">\\(' + content + '\\)</span>';
     });
@@ -41,16 +41,18 @@ function protectExistingMath(text) {
     return text;
 }
 
-// 完整预处理
+// 完整预处理流水线（带日志方便调试）
 function prepareMathContent(text) {
+    console.log('原始内容:', text);
     let processed = fixCommonLaTeXErrors(text);
     processed = ensureMathDelimiters(processed);
     processed = convertMathToProtectedSpans(processed);
     processed = protectExistingMath(processed);
+    console.log('处理后内容:', processed);
     return processed;
 }
 
-// ===== 以下为原有逻辑（完全不变） =====
+// ===== 以下为状态和逻辑（全部保留）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
