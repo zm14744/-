@@ -9,10 +9,17 @@ def index():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.json
-    text = data.get("text", "")
-    reply = ask_ai(text)
-    return jsonify({"reply": reply})
+    try:
+        data = request.json
+        text = data.get("text", "")
+        if not text:
+            return jsonify({"reply": "⚠️ 请输入内容"}), 400
+
+        reply = ask_ai(text)
+        return jsonify({"reply": reply})
+
+    except Exception as e:
+        return jsonify({"reply": f"❌ 服务器内部错误: {str(e)}"}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
