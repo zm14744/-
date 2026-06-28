@@ -7,10 +7,8 @@ let typingCurrentText = "";
 let typingSessionId = null;
 const TYPING_SPEED = 15;
 
-// ===== 工具 =====
 function getCurrent() { return sessions.find(s => s.id === currentId); }
 
-// ===== 新建会话 =====
 function newChat() {
     if (typingTimer) forceCompleteTyping();
     const id = Date.now();
@@ -20,7 +18,6 @@ function newChat() {
     enableInput(true);
 }
 
-// ===== 启用/禁用输入 =====
 function enableInput(enable) {
     const input = document.getElementById("text");
     const btn = document.getElementById("sendBtn");
@@ -29,18 +26,16 @@ function enableInput(enable) {
     if (enable) input.focus();
 }
 
-// ===== 发送消息 =====
 function send() {
     if (typingTimer) return;
     const input = document.getElementById("text");
     const text = input.value.trim();
     if (!text) return;
-
     if (!currentId) newChat();
     const s = getCurrent();
     s.messages.push({ role: "user", text });
     renderChat();
-    renderInfo();                // ✅ 用户消息发送后立即更新右侧信息
+    renderInfo();
     input.value = "";
     enableInput(false);
 
@@ -55,16 +50,12 @@ function send() {
         startTyping(reply, s);
     })
     .catch(err => {
-        alert("请求失败: " + err.message);
-        enableInput(true);
-        renderInfo();
+        startTyping("❌ 请求失败: " + err.message, s);
     });
 }
 
-// ===== 启动打字机 =====
 function startTyping(text, session) {
     if (typingTimer) forceCompleteTyping();
-
     typingFullText = text;
     typingCurrentText = "";
     typingSessionId = session.id;
@@ -94,13 +85,12 @@ function startTyping(text, session) {
             typingDiv = null;
             typingSessionId = null;
             renderChat();
-            renderInfo();        // ✅ AI 回复完成后更新右侧信息
+            renderInfo();
             enableInput(true);
         }
     }, TYPING_SPEED);
 }
 
-// ===== 强制完成打字 =====
 function forceCompleteTyping() {
     if (!typingTimer) return;
     clearInterval(typingTimer);
@@ -124,7 +114,6 @@ function forceCompleteTyping() {
     }
 }
 
-// ===== 渲染聊天 =====
 function renderChat() {
     const chat = document.getElementById("chat");
     chat.innerHTML = "";
@@ -147,7 +136,6 @@ function renderChat() {
         }
         chat.appendChild(div);
     });
-    // 如果正在打字且属于当前会话，重新挂载打字临时消息
     if (typingTimer && typingDiv && typingSessionId === currentId) {
         const newDiv = document.createElement("div");
         newDiv.className = "msg ai";
@@ -159,7 +147,6 @@ function renderChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-// ===== 渲染会话列表 =====
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -182,10 +169,11 @@ function renderSessions() {
             if (newName) { s.name = newName; renderSessions(); }
         };
 
+        // 删除按钮 —— 纯红色圆点，无文字
         const del = document.createElement("button");
         del.className = "del";
-        del.innerText = "✕";
         del.title = "删除对话";
+        // 不设置 innerText，即为空
         del.onclick = (e) => {
             e.stopPropagation();
             if (typingTimer) forceCompleteTyping();
@@ -198,7 +186,6 @@ function renderSessions() {
     });
 }
 
-// ===== 删除会话 =====
 function deleteSession(id) {
     sessions = sessions.filter(s => s.id !== id);
     if (!sessions.some(s => s.id === currentId)) {
@@ -213,20 +200,17 @@ function deleteSession(id) {
     }
 }
 
-// ===== 右侧信息（实时更新） =====
 function renderInfo() {
     const s = getCurrent();
     document.getElementById("info").innerText = s ? `名称: ${s.name}\n消息数: ${s.messages.length}` : "无会话";
 }
 
-// ===== 全刷新 =====
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-// ===== Enter 发送 =====
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
     input.addEventListener("keydown", e => {
