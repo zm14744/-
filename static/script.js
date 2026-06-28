@@ -1,36 +1,48 @@
 let sessions = [];
 let currentId = null;
+let typingTimer = null;
+let typingDiv = null;
+let typingFullText = "";
+let typingCurrentText = "";
+let typingSessionId = null;
+const TYPING_SPEED = 15;
 
-// ===== 新对话 =====
+// ===== 工具 =====
+function getCurrent() { return sessions.find(s => s.id === currentId); }
+
+// ===== 新建会话 =====
 function newChat() {
+    if (typingTimer) forceCompleteTyping();
     const id = Date.now();
-    sessions.push({
-        id,
-        name: "新对话",
-        messages: []
-    });
+    sessions.push({ id, name: "新对话", messages: [] });
     currentId = id;
     renderAll();
+    enableInput(true);
 }
 
-// ===== 当前会话 =====
-function getCurrent() {
-    return sessions.find(s => s.id === currentId);
+// ===== 启用/禁用输入 =====
+function enableInput(enable) {
+    const input = document.getElementById("text");
+    const btn = document.getElementById("sendBtn");
+    input.disabled = !enable;
+    btn.disabled = !enable;
+    if (enable) input.focus();
 }
 
 // ===== 发送消息 =====
 function send() {
+    if (typingTimer) return;
     const input = document.getElementById("text");
     const text = input.value.trim();
     if (!text) return;
 
     if (!currentId) newChat();
-
     const s = getCurrent();
     s.messages.push({ role: "user", text });
     renderChat();
-
+    renderInfo();                // ✅ 用户消息发送后立即更新右侧信息
     input.value = "";
+    enableInput(false);
 
     fetch("/chat", {
         method: "POST",
@@ -39,103 +51,149 @@ function send() {
     })
     .then(r => r.json())
     .then(res => {
-        const reply = res.reply;
-        typeWriter(reply, (finalText) => {
-            s.messages.push({ role: "ai", text: finalText });
-            renderChat();
-            renderInfo();
-        });
+        const reply = res.reply || "（未收到回复）";
+        startTyping(reply, s);
+    })
+    .catch(err => {
+        alert("请求失败: " + err.message);
+        enableInput(true);
+        renderInfo();
     });
 }
 
-// ===== 打字机效果 + 最终 Markdown 渲染 =====
-function typeWriter(text, callback) {
+// ===== 启动打字机 =====
+function startTyping(text, session) {
+    if (typingTimer) forceCompleteTyping();
+
+    typingFullText = text;
+    typingCurrentText = "";
+    typingSessionId = session.id;
     const chat = document.getElementById("chat");
     const div = document.createElement("div");
     div.className = "msg ai";
     chat.appendChild(div);
-
-    let i = 0;
-    let output = "";
-    function step() {
-        if (i < text.length) {
-            output += text[i];
-            div.innerText = output; // 打字过程显示纯文本
-            i++;
-            setTimeout(step, 15);
+    typingDiv = div;
+    typingTimer = setInterval(() => {
+        if (typingCurrentText.length < typingFullText.length) {
+            typingCurrentText += typingFullText[typingCurrentText.length];
+            typingDiv.innerText = typingCurrentText;
+            chat.scrollTop = chat.scrollHeight;
         } else {
-            // 打字结束，渲染为 Markdown
-            const renderedHtml = marked.parse(text);
-            div.innerHTML = renderedHtml;
-            if (window.MathJax) {
-                MathJax.typesetPromise([div]);
+            clearInterval(typingTimer);
+            typingTimer = null;
+            try {
+                typingDiv.innerHTML = marked.parse(typingFullText);
+                if (window.MathJax) MathJax.typesetPromise([typingDiv]);
+            } catch(e) {
+                typingDiv.innerText = typingFullText;
             }
-            callback(output);
+            const s = sessions.find(s => s.id === typingSessionId);
+            if (s) {
+                s.messages.push({ role: "ai", text: typingFullText });
+            }
+            typingDiv = null;
+            typingSessionId = null;
+            renderChat();
+            renderInfo();        // ✅ AI 回复完成后更新右侧信息
+            enableInput(true);
         }
-    }
-    step();
+    }, TYPING_SPEED);
 }
 
-// ===== 渲染聊天内容 =====
+// ===== 强制完成打字 =====
+function forceCompleteTyping() {
+    if (!typingTimer) return;
+    clearInterval(typingTimer);
+    typingTimer = null;
+    if (typingDiv) {
+        try {
+            typingDiv.innerHTML = marked.parse(typingFullText);
+            if (window.MathJax) MathJax.typesetPromise([typingDiv]);
+        } catch(e) {
+            typingDiv.innerText = typingFullText;
+        }
+        const s = sessions.find(s => s.id === typingSessionId);
+        if (s) {
+            s.messages.push({ role: "ai", text: typingFullText });
+        }
+        typingDiv = null;
+        typingSessionId = null;
+        renderChat();
+        renderInfo();
+        enableInput(true);
+    }
+}
+
+// ===== 渲染聊天 =====
 function renderChat() {
     const chat = document.getElementById("chat");
     chat.innerHTML = "";
     const s = getCurrent();
-    if (!s) return;
-
+    if (!s) {
+        chat.innerHTML = '<div class="empty-tip">暂无对话，请新建</div>';
+        return;
+    }
     s.messages.forEach(m => {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
         if (m.role === "user") {
             div.innerText = m.text;
         } else {
-            // AI 消息直接渲染为 Markdown（已存储的最终文本）
-            div.innerHTML = marked.parse(m.text);
+            try {
+                div.innerHTML = marked.parse(m.text);
+            } catch {
+                div.innerText = m.text;
+            }
         }
         chat.appendChild(div);
     });
-
-    chat.scrollTop = chat.scrollHeight;
-
-    if (window.MathJax) {
-        MathJax.typesetPromise();
+    // 如果正在打字且属于当前会话，重新挂载打字临时消息
+    if (typingTimer && typingDiv && typingSessionId === currentId) {
+        const newDiv = document.createElement("div");
+        newDiv.className = "msg ai";
+        newDiv.innerText = typingCurrentText;
+        chat.appendChild(newDiv);
+        typingDiv = newDiv;
     }
+    if (window.MathJax) MathJax.typesetPromise();
+    chat.scrollTop = chat.scrollHeight;
 }
 
-// ===== 渲染会话列表（含删除按钮） =====
+// ===== 渲染会话列表 =====
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
-
     sessions.forEach(s => {
         const div = document.createElement("div");
         div.className = "session";
 
-        const nameSpan = document.createElement("span");
-        nameSpan.innerText = s.name;
-        nameSpan.onclick = () => {
+        const span = document.createElement("span");
+        span.innerText = s.name;
+        span.onclick = () => {
+            if (typingTimer) forceCompleteTyping();
             currentId = s.id;
             renderChat();
             renderInfo();
+            enableInput(true);
         };
-        nameSpan.ondblclick = () => {
+        span.ondblclick = () => {
+            if (typingTimer) forceCompleteTyping();
             const newName = prompt("修改名称：", s.name);
-            if (newName) {
-                s.name = newName;
-                renderSessions();
-            }
+            if (newName) { s.name = newName; renderSessions(); }
         };
 
-        const delBtn = document.createElement("button");
-        delBtn.className = "del";
-        delBtn.innerText = "✕";
-        delBtn.onclick = (e) => {
+        const del = document.createElement("button");
+        del.className = "del";
+        del.innerText = "✕";
+        del.title = "删除对话";
+        del.onclick = (e) => {
             e.stopPropagation();
+            if (typingTimer) forceCompleteTyping();
             deleteSession(s.id);
         };
 
-        div.appendChild(nameSpan);
-        div.appendChild(delBtn);
+        div.appendChild(span);
+        div.appendChild(del);
         box.appendChild(div);
     });
 }
@@ -144,22 +202,21 @@ function renderSessions() {
 function deleteSession(id) {
     sessions = sessions.filter(s => s.id !== id);
     if (!sessions.some(s => s.id === currentId)) {
-        if (sessions.length > 0) {
-            currentId = sessions[0].id;
-        } else {
-            newChat();
-            return;
-        }
+        currentId = sessions.length > 0 ? sessions[0].id : null;
     }
     renderAll();
+    if (sessions.length === 0) {
+        enableInput(false);
+        document.getElementById("text").placeholder = "请新建对话";
+    } else {
+        enableInput(true);
+    }
 }
 
-// ===== 右侧信息 =====
+// ===== 右侧信息（实时更新） =====
 function renderInfo() {
     const s = getCurrent();
-    if (!s) return;
-    document.getElementById("info").innerText =
-        "名称: " + s.name + "\n消息数: " + s.messages.length;
+    document.getElementById("info").innerText = s ? `名称: ${s.name}\n消息数: ${s.messages.length}` : "无会话";
 }
 
 // ===== 全刷新 =====
@@ -169,18 +226,14 @@ function renderAll() {
     renderInfo();
 }
 
-// ===== 绑定 Enter 键 =====
-document.addEventListener("DOMContentLoaded", function() {
+// ===== Enter 发送 =====
+document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
-    if (input) {
-        input.addEventListener("keydown", function(e) {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-            }
-        });
-    }
+    input.addEventListener("keydown", e => {
+        if (e.key === "Enter" && !e.shiftKey && !input.disabled) {
+            e.preventDefault();
+            send();
+        }
+    });
+    newChat();
 });
-
-// ===== 初始化 =====
-newChat();
