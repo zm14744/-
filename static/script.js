@@ -1,4 +1,4 @@
-// ========== 配置 ==========
+// ===== 配置 Marked =====
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
 function ensureMathDelimiters(text) {
@@ -9,7 +9,7 @@ function ensureMathDelimiters(text) {
     return text.includes('\n') ? '$$' + text + '$$' : '$' + text + '$';
 }
 
-// ========== 状态 ==========
+// ===== 全局状态 =====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
@@ -19,7 +19,7 @@ let typingCurrentText = "";
 let typingSessionId = null;
 const TYPING_SPEED = 15;
 
-// ========== 辅助函数 ==========
+// ===== 辅助 =====
 function getCurrent() { return sessions.find(s => s.id === currentId); }
 
 function enableInput(enable) {
@@ -27,14 +27,20 @@ function enableInput(enable) {
     const btn = document.getElementById("sendBtn");
     if (input) {
         input.disabled = !enable;
-        if (enable) input.focus();
+        if (enable) {
+            input.focus();
+            input.placeholder = "输入消息…";
+        } else {
+            input.placeholder = "等待回复…";
+        }
         console.log('输入框 disabled =', input.disabled);
+    } else {
+        console.warn('输入框 #text 未找到');
     }
     if (btn) btn.disabled = !enable;
-    console.log('enableInput 被调用，enable =', enable);
 }
 
-// ========== 核心功能 ==========
+// ===== 新建会话 =====
 function newChat() {
     if (typingTimer) forceCompleteTyping();
     const id = Date.now();
@@ -44,12 +50,14 @@ function newChat() {
     enableInput(true);
 }
 
-async function send() {
-    console.log('send 被调用, typingTimer =', typingTimer);
-    if (typingTimer) return; // 打字中不允许发送
-
+// ===== 发送 =====
+function send() {
+    if (typingTimer) {
+        console.log('打字中，禁止发送');
+        return;
+    }
     const input = document.getElementById("text");
-    if (!input) { console.error('input 元素不存在'); return; }
+    if (!input) return;
     const text = input.value.trim();
     if (!text) return;
 
@@ -59,121 +67,65 @@ async function send() {
     renderChat();
     renderInfo();
     input.value = "";
-
-    // 禁用输入，等待回复
     enableInput(false);
 
-    try {
-        const response = await fetch("/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text })
-        });
-        const data = await response.json();
-        const reply = data.reply || "（未收到回复）";
-        await startTyping(reply, s);
-    } catch (err) {
-        console.error('请求失败:', err);
-        // 即使出错也以错误消息启动打字，最终启用输入
-        await startTyping("❌ 请求失败: " + err.message, s);
-    } finally {
-        // 确保无论如何都会启用输入（但 startTyping 内部也会启用，这里作为兜底）
-        // 但为避免过早启用，如果 startTyping 已经启用，重复启用也无妨
-        // 不过因为 startTyping 是异步的，我们在这里加一个延迟确保它完成？
-        // 实际上 startTyping 内部会调用 enableInput(true)，我们不再重复。
-        // 但为了防止 startTyping 异常，我们在这里也尝试启用
-        // 使用 setTimeout 让 startTyping 先执行
-        setTimeout(() => {
-            // 如果输入仍然禁用，强制启用
-            const input = document.getElementById("text");
-            if (input && input.disabled) {
-                console.warn('兜底启用输入');
-                enableInput(true);
-            }
-        }, 100);
-    }
-}
-
-function startTyping(text, session) {
-    return new Promise((resolve) => {
-        console.log('startTyping 开始, 文本长度:', text.length);
-        // 如果已有打字，强制完成
-        if (typingTimer) forceCompleteTyping();
-
-        typingFullText = text || "";
-        typingCurrentText = "";
-        typingSessionId = session.id;
-        const chat = document.getElementById("chat");
-        if (!chat) {
-            console.error('chat 元素不存在');
-            enableInput(true);
-            resolve();
-            return;
-        }
-
-        // 创建临时消息
-        const div = document.createElement("div");
-        div.className = "msg ai";
-        chat.appendChild(div);
-        typingDiv = div;
-
-        // 如果文本为空，直接完成
-        if (typingFullText.length === 0) {
-            finishTyping();
-            resolve();
-            return;
-        }
-
-        // 启动打字定时器
-        typingTimer = setInterval(() => {
-            if (typingCurrentText.length < typingFullText.length) {
-                typingCurrentText += typingFullText[typingCurrentText.length];
-                typingDiv.innerText = typingCurrentText;
-                chat.scrollTop = chat.scrollHeight;
-            } else {
-                clearInterval(typingTimer);
-                typingTimer = null;
-                finishTyping();
-                resolve();
-            }
-        }, TYPING_SPEED);
-
-        function finishTyping() {
-            try {
-                let processed = typingFullText;
-                if (!/\$/.test(processed)) {
-                    processed = ensureMathDelimiters(processed);
-                }
-                typingDiv.innerHTML = marked.parse(processed);
-            } catch (e) {
-                console.error('渲染 Markdown 失败:', e);
-                typingDiv.innerText = typingFullText;
-            }
-            // 保存消息
-            const s = sessions.find(s => s.id === typingSessionId);
-            if (s) {
-                s.messages.push({ role: "ai", text: typingFullText });
-            }
-            typingDiv = null;
-            typingSessionId = null;
-            // 刷新界面并启用输入
-            renderChat();
-            renderInfo();
-            enableInput(true);
-        }
+    fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+    })
+    .then(r => r.json())
+    .then(res => {
+        const reply = res.reply || "（未收到回复）";
+        startTyping(reply, s);
+    })
+    .catch(err => {
+        startTyping("❌ 请求失败: " + err.message, s);
     });
 }
 
-function forceCompleteTyping() {
-    if (!typingTimer) return;
-    clearInterval(typingTimer);
-    typingTimer = null;
-    if (typingDiv) {
+// ===== 打字机 =====
+function startTyping(text, session) {
+    if (typingTimer) forceCompleteTyping();
+
+    typingFullText = text || "";
+    typingCurrentText = "";
+    typingSessionId = session.id;
+    const chat = document.getElementById("chat");
+    if (!chat) {
+        console.error('聊天容器不存在');
+        enableInput(true);
+        return;
+    }
+
+    const div = document.createElement("div");
+    div.className = "msg ai";
+    chat.appendChild(div);
+    typingDiv = div;
+
+    if (typingFullText.length === 0) {
+        finish();
+        return;
+    }
+
+    typingTimer = setInterval(() => {
+        if (typingCurrentText.length < typingFullText.length) {
+            typingCurrentText += typingFullText[typingCurrentText.length];
+            typingDiv.innerText = typingCurrentText;
+            chat.scrollTop = chat.scrollHeight;
+        } else {
+            clearInterval(typingTimer);
+            typingTimer = null;
+            finish();
+        }
+    }, TYPING_SPEED);
+
+    function finish() {
+        let processed = typingFullText;
+        if (!/\$/.test(processed)) {
+            processed = ensureMathDelimiters(processed);
+        }
         try {
-            let processed = typingFullText;
-            if (!/\$/.test(processed)) {
-                processed = ensureMathDelimiters(processed);
-            }
             typingDiv.innerHTML = marked.parse(processed);
         } catch (e) {
             typingDiv.innerText = typingFullText;
@@ -190,7 +142,34 @@ function forceCompleteTyping() {
     }
 }
 
-// ========== 渲染函数 ==========
+// ===== 强制完成 =====
+function forceCompleteTyping() {
+    if (!typingTimer) return;
+    clearInterval(typingTimer);
+    typingTimer = null;
+    if (typingDiv) {
+        let processed = typingFullText;
+        if (!/\$/.test(processed)) {
+            processed = ensureMathDelimiters(processed);
+        }
+        try {
+            typingDiv.innerHTML = marked.parse(processed);
+        } catch (e) {
+            typingDiv.innerText = typingFullText;
+        }
+        const s = sessions.find(s => s.id === typingSessionId);
+        if (s) {
+            s.messages.push({ role: "ai", text: typingFullText });
+        }
+        typingDiv = null;
+        typingSessionId = null;
+        renderChat();
+        renderInfo();
+        enableInput(true);
+    }
+}
+
+// ===== 渲染聊天 =====
 function renderChat() {
     const chat = document.getElementById("chat");
     if (!chat) return;
@@ -233,6 +212,7 @@ function renderChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
+// ===== 会话列表 =====
 function renderSessions() {
     const box = document.getElementById("sessions");
     if (!box) return;
@@ -271,6 +251,7 @@ function renderSessions() {
     });
 }
 
+// ===== 删除会话 =====
 function deleteSession(id) {
     sessions = sessions.filter(s => s.id !== id);
     if (!sessions.some(s => s.id === currentId)) {
@@ -286,6 +267,7 @@ function deleteSession(id) {
     }
 }
 
+// ===== 右侧信息 =====
 function renderInfo() {
     const info = document.getElementById("info");
     if (!info) return;
@@ -293,13 +275,14 @@ function renderInfo() {
     info.innerText = s ? `名称: ${s.name}\n消息数: ${s.messages.length}` : "无会话";
 }
 
+// ===== 全刷新 =====
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-// ========== 初始化 ==========
+// ===== 初始化 =====
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
     if (input) {
@@ -311,4 +294,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     newChat();
+    // 额外确保输入启用
+    setTimeout(() => enableInput(true), 100);
 });
