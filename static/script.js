@@ -1,4 +1,4 @@
-// ===== 配置 Marked =====
+// ===== 配置 =====
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
 function ensureMathDelimiters(text) {
@@ -19,7 +19,6 @@ let typingCurrentText = "";
 let typingSessionId = null;
 const TYPING_SPEED = 15;
 
-// ===== 辅助 =====
 function getCurrent() { return sessions.find(s => s.id === currentId); }
 
 function enableInput(enable) {
@@ -27,20 +26,13 @@ function enableInput(enable) {
     const btn = document.getElementById("sendBtn");
     if (input) {
         input.disabled = !enable;
-        if (enable) {
-            input.focus();
-            input.placeholder = "输入消息…";
-        } else {
-            input.placeholder = "等待回复…";
-        }
+        input.placeholder = enable ? "输入消息…" : "等待回复…";
+        if (enable) input.focus();
         console.log('输入框 disabled =', input.disabled);
-    } else {
-        console.warn('输入框 #text 未找到');
     }
     if (btn) btn.disabled = !enable;
 }
 
-// ===== 新建会话 =====
 function newChat() {
     if (typingTimer) forceCompleteTyping();
     const id = Date.now();
@@ -57,16 +49,28 @@ function send() {
         return;
     }
     const input = document.getElementById("text");
-    if (!input) return;
+    if (!input) {
+        console.error('input 元素不存在');
+        return;
+    }
     const text = input.value.trim();
     if (!text) return;
 
     if (!currentId) newChat();
     const s = getCurrent();
+    if (!s) {
+        console.error('当前会话不存在');
+        return;
+    }
+
     s.messages.push({ role: "user", text });
-    renderChat();
-    renderInfo();
-    input.value = "";
+    try {
+        renderChat();
+    } catch (e) { console.error('renderChat 错误:', e); }
+    try {
+        renderInfo();
+    } catch (e) { console.error('renderInfo 错误:', e); }
+    input.value = "";   // 清空输入框
     enableInput(false);
 
     fetch("/chat", {
@@ -74,12 +78,13 @@ function send() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
     })
-    .then(r => r.json())
-    .then(res => {
-        const reply = res.reply || "（未收到回复）";
+    .then(res => res.json())
+    .then(data => {
+        const reply = data.reply || "（未收到回复）";
         startTyping(reply, s);
     })
     .catch(err => {
+        console.error('fetch 错误:', err);
         startTyping("❌ 请求失败: " + err.message, s);
     });
 }
@@ -121,13 +126,14 @@ function startTyping(text, session) {
     }, TYPING_SPEED);
 
     function finish() {
-        let processed = typingFullText;
-        if (!/\$/.test(processed)) {
-            processed = ensureMathDelimiters(processed);
-        }
         try {
+            let processed = typingFullText;
+            if (!/\$/.test(processed)) {
+                processed = ensureMathDelimiters(processed);
+            }
             typingDiv.innerHTML = marked.parse(processed);
         } catch (e) {
+            console.error('Markdown 渲染失败:', e);
             typingDiv.innerText = typingFullText;
         }
         const s = sessions.find(s => s.id === typingSessionId);
@@ -136,23 +142,26 @@ function startTyping(text, session) {
         }
         typingDiv = null;
         typingSessionId = null;
-        renderChat();
-        renderInfo();
+        try {
+            renderChat();
+        } catch (e) { console.error('renderChat 错误:', e); }
+        try {
+            renderInfo();
+        } catch (e) { console.error('renderInfo 错误:', e); }
         enableInput(true);
     }
 }
 
-// ===== 强制完成 =====
 function forceCompleteTyping() {
     if (!typingTimer) return;
     clearInterval(typingTimer);
     typingTimer = null;
     if (typingDiv) {
-        let processed = typingFullText;
-        if (!/\$/.test(processed)) {
-            processed = ensureMathDelimiters(processed);
-        }
         try {
+            let processed = typingFullText;
+            if (!/\$/.test(processed)) {
+                processed = ensureMathDelimiters(processed);
+            }
             typingDiv.innerHTML = marked.parse(processed);
         } catch (e) {
             typingDiv.innerText = typingFullText;
@@ -163,8 +172,12 @@ function forceCompleteTyping() {
         }
         typingDiv = null;
         typingSessionId = null;
-        renderChat();
-        renderInfo();
+        try {
+            renderChat();
+        } catch (e) { console.error('renderChat 错误:', e); }
+        try {
+            renderInfo();
+        } catch (e) { console.error('renderInfo 错误:', e); }
         enableInput(true);
     }
 }
@@ -172,7 +185,10 @@ function forceCompleteTyping() {
 // ===== 渲染聊天 =====
 function renderChat() {
     const chat = document.getElementById("chat");
-    if (!chat) return;
+    if (!chat) {
+        console.warn('chat 元素不存在');
+        return;
+    }
     chat.innerHTML = "";
     const s = getCurrent();
     if (!s) {
@@ -191,7 +207,8 @@ function renderChat() {
             }
             try {
                 div.innerHTML = marked.parse(content);
-            } catch {
+            } catch (e) {
+                console.error('解析消息失败:', e);
                 div.innerText = m.text;
             }
         }
@@ -207,7 +224,7 @@ function renderChat() {
     }
 
     if (window.MathJax) {
-        MathJax.typesetPromise([chat]).catch(err => console.warn('MathJax error:', err));
+        MathJax.typesetPromise([chat]).catch(err => console.warn('MathJax 渲染错误:', err));
     }
     chat.scrollTop = chat.scrollHeight;
 }
@@ -226,8 +243,12 @@ function renderSessions() {
         span.onclick = () => {
             if (typingTimer) forceCompleteTyping();
             currentId = s.id;
-            renderChat();
-            renderInfo();
+            try {
+                renderChat();
+            } catch (e) { console.error('renderChat 错误:', e); }
+            try {
+                renderInfo();
+            } catch (e) { console.error('renderInfo 错误:', e); }
             enableInput(true);
         };
         span.ondblclick = () => {
@@ -251,7 +272,6 @@ function renderSessions() {
     });
 }
 
-// ===== 删除会话 =====
 function deleteSession(id) {
     sessions = sessions.filter(s => s.id !== id);
     if (!sessions.some(s => s.id === currentId)) {
@@ -267,15 +287,17 @@ function deleteSession(id) {
     }
 }
 
-// ===== 右侧信息 =====
 function renderInfo() {
     const info = document.getElementById("info");
-    if (!info) return;
+    if (!info) {
+        console.warn('info 元素不存在');
+        return;
+    }
     const s = getCurrent();
     info.innerText = s ? `名称: ${s.name}\n消息数: ${s.messages.length}` : "无会话";
+    console.log('renderInfo 更新:', info.innerText);
 }
 
-// ===== 全刷新 =====
 function renderAll() {
     renderSessions();
     renderChat();
@@ -294,6 +316,5 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     newChat();
-    // 额外确保输入启用
     setTimeout(() => enableInput(true), 100);
 });
