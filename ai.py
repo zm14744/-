@@ -75,7 +75,9 @@ def ask_ai(text, retries=1, history=None):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for msg in history:
         role = "user" if msg["role"] == "user" else "assistant"
-        messages.append({"role": role, "content": msg["text"]})
+        # ✅ 兼容前端传来的 "content" 字段，也兼容旧 "text"
+        content = msg.get("content") or msg.get("text", "")
+        messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": text})
 
     data = {
