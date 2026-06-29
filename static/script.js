@@ -1,6 +1,6 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ========== 增强的 AI 错误修复 ==========
+// ========== 修复 AI 常见错误 ==========
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '\\]')
@@ -19,9 +19,9 @@ function fixAIErrors(text) {
         .replace(/\\{/g, '\\{')
         .replace(/\\}/g, '\\}')
         .replace(/\\dots,/g, '\\dots,')
-        // ⭐ 修复重复的 \end{...}
+        // 修复重复的 \end
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
-        // 自动补全缺失的 \end{...}
+        // 自动补全缺失的 \end
         .replace(/\\begin\{([^}]*)\}([\s\S]*?)(?=\\end|$)/g, (match, env, content) => {
             if (!match.includes('\\end{' + env + '}')) {
                 return '\\begin{' + env + '}' + content + '\\end{' + env + '}';
@@ -42,25 +42,48 @@ function prepareMathContent(text) {
     const placeholders = [];
     let idx = 0;
 
-    // 提取所有公式：\[...\]、$$...$$、\(...\)、$...$、[...]（含 LaTeX）
-    const regex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$|\[([^\]]*?)\]/g;
-    raw = raw.replace(regex, (match, d1, d2, i1, i2, bracket) => {
-        let content = d1 || d2 || i1 || i2 || bracket;
-        if (!content || !content.trim()) return match;
-        if (match.startsWith('[') && !hasLatex(content)) return match;
-        const isDisplay = match.startsWith('\\[') || match.startsWith('$$') || (match.startsWith('[') && !match.startsWith('\\['));
-        const ph = '@@MATH_' + (idx++) + '@@';
-        placeholders.push({ ph, content, isDisplay });
+    // ========== 第一步：提取所有块级 \begin{...}...\end{...} ==========
+    // 注意：先处理块级，避免被后续的 [...] 误匹配
+    const beginEndRegex = /\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g;
+    raw = raw.replace(beginEndRegex, (match, env, content) => {
+        const fullContent = match; // 保留完整内容，包括 \begin 和 \end
+        const ph = '@@MATH_BLOCK_' + (idx++) + '@@';
+        placeholders.push({ ph, content: fullContent, isDisplay: true });
         return ph;
     });
 
-    // 处理裸 LaTeX（未被上述规则匹配的）
-    const parts = raw.split(/(@@MATH_\d+@@)/g);
+    // ========== 第二步：提取其他块级公式 ==========
+    // \[...\]、$$...$$、[...]（含 LaTeX）
+    const otherBlockRegex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\[([^\]]*?)\]/g;
+    raw = raw.replace(otherBlockRegex, (match, d1, d2, bracket) => {
+        let content = d1 || d2 || bracket;
+        if (!content || !content.trim()) return match;
+        if (match.startsWith('[') && !hasLatex(content)) return match;
+        const isDisplay = true;
+        const ph = '@@MATH_BLOCK_' + (idx++) + '@@';
+        placeholders.push({ ph, content: match, isDisplay: true }); // 保存完整内容，包括定界符
+        return ph;
+    });
+
+    // ========== 第三步：提取行内公式 ==========
+    // \(...\)、$...$
+    const inlineRegex = /\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$/g;
+    raw = raw.replace(inlineRegex, (match, i1, i2) => {
+        let content = i1 || i2;
+        if (!content || !content.trim()) return match;
+        const ph = '@@MATH_INLINE_' + (idx++) + '@@';
+        placeholders.push({ ph, content: match, isDisplay: false }); // 保存完整内容
+        return ph;
+    });
+
+    // ========== 第四步：处理裸 LaTeX ==========
+    const parts = raw.split(/(@@MATH_(BLOCK|INLINE)_\d+@@)/g);
     const finalParts = parts.map(part => {
         if (part.startsWith('@@MATH_')) return part;
         if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
-            const isDisplay = part.includes('\n');
-            const ph = '@@MATH_' + (idx++) + '@@';
+            // 判断是否为块级：包含换行或 \begin
+            const isDisplay = part.includes('\n') || /\\begin/.test(part);
+            const ph = (isDisplay ? '@@MATH_BLOCK_' : '@@MATH_INLINE_') + (idx++) + '@@';
             placeholders.push({ ph, content: part, isDisplay });
             return ph;
         }
@@ -68,19 +91,26 @@ function prepareMathContent(text) {
     });
     const pureText = finalParts.join('');
 
-    // marked 解析纯文本
+    // ========== 第五步：用 marked 解析纯文本 ==========
     let html = marked.parse(pureText);
 
-    // 还原占位符，并将反斜杠转为实体
+    // ========== 第六步：还原占位符为 span，并转义反斜杠 ==========
     placeholders.forEach(p => {
-        const escaped = p.content.replace(/\\/g, '&#92;');
-        const span = p.isDisplay
-            ? '<span class="math-tex">\\[' + escaped + '\\]</span>'
-            : '<span class="math-tex">\\(' + escaped + '\\)</span>';
+        let content = p.content;
+        // 如果内容本身已经包含 \begin 或 \[ 等，我们直接保留，但需要转义反斜杠
+        // 注意：内容可能已经包含定界符，我们保留它们，但替换反斜杠为实体
+        const escaped = content.replace(/\\/g, '&#92;');
+        let span;
+        if (p.isDisplay) {
+            // 块级：使用 \[...\]
+            span = '<span class="math-tex">\\[' + escaped + '\\]</span>';
+        } else {
+            span = '<span class="math-tex">\\(' + escaped + '\\)</span>';
+        }
         html = html.replace(p.ph, span);
     });
 
-    // ⭐ 最终后处理：转换所有残留的 \( 和 \[
+    // ========== 第七步：额外后处理，确保所有 \( 和 \[ 被转义 ==========
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
