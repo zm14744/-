@@ -18,19 +18,20 @@ function getCurrent() {
 
 // =====================
 function enableInput(v) {
-    document.getElementById("text").disabled = !v;
+    const input = document.getElementById("text");
+    const btn = document.getElementById("sendBtn");
+
+    if (input) input.disabled = !v;
+    if (btn) btn.disabled = !v;
 }
 
 // =====================
-// ⭐核心：安全渲染 + MathJax重新扫描
+// 安全渲染（MathJax稳定版）
 function renderHTML(el, text) {
     el.innerHTML = marked.parse(text);
 
-    // ⭐关键修复：重新渲染数学公式
     if (window.MathJax) {
-        MathJax.typesetPromise([el]).catch(err => {
-            console.warn("MathJax error:", err);
-        });
+        MathJax.typesetPromise([el]).catch(() => {});
     }
 }
 
@@ -70,9 +71,23 @@ function send() {
             }))
         })
     })
-    .then(r => r.json())
-    .then(d => startTyping(d.reply || "", s.id))
-    .catch(e => startTyping("请求失败：" + e.message, s.id));
+    .then(async r => {
+        const ct = r.headers.get("content-type") || "";
+
+        // ⭐关键：防 HTML 崩溃
+        if (!ct.includes("application/json")) {
+            const t = await r.text();
+            throw new Error("后端未返回JSON：" + t.slice(0, 80));
+        }
+
+        return r.json();
+    })
+    .then(d => {
+        startTyping(d.reply || "（空回复）", currentId);
+    })
+    .catch(err => {
+        startTyping("❌ 请求失败：" + err.message, currentId);
+    });
 }
 
 // =====================
@@ -86,7 +101,6 @@ function startTyping(text, sessionId) {
 
     const div = document.createElement("div");
     div.className = "msg ai";
-
     chat.appendChild(div);
 
     let i = 0;
@@ -146,6 +160,25 @@ function renderChat() {
 
         chat.appendChild(div);
     });
+
+    chat.scrollTop = chat.scrollHeight;
+}
+
+// =====================
+// ⭐修复：右侧信息栏消失问题
+function renderInfo() {
+    const info = document.getElementById("info");
+    const s = getCurrent();
+
+    if (!info) return;
+
+    if (!s) {
+        info.innerText = "无会话";
+        return;
+    }
+
+    info.innerText =
+        `名称: ${s.name}\n消息数: ${s.messages.length}`;
 }
 
 // =====================
@@ -178,7 +211,13 @@ function renderSessions() {
 
         del.onclick = (e) => {
             e.stopPropagation();
+
             sessions = sessions.filter(x => x.id !== s.id);
+
+            if (currentId === s.id) {
+                currentId = sessions.length ? sessions[0].id : null;
+            }
+
             renderAll();
         };
 
@@ -192,6 +231,7 @@ function renderSessions() {
 function renderAll() {
     renderSessions();
     renderChat();
+    renderInfo();   // ⭐关键修复
 }
 
 // =====================
