@@ -1,7 +1,7 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// 清理 INLINE/BLOCK 等干扰
-function fixAIErrors(text) {
+// 清理干扰标记和常见错误
+function cleanText(text) {
     let cleaned = text.replace(/\b(INLINE|BLOCK)\b/gi, '');
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
     return cleaned
@@ -19,68 +19,74 @@ function fixAIErrors(text) {
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}');
 }
 
-function hasLatex(text) {
-    return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
-}
-
 function prepareMathContent(text) {
-    let processed = fixAIErrors(text);
-    const placeholders = [];
-    let idx = 0;
+    let processed = cleanText(text);
 
-    // ---- 1. 提取所有公式并替换为占位符 ----
-    // 支持的公式格式：\[...\]、$$...$$、\(...\)、$...$、\begin...\end、[...]（含LaTeX）
-    const regex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$|\\begin\{([^}]*)\}([\s\S]*?)\\end\{\5\}|\[([^\]]*?)\]/g;
-    processed = processed.replace(regex, (match, d1, d2, i1, i2, beginEnv, beginContent, bracket) => {
-        let content = d1 || d2 || i1 || i2 || beginContent || bracket;
-        if (!content || !content.trim()) return match;
-        // 对于未转义的 [...] 但内容不含 LaTeX，则保留
-        if (match.startsWith('[') && !hasLatex(content)) return match;
-        // 判断是否为块级（显示模式）
-        const isDisplay = match.startsWith('\\[') || match.startsWith('$$') || match.startsWith('\\begin') || (match.startsWith('[') && !match.startsWith('\\['));
-        const type = isDisplay ? 'display' : 'inline';
-        const ph = '@@MATH_' + (idx++) + '@@';
-        placeholders.push({ ph, content: match, type });
-        return ph;
+    // ---- 1. 转义公式中的反斜杠为 HTML 实体（防止被浏览器或 marked 破坏） ----
+    const escapeBS = s => s.replace(/\\/g, '&#92;');
+
+    // ---- 2. 先处理块级公式：\[...\]、$$...$$、\begin...\end ----
+    // 将 \[...\] 和 $$...$$ 替换为 <span class="math-tex">\[...\]</span>
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
+        return '<span class="math-tex">\\[' + escapeBS(content) + '\\]</span>';
+    });
+    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
+        return '<span class="math-tex">\\[' + escapeBS(content) + '\\]</span>';
+    });
+    // 处理 \begin{...}...\end{...}
+    processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
+        // 整个环境作为块级公式
+        const full = match;
+        return '<span class="math-tex">\\[' + escapeBS(full) + '\\]</span>';
     });
 
-    // ---- 2. 处理裸 LaTeX（未被上述规则匹配的） ----
-    const parts = processed.split(/(@@MATH_\d+@@)/g);
+    // ---- 3. 处理未转义的 [...] 但包含 LaTeX 命令 ----
+    processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
+        if (/\\[a-zA-Z]/.test(content) && !match.includes('<span class="math-tex">')) {
+            return '<span class="math-tex">\\[' + escapeBS(content) + '\\]</span>';
+        }
+        return match;
+    });
+
+    // ---- 4. 处理行内公式：\(...\)、$...$ ----
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
+        return '<span class="math-tex">\\(' + escapeBS(content) + '\\)</span>';
+    });
+    processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
+        // 避免匹配到 $$...$$ 残留（但已经处理过）
+        return '<span class="math-tex">\\(' + escapeBS(content) + '\\)</span>';
+    });
+
+    // ---- 5. 处理裸 LaTeX 命令（未被任何包裹的） ----
+    // 使用拆分法，只处理非 span 部分
+    const parts = processed.split(/(<span class="math-tex">[\s\S]*?<\/span>)/g);
     const finalParts = parts.map(part => {
-        if (part.startsWith('@@MATH_')) return part;
-        if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
-            const isDisplay = part.includes('\n') || /\\begin/.test(part);
-            const type = isDisplay ? 'display' : 'inline';
-            const ph = '@@MATH_' + (idx++) + '@@';
-            // 对于裸 LaTeX，我们直接包裹为 \(...\) 或 \[...\]
-            const wrapped = isDisplay ? '\\[' + part + '\\]' : '\\(' + part + '\\)';
-            placeholders.push({ ph, content: wrapped, type });
-            return ph;
+        if (part.startsWith('<span class="math-tex">')) return part;
+        // 如果包含 LaTeX 命令且没有被 $ 或 \( 等包裹，则自动包裹为行内公式
+        if (/\\[a-zA-Z]/.test(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
+            // 判断是否为块级（含换行）
+            const isDisplay = part.includes('\n');
+            const escaped = escapeBS(part);
+            if (isDisplay) {
+                return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+            } else {
+                return '<span class="math-tex">\\(' + escaped + '\\)</span>';
+            }
         }
         return part;
     });
-    const pureText = finalParts.join('');
+    processed = finalParts.join('');
 
-    // ---- 3. 用 marked 解析纯文本 ----
-    let html = marked.parse(pureText);
+    // ---- 6. 用 marked 解析（它会保留 HTML 标签） ----
+    let html = marked.parse(processed);
 
-    // ---- 4. 还原占位符为 <span class="math-tex"> ----
-    placeholders.forEach(p => {
-        // 转义反斜杠为实体，防止被浏览器或后续处理破坏
-        const escaped = p.content.replace(/\\/g, '&#92;');
-        const span = p.type === 'display'
-            ? '<span class="math-tex">\\[' + escaped + '\\]</span>'
-            : '<span class="math-tex">\\(' + escaped + '\\)</span>';
-        html = html.replace(p.ph, span);
-    });
-
-    // ---- 5. 后处理：块级公式包裹 div 以实现居中和间距 ----
+    // ---- 7. 后处理：块级公式包裹 div 实现居中 ----
     html = html.replace(/<span class="math-tex">\\\[([\s\S]*?)\\\]<\/span>/g, (match, content) => {
-        return '<div class="math-block" style="text-align:center; margin:12px 0; overflow-x:auto;">' +
+        return '<div class="math-block" style="text-align:center; margin:14px 0; overflow-x:auto;">' +
                '<span class="math-tex">\\[' + content + '\\]</span></div>';
     });
 
-    // ---- 6. 额外保护：将残留的 \( 和 \[ 转义 ----
+    // ---- 8. 额外安全：将残留的 \( 和 \[ 转义（防止被浏览器识别为标签） ----
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
