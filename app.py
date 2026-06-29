@@ -1,13 +1,15 @@
 from flask import Flask, request, jsonify, render_template
 import traceback
 import os
+import sys
 
+# 尝试导入 ai，如果失败则给出错误处理
 try:
     from ai import ask_ai
 except Exception as e:
-    print("❌ 导入 ai 模块失败:", e)
+    print("❌ 导入 ai 模块失败:", e, file=sys.stderr)
     def ask_ai(messages):
-        return f"❌ AI 模块初始化失败: {str(e)}"
+        return f"❌ AI 模块加载失败: {str(e)}。请检查 ai.py 是否存在且语法正确。"
 
 app = Flask(__name__)
 
@@ -25,8 +27,7 @@ def chat():
         if not messages:
             return jsonify({"reply": "⚠️ 没有消息内容"}), 400
 
-        # 记录请求（便于调试）
-        print(f"收到请求，消息数: {len(messages)}")
+        print(f"📩 收到 {len(messages)} 条消息")
         reply = ask_ai(messages)
         return jsonify({"reply": reply})
 
