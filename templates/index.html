@@ -16,7 +16,6 @@ body {
 
 .layout { display:flex; height:100vh; }
 
-/* 左侧 */
 .left {
     width:240px;
     background:#0b1220;
@@ -36,8 +35,10 @@ body {
     margin-bottom:10px;
 }
 
-/* sessions */
-#sessions { flex:1; overflow-y:auto; }
+#sessions {
+    flex:1;
+    overflow-y:auto;
+}
 
 .session {
     display:flex;
@@ -57,7 +58,7 @@ body {
     white-space:nowrap;
 }
 
-/* ⭐ 删除按钮：完全保留你原来的 */
+/* ⭐ 删除按钮（完全保留你原来的样子） */
 .session .del {
     width:20px;
     height:20px;
@@ -69,7 +70,6 @@ body {
     margin-left:8px;
 }
 
-/* 中间 */
 .center {
     flex:1;
     display:flex;
@@ -94,12 +94,10 @@ body {
 .user { background:#3b82f6; margin-left:auto; }
 .ai { background:#1f2937; }
 
-/* Markdown排版 */
 .ai-content p { margin:10px 0; }
 .ai-content h1,.ai-content h2,.ai-content h3 { margin:12px 0 8px; }
 .ai-content ul,.ai-content ol { padding-left:20px; margin:10px 0; }
 
-/* 输入 */
 .input {
     display:flex;
     padding:10px;
@@ -121,7 +119,6 @@ body {
     color:white;
 }
 
-/* 右侧 */
 .right {
     width:240px;
     background:#0b1220;
@@ -166,6 +163,7 @@ window.MathJax = {
 
 <div class="center">
     <div id="chat" class="chat"></div>
+
     <div class="input">
         <input id="text" placeholder="输入消息…">
         <button onclick="send()">发送</button>
