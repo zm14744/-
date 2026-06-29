@@ -1,7 +1,12 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
+// ===== 强化清理：移除所有 INLINE、BLOCK 及多余空格 =====
 function fixAIErrors(text) {
-    return text
+    let cleaned = text
+        .replace(/\b(INLINE|BLOCK)\b/gi, '')   // 移除大小写 INLINE/BLOCK
+        .replace(/\s+/g, ' ')                  // 合并多余空格
+        .trim();
+    return cleaned
         .replace(/\\JBLOCK/g, '\\]')
         .replace(/IJBLOCK/g, '\\]')
         .replace(/Icdot/g, '\\cdot')
@@ -48,14 +53,14 @@ function prepareMathContent(text) {
         return ph;
     });
 
-    // 4. 保护 \begin{...}...\end{...} 环境
+    // 4. 保护 \begin{...}...\end{...}
     processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
         const ph = '@@BLOCK_' + (idx++) + '@@';
         placeholders.push({ ph, content: match, type: 'display' });
         return ph;
     });
 
-    // 5. 保护未转义的 [...]（含 LaTeX）
+    // 5. 保护未转义的 [...] 但含 LaTeX
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             const ph = '@@BLOCK_' + (idx++) + '@@';
@@ -79,7 +84,7 @@ function prepareMathContent(text) {
         return ph;
     });
 
-    // 8. 处理裸 LaTeX（未被上述规则匹配的）
+    // 8. 处理裸 LaTeX
     const parts = processed.split(/(@@(EXISTING_SPAN|BLOCK|INLINE)_\d+@@)/g);
     const finalParts = parts.map(part => {
         if (part.startsWith('@@')) return part;
@@ -97,10 +102,10 @@ function prepareMathContent(text) {
     });
     const pureText = finalParts.join('');
 
-    // 9. marked 解析纯文本
+    // 9. marked 解析
     let html = marked.parse(pureText);
 
-    // 10. 还原占位符为 <span class="math-tex"> 标签（不转义反斜杠）
+    // 10. 还原占位符
     placeholders.forEach(p => {
         let spanContent = p.content;
         if (p.type === 'existing') {
@@ -108,11 +113,9 @@ function prepareMathContent(text) {
             return;
         }
         if (p.type === 'display') {
-            // 如果内容不是以 \[ 开头，则自行包裹
             if (!/^\\\[/.test(spanContent) && !/^\$\$/.test(spanContent)) {
                 spanContent = '\\[' + spanContent + '\\]';
             }
-            // 替换 $$ 为 \[ \]
             if (/^\$\$/.test(spanContent) && /\$\$$/.test(spanContent)) {
                 spanContent = spanContent.replace(/^\$\$/, '\\[').replace(/\$\$$/, '\\]');
             }
@@ -130,7 +133,7 @@ function prepareMathContent(text) {
         }
     });
 
-    // 11. 后处理：如果还有残留的 \( 和 \[，转义为实体（避免被浏览器解析）
+    // 11. 最后后处理
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
@@ -139,7 +142,7 @@ function prepareMathContent(text) {
     return html;
 }
 
-// ========== 应用逻辑（完全不变） ==========
+// ========== 应用逻辑（保持不变） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
