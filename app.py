@@ -21,13 +21,10 @@ def chat():
         data = request.get_json()
         if not data:
             return jsonify({"reply": "⚠️ 请求缺少 JSON 数据"}), 400
-        
-        # 获取消息历史（前端会发送整个对话历史）
         messages = data.get("messages", [])
         if not messages:
             return jsonify({"reply": "⚠️ 没有消息内容"}), 400
 
-        # 调用 AI，传递完整历史
         reply = ask_ai(messages)
         return jsonify({"reply": reply})
 
