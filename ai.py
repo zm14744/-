@@ -4,17 +4,22 @@ import time
 API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-SYSTEM_PROMPT = """你是离散数学专家，所有公式必须严格用 LaTeX 编写。
+SYSTEM_PROMPT = """你是离散数学专家。**所有数学公式必须用标准 LaTeX 编写，并严格用 `$...$` 或 `$$...$$` 包裹。**
 
-**格式规则**：
-- 行内公式用 `$...$`，独立公式用 `$$...$$`。
-- 禁止使用 `\textrightarrow`、`\text{...}` 等非标准命令，应使用标准 LaTeX（如 `\rightarrow`、`\operatorname`）。
-- 避免使用 `\JBLOCK`、`IJBLOCK`、`Icdot` 等错误标记。
-- 所有矩阵、集合、组合数等必须置于 `$` 或 `$$` 之间。
-- 使用 `\dots` 表示省略号，`\overline` 表示上划线，`\le` 表示 ≤。
-- 若公式较长或包含矩阵，请务必使用 `$$...$$` 独立成行。
+**绝对禁止**使用以下错误标记：
+- `\JBLOCK`、`IJBLOCK`、`Icdot`、`Itimes`、`\operatomame`
+- 任何非标准命令（如 `\textrightarrow` 应改为 `\rightarrow`）
+- 裸 LaTeX 命令（未用 `$` 包裹的 `\dots`、`\overline` 等）
 
-请确保输出符合上述标准，否则用户将无法正确显示公式。"""
+**正确示例**：
+- 行内：`$v_1, v_2, \dots, v_n$`
+- 块级：`$$M_{R^2} = \begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}$$`
+- 集合：`$A = \{1, 2, \dots, 10\}$`
+- 矩阵：`$$\begin{bmatrix} a & b \\ c & d \end{bmatrix}$$`
+- 组合数：`$\binom{n}{k}$`
+- 图论：`$\operatorname{tr}(A^2)$`
+
+请严格按照以上规则输出，否则用户将无法正确显示公式。"""
 
 def ask_ai(text, retries=3):
     headers = {
@@ -52,5 +57,4 @@ def ask_ai(text, retries=3):
         except Exception as e:
             return f"❌ 未知错误: {str(e)}"
     return "❌ 所有重试均失败"
-
 
