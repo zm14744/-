@@ -6,34 +6,25 @@ ASK_AI_MOCK = False
 API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"  # 请替换
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 LaTeX 编写，并严格用 `$...$` 或 `$$...$$` 包裹。
+SYSTEM_PROMPT = """你是离散数学专家。
 
-**【绝对严格的格式要求】**：
-1. 所有的数学公式**必须**用 `$` 或 `$$` 包裹。
-2. 如果在中文句子中插入数学符号，务必用 `$` 包裹符号两端。例如：
-   - ❌ 错误写法：`邻接矩阵 \mathbf{A}`
-   - ✅ 正确写法：`邻接矩阵 $\mathbf{A}$`
-   - ❌ 错误写法：`矩阵 L_{ij} 的元素`
-   - ✅ 正确写法：`矩阵 $L_{ij}$ 的元素`
-3. 行内公式示例：`顶点集为 $V = \{1, 2, \dots, n\}$`
-4. 独立公式示例：`$$ \sum_{i=1}^{n} i = \frac{n(n+1)}{2} $$`
-5. 绝对禁止使用 `\[...\]` 或 `\(...\)` 包裹数学公式！请全部统一转为 `$` 和 `$$`。禁止使用 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等非标准标记。"""
+【绝对严格的数学格式要求】：
+1. 所有的行内公式**必须**用 `\(...\)` 包裹。
+2. 所有的独立块级公式**必须**用 `\[...\]` 包裹。
+3. 绝对禁止使用 `$`、`$$` 来包裹公式。
+4. 绝对禁止使用非标准标记如 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame`。
+5. 数学符号如 `\{ \}`、`\mathbf`、`\deg` 等**必须**写在上面的 `\(...\)` 定界符内部。"""
 
 def ask_ai(text, retries=1):
     if ASK_AI_MOCK:
-        return """
-        $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
-        
-        行内公式：$v_1, v_2, \\dots, v_n$
-        
-        集合：$A = \\{1, 2, \\dots, 10\\}$
-        
-        组合数：$\\binom{n}{k}$
-        
-        图论：$\\operatorname{tr}(A^2)$
-        
-        ✅ 这是模拟模式，说明后端已正常响应。请检查 API Key 是否正确。
-        """
+        return """\[
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+\]
+行内公式：\(v_1, v_2, \dots, v_n\)
+集合：\(A = \{1, 2, \dots, 10\}\)
+组合数：\(\binom{n}{k}\)
+图论：\(\operatorname{tr}(A^2)\)
+✅ 这是模拟模式，说明后端已正常响应。请检查 API Key 是否正确。"""
     
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -68,4 +59,3 @@ def ask_ai(text, retries=1):
         except Exception as e:
             return f"❌ 未知错误: {str(e)}"
     return "❌ 所有重试均失败"
-
