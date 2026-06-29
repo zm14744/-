@@ -1,6 +1,6 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// 修复 AI 常见错误
+// ========== 增强的 AI 错误修复 ==========
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '\\]')
@@ -19,6 +19,9 @@ function fixAIErrors(text) {
         .replace(/\\{/g, '\\{')
         .replace(/\\}/g, '\\}')
         .replace(/\\dots,/g, '\\dots,')
+        // ⭐ 修复重复的 \end{...}
+        .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
+        // 自动补全缺失的 \end{...}
         .replace(/\\begin\{([^}]*)\}([\s\S]*?)(?=\\end|$)/g, (match, env, content) => {
             if (!match.includes('\\end{' + env + '}')) {
                 return '\\begin{' + env + '}' + content + '\\end{' + env + '}';
@@ -39,6 +42,7 @@ function prepareMathContent(text) {
     const placeholders = [];
     let idx = 0;
 
+    // 提取所有公式：\[...\]、$$...$$、\(...\)、$...$、[...]（含 LaTeX）
     const regex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$|\[([^\]]*?)\]/g;
     raw = raw.replace(regex, (match, d1, d2, i1, i2, bracket) => {
         let content = d1 || d2 || i1 || i2 || bracket;
@@ -50,6 +54,7 @@ function prepareMathContent(text) {
         return ph;
     });
 
+    // 处理裸 LaTeX（未被上述规则匹配的）
     const parts = raw.split(/(@@MATH_\d+@@)/g);
     const finalParts = parts.map(part => {
         if (part.startsWith('@@MATH_')) return part;
@@ -62,8 +67,11 @@ function prepareMathContent(text) {
         return part;
     });
     const pureText = finalParts.join('');
+
+    // marked 解析纯文本
     let html = marked.parse(pureText);
 
+    // 还原占位符，并将反斜杠转为实体
     placeholders.forEach(p => {
         const escaped = p.content.replace(/\\/g, '&#92;');
         const span = p.isDisplay
@@ -72,10 +80,16 @@ function prepareMathContent(text) {
         html = html.replace(p.ph, span);
     });
 
+    // ⭐ 最终后处理：转换所有残留的 \( 和 \[
+    html = html.replace(/\\\(/g, '&#92;(')
+               .replace(/\\\)/g, '&#92;)')
+               .replace(/\\\[/g, '&#92;[')
+               .replace(/\\\]/g, '&#92;]');
+
     return html;
 }
 
-// ===== 应用逻辑 =====
+// ========== 以下为应用逻辑（不变） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
