@@ -1,5 +1,6 @@
-marked.setOptions({ gfm: true, breaks: true, sanitize: false });
+marked.setOptions({ gfm: true, breaks: true });
 
+// ===== 修复 AI 常见拼写/格式错误 =====
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '$$')
@@ -15,56 +16,47 @@ function fixAIErrors(text) {
         .replace(/\\text{ *le *}/g, '\\le ')
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
         .replace(/\bINLINE\b/g, '')
-        .replace(/\bBLOCK\b/g, '');
+        .replace(/\bBLOCK\b/g, '')
+        // 如果AI用 $ 包裹，自动纠正为标准的 \( \)
+        .replace(/\$\$([\s\S]*?)\$\$/g, '\\\[$1\\\]')
+        .replace(/\$([^\$]*?)\$/g, '\\\($1\\\)');
 }
 
+// ===== 判断文本中是否包含 LaTeX 命令 =====
 function hasLatex(text) {
-    // 修复：增加对圆括号 \( \) 的识别
     return /\\[a-zA-Z(){}]|\\begin|\\end|\^|_|~/.test(text);
 }
 
+// ===== 核心渲染逻辑：捕获不规范定界符并转换为标准 LaTeX 格式 =====
 function prepareMathContent(text) {
     let processed = fixAIErrors(text);
 
-    // 处理 \begin{...}...\end{...} 环境（块级）
-    processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match) => {
-        return '<span class="math-tex">' + match + '</span>';
-    });
+    // 1. 忽略已正确的标准 \[...\] 和 \(...\)
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match) => match);
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match) => match);
 
-    // 处理 $$...$$ 块级
-    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match) => {
-        return '<span class="math-tex">' + match + '</span>';
-    });
-
-    // 处理 \[...\] 块级
-    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match) => {
-        return '<span class="math-tex">' + match + '</span>';
-    });
-
-    // 处理 [ ... ] 块级（兼容 AI 偷懒写法）
-    processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
+    // 2. 捕获 AI 偷懒写的 [ ... ] 独立公式，并将其替换为标准的 \[ ... \]
+    processed = processed.replace(/\[([\s\S]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
-            return '<span class="math-tex">' + match + '</span>';
+            return '\\\[' + content + '\\\]';
         }
         return match;
     });
 
-    // 处理 $...$ 行内
-    processed = processed.replace(/\$([^\$]*?)\$/g, (match) => {
-        return '<span class="math-tex">' + match + '</span>';
+    // 3. 捕获 AI 偷懒写的 ( ... ) 行内公式（支持一层嵌套括号），替换为标准的 \( ... \)
+    processed = processed.replace(/\(((?:[^()]|\([^()]*\))*)\)/g, (match, content) => {
+        if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
+            return '\\\\( ' + content + ' \\\\)';
+        }
+        return match;
     });
 
-    // 处理 \(...\) 行内（降级兼容）
-    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match) => {
-        return '<span class="math-tex">' + match + '</span>';
-    });
-
+    // 4. 将标准格式交给 marked 解析 Markdown 语法（标题、粗体等）
     let html = marked.parse(processed);
-    // 注意：这里删除了所有对 \ 实体的替换逻辑，原封不动交给 MathJax
     return html;
 }
 
-// ========== 以下为应用逻辑 ==========
+// ========== 聊天应用逻辑（无改动） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
