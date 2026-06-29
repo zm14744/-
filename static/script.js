@@ -1,10 +1,10 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ===== 安全地修复 AI 常见错误 =====
+// ===== 修复常见 AI 拼写错误 =====
 function fixAIErrors(text) {
     return text
-        .replace(/\\JBLOCK/g, '\\]')
-        .replace(/IJBLOCK/g, '\\]')
+        .replace(/\\JBLOCK/g, '$$')
+        .replace(/IJBLOCK/g, '$$')
         .replace(/Icdot/g, '\\cdot')
         .replace(/Itimes/g, '\\times')
         .replace(/\\text\{/g, '\\text{')
@@ -15,79 +15,57 @@ function fixAIErrors(text) {
         .replace(/\\text{ le }/g, '\\le ')
         .replace(/\\text{ *le *}/g, '\\le ')
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
-        // 移除 INLINE 和 BLOCK 标记
         .replace(/\bINLINE\b/g, '')
         .replace(/\bBLOCK\b/g, '');
 }
 
+// ===== 判断文本中是否包含数学符号 =====
 function hasLatex(text) {
-    // 【修改点】：增加了 \{\} 和 \{\} 的识别，解决集合符号无法识别的问题
     return /\\[a-zA-Z]+|\\[{}]|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// ===== 主函数：直接替换公式为 <span class="math-tex"> =====
+// ===== 主函数：直接提取数学源码并交由 MathJax 渲染 =====
 function prepareMathContent(text) {
-    // 1. 修复错误
     let processed = fixAIErrors(text);
-    
-    // 2. 将各种公式替换为 span 标签（同时转义反斜杠）
-    // 注意顺序：先处理块级，再处理行内，避免冲突
-    const escapeBS = s => s.replace(/\\/g, '&#92;');
 
-    // 处理 \begin{...}...\end{...} 环境（块级）
+    // 1. 处理 \begin{...}...\end{...} 环境（块级）
     processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
-        // 整个环境内容作为块级公式
-        const full = match;
-        const escaped = full.replace(/\\/g, '&#92;');
-        return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+        return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 处理 $$...$$ 块级
+    // 2. 处理 $$...$$ 块级
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        const escaped = escapeBS(content);
-        return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+        return '<span class="math-tex">' + content + '</span>';
     });
 
-    // 处理 \[...\] 块级
+    // 3. 处理 \[...\] 块级 (保留源码防止被Markdown破坏)
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
-        const escaped = escapeBS(content);
-        return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+        return '<span class="math-tex">' + content + '</span>';
     });
 
-    // 处理未转义的 [...] 但包含 LaTeX（视为块级）
+    // 4. 处理 [ ... ] 块级（AI经常会用方括号当作独立公式标记）
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
-            const escaped = escapeBS(content);
-            return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+            return '<span class="math-tex">' + content + '</span>';
         }
         return match;
     });
 
-    // 处理 $...$ 行内（非贪婪匹配，避免跨多个 $）
+    // 5. 处理 $...$ 行内
     processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        const escaped = escapeBS(content);
-        return '<span class="math-tex">\\(' + escaped + '\\)</span>';
+        return '<span class="math-tex">' + content + '</span>';
     });
 
-    // 处理 \(...\) 行内
+    // 6. 处理 \(...\) 行内
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
-        const escaped = escapeBS(content);
-        return '<span class="math-tex">\\(' + escaped + '\\)</span>';
+        return '<span class="math-tex">' + content + '</span>';
     });
 
-    // 3. 将结果交给 marked 解析（marked 会保留 HTML 标签）
     let html = marked.parse(processed);
-
-    // 【修改点】：删除了以下4行对 MathJax 定界符的实体转义，避免破坏渲染
-    // html = html.replace(/\\\(/g, '&#92;(')
-    //            .replace(/\\\)/g, '&#92;)')
-    //            .replace(/\\\[/g, '&#92;[')
-    //            .replace(/\\\]/g, '&#92;]');
-
     return html;
 }
 
-// ========== 应用逻辑（稳定版，完全保留） ==========
+// ========== 应用逻辑 ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
@@ -140,15 +118,7 @@ function send() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
     })
-    .then(res => {
-        const contentType = res.headers.get("content-type");
-        if (!contentType || !contentType.includes("application/json")) {
-            return res.text().then(html => {
-                throw new Error(`服务器返回了 HTML（状态 ${res.status}），请检查后端日志。`);
-            });
-        }
-        return res.json();
-    })
+    .then(res => res.json())
     .then(data => {
         const reply = data.reply || "（未收到回复）";
         startTyping(reply, s);
