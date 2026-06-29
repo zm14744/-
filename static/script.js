@@ -1,7 +1,6 @@
 marked.setOptions({
     gfm: true,
-    breaks: true,
-    sanitize: false
+    breaks: true
 });
 
 let sessions = [];
@@ -20,35 +19,20 @@ function getCurrent() {
 function enableInput(v) {
     const input = document.getElementById("text");
     const btn = document.getElementById("sendBtn");
-
     if (input) input.disabled = !v;
     if (btn) btn.disabled = !v;
 }
 
 // =====================
-// ⭐关键：统一终止流式
-function stopTyping(force = false) {
-    if (!typingTimer) return;
-
-    clearInterval(typingTimer);
-    typingTimer = null;
-
-    const chat = document.getElementById("chat");
-    const last = chat?.lastElementChild;
-
-    if (force && last) {
-        last.innerHTML = marked.parse(typingText);
-
-        if (window.MathJax) {
-            MathJax.typesetPromise([last]).catch(()=>{});
-        }
+function stopTyping() {
+    if (typingTimer) {
+        clearInterval(typingTimer);
+        typingTimer = null;
     }
 
     if (typingSessionId) {
         const s = sessions.find(x => x.id === typingSessionId);
-        if (s) {
-            s.messages.push({ role: "ai", text: typingText });
-        }
+        if (s) s.messages.push({ role: "ai", text: typingText });
     }
 
     typingSessionId = null;
@@ -57,14 +41,16 @@ function stopTyping(force = false) {
 
 // =====================
 function newChat() {
-    stopTyping(true);
+    stopTyping();
 
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
 
     currentId = id;
 
-    renderAll();
+    renderSessions();
+    renderChat();
+    renderInfo();
 }
 
 // =====================
@@ -94,16 +80,16 @@ function send() {
         })
     })
     .then(r => r.json())
-    .then(d => startTyping(d.reply || "", currentId))
-    .catch(e => startTyping("❌ 请求失败：" + e.message, currentId));
+    .then(d => startTyping(d.reply || ""))
+    .catch(e => startTyping("请求失败：" + e.message));
 }
 
 // =====================
-function startTyping(text, sessionId) {
-    stopTyping(true);
+function startTyping(text) {
+    stopTyping();
 
     typingText = text;
-    typingSessionId = sessionId;
+    typingSessionId = currentId;
 
     const chat = document.getElementById("chat");
 
@@ -117,45 +103,78 @@ function startTyping(text, sessionId) {
         if (i < text.length) {
             div.innerText += text[i++];
         } else {
-            stopTyping(true);
+            stopTyping();
+            renderChat(); // ⭐关键：一次性渲染
         }
     }, 10);
 }
 
 // =====================
-// ⭐关键修复：不允许残留 + 不允许 return
 function renderChat() {
     const chat = document.getElementById("chat");
-
-    // ⭐关键：必须先停止流式
-    stopTyping(true);
 
     chat.innerHTML = "";
 
     const s = getCurrent();
-    if (!s) {
-        chat.innerHTML = "<div>暂无对话</div>";
-        return;
-    }
+    if (!s) return;
 
     s.messages.forEach(m => {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
-
-        if (m.role === "user") {
-            div.innerText = m.text;
-        } else {
-            div.innerHTML = marked.parse(m.text);
-
-            if (window.MathJax) {
-                MathJax.typesetPromise([div]).catch(()=>{});
-            }
-        }
-
+        div.innerText = m.text;
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
+}
+
+// =====================
+function renderSessions() {
+    const box = document.getElementById("sessions");
+    box.innerHTML = "";
+
+    sessions.forEach(s => {
+        const div = document.createElement("div");
+        div.className = "session";
+
+        const span = document.createElement("span");
+        span.innerText = s.name;
+
+        span.onclick = () => {
+            currentId = s.id;
+            renderChat();
+            renderInfo();
+        };
+
+        span.ondblclick = () => {
+            const name = prompt("修改名称：", s.name);
+            if (name?.trim()) {
+                s.name = name.trim();
+                renderSessions();
+            }
+        };
+
+        const del = document.createElement("button");
+        del.className = "del";
+
+        del.onclick = (e) => {
+            e.stopPropagation();
+
+            sessions = sessions.filter(x => x.id !== s.id);
+
+            if (currentId === s.id) {
+                currentId = sessions.length ? sessions[0].id : null;
+            }
+
+            renderSessions();
+            renderChat();
+            renderInfo();
+        };
+
+        div.appendChild(span);
+        div.appendChild(del);
+        box.appendChild(div);
+    });
 }
 
 // =====================
@@ -174,63 +193,6 @@ function renderInfo() {
 }
 
 // =====================
-function renderSessions() {
-    const box = document.getElementById("sessions");
-    box.innerHTML = "";
-
-    sessions.forEach(s => {
-        const div = document.createElement("div");
-        div.className = "session";
-
-        const span = document.createElement("span");
-        span.innerText = s.name;
-
-        span.onclick = () => {
-            stopTyping(true);     // ⭐关键
-            currentId = s.id;
-            renderAll();
-        };
-
-        span.ondblclick = () => {
-            const name = prompt("修改名称：", s.name);
-            if (name?.trim()) {
-                s.name = name.trim();
-                renderSessions();
-                renderInfo();
-            }
-        };
-
-        const del = document.createElement("button");
-        del.className = "del";
-
-        del.onclick = (e) => {
-            e.stopPropagation();
-
-            stopTyping(true);   // ⭐关键
-
-            sessions = sessions.filter(x => x.id !== s.id);
-
-            if (currentId === s.id) {
-                currentId = sessions.length ? sessions[0].id : null;
-            }
-
-            renderAll();
-        };
-
-        div.appendChild(span);
-        div.appendChild(del);
-        box.appendChild(div);
-    });
-}
-
-// =====================
-function renderAll() {
-    renderSessions();
-    renderChat();
-    renderInfo();   // ⭐关键保证
-}
-
-// =====================
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
 
@@ -242,5 +204,4 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     newChat();
-    enableInput(true);
 });
