@@ -1,5 +1,4 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
-// ===== 安全地修复 AI 常见错误 =====
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '\\]')
@@ -12,21 +11,16 @@ function fixAIErrors(text) {
         .replace(/\\text{ le }/g, '\\le ')
         .replace(/\\text{ *le *}/g, '\\le ')
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
-        // 移除 INLINE 和 BLOCK 标记
         .replace(/\bINLINE\b/g, '')
         .replace(/\bBLOCK\b/g, '');
 }
 function hasLatex(text) {
     return /\\[a-zA-Z]+|\\[{}]|\\begin|\\end|\^|_|~/.test(text);
 }
-// ===== 主函数：修复原转义破坏MathJax的核心bug =====
 function prepareMathContent(text) {
     let processed = fixAIErrors(text);
-    // 不再全局转义\为&#92;，MathJax需要原生反斜杠
-    // 统一定界符转换，顺序：块级优先，再行内
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, '\\[$1\\]');
     processed = processed.replace(/(?<!\\)\$([^\$]+?)(?<!\\)\$/g, '\\($1\\)');
-    // 清理双层转义反斜杠
     processed = processed.replace(/\\\\\[/g, '\\[')
                          .replace(/\\\\\]/g, '\\]')
                          .replace(/\\\\\(/g, '\\(')
@@ -34,7 +28,6 @@ function prepareMathContent(text) {
     let html = marked.parse(processed);
     return html;
 }
-// ========== 应用逻辑（完整保留原有会话、打字动画、交互） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
@@ -76,14 +69,10 @@ function send() {
     try { renderInfo(); } catch (e) { console.error(e); }
     input.value = "";
     enableInput(false);
-    // 上传当前会话全部历史消息实现上下文记忆
     fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-            text: text,
-            history: s.messages
-        })
+        body: JSON.stringify({ text, history: s.messages })
     })
     .then(res => {
         const contentType = res.headers.get("content-type");
@@ -185,11 +174,9 @@ function renderChat() {
         chat.appendChild(newDiv);
         typingDiv = newDiv;
     }
-    // 修复MathJax动态渲染不刷新问题
     if (window.MathJax && MathJax.typesetPromise) {
         MathJax.typesetClear([chat]);
-        MathJax.typesetPromise([chat])
-            .catch(err => console.warn('MathJax渲染警告:', err));
+        MathJax.typesetPromise([chat]).catch(err => console.warn('MathJax 渲染错误:', err));
     }
     chat.scrollTop = chat.scrollHeight;
 }
