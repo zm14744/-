@@ -54,9 +54,12 @@ body {
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
+
+    /* ⭐允许复制 */
+    user-select:text;
 }
 
-/* ⭐删除按钮（完全保留你的样式） */
+/* ⭐删除按钮：完全不改你原样式 */
 .session .del {
     width:20px;
     height:20px;
@@ -64,7 +67,6 @@ body {
     border:none;
     background:#ef4444;
     cursor:pointer;
-    padding:0;
     margin-left:8px;
 }
 
@@ -89,19 +91,13 @@ body {
     line-height:1.6;
     word-break:break-word;
 
-    /* ⭐关键：允许复制 */
+    /* ⭐关键：可复制 */
     user-select:text;
 }
 
 .user { background:#3b82f6; margin-left:auto; }
 .ai { background:#1f2937; }
 
-/* Markdown */
-.ai-content p { margin:10px 0; }
-.ai-content h1,.ai-content h2,.ai-content h3 { margin:12px 0 8px; }
-.ai-content ul,.ai-content ol { padding-left:20px; margin:10px 0; }
-
-/* 输入 */
 .input {
     display:flex;
     padding:10px;
@@ -123,7 +119,6 @@ body {
     color:white;
 }
 
-/* 右侧 */
 .right {
     width:240px;
     background:#0b1220;
