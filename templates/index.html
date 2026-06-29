@@ -31,14 +31,10 @@ body {
     border:none;
     color:white;
     border-radius:8px;
-    cursor:pointer;
     margin-bottom:10px;
 }
 
-#sessions {
-    flex:1;
-    overflow-y:auto;
-}
+#sessions { flex:1; overflow-y:auto; }
 
 .session {
     display:flex;
@@ -58,7 +54,7 @@ body {
     white-space:nowrap;
 }
 
-/* ⭐ 删除按钮（完全保留你原来的样子） */
+/* ⭐ 删除按钮（绝对保持你原来的样子） */
 .session .del {
     width:20px;
     height:20px;
@@ -96,7 +92,6 @@ body {
 
 .ai-content p { margin:10px 0; }
 .ai-content h1,.ai-content h2,.ai-content h3 { margin:12px 0 8px; }
-.ai-content ul,.ai-content ol { padding-left:20px; margin:10px 0; }
 
 .input {
     display:flex;
@@ -166,7 +161,7 @@ window.MathJax = {
 
     <div class="input">
         <input id="text" placeholder="输入消息…">
-        <button onclick="send()">发送</button>
+        <button id="sendBtn" onclick="send()">发送</button>
     </div>
 </div>
 
