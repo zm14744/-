@@ -36,7 +36,7 @@ def ask_ai(messages, retries=2):
         
         图论：$\\operatorname{tr}(A^2)$
         
-        ✅ 这是模拟模式（已携带上下文），说明后端已正常响应。
+        这是模拟模式（已携带上下文），说明后端已正常响应。
         """
     
     headers = {
@@ -54,26 +54,26 @@ def ask_ai(messages, retries=2):
 
     for attempt in range(retries + 1):
         try:
-            print(f"🔄 正在调用 DeepSeek API (尝试 {attempt+1}/{retries+1})...")
+            print(f"正在调用 DeepSeek API (尝试 {attempt+1}/{retries+1})...")
             res = requests.post(API_URL, headers=headers, json=data, timeout=(10, 60))
             res.raise_for_status()
             result = res.json()
             if "error" in result:
-                return f"❌ API 错误: {result['error'].get('message', '未知错误')}"
-            print("✅ API 调用成功")
+                return f"API 错误: {result['error'].get('message', '未知错误')}"
+            print("API 调用成功")
             return result["choices"][0]["message"]["content"]
         except requests.exceptions.Timeout:
             if attempt < retries:
-                print(f"⏱️ 请求超时，正在重试...")
+                print(f"请求超时，正在重试...")
                 continue
             else:
-                return "❌ 请求超时，请稍后再试（已重试多次）"
+                return "请求超时，请稍后再试（已重试多次）"
         except requests.exceptions.RequestException as e:
             if attempt < retries:
-                print(f"⚠️ 请求异常: {e}，正在重试...")
+                print(f"请求异常: {e}，正在重试...")
                 continue
             else:
-                return f"❌ 网络请求失败: {str(e)}"
+                return f"网络请求失败: {str(e)}"
         except Exception as e:
-            return f"❌ 未知错误: {str(e)}"
-    return "❌ 所有重试均失败"
+            return f"未知错误: {str(e)}"
+    return "所有重试均失败"
