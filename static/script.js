@@ -27,7 +27,7 @@ function hasLatex(text) {
     return /\\[a-zA-Z(){}]|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// ===== 核心渲染逻辑：捕获不规范定界符并转换为标准 LaTeX 格式 =====
+// ===== 核心渲染逻辑 =====
 function prepareMathContent(text) {
     let processed = fixAIErrors(text);
 
@@ -35,7 +35,7 @@ function prepareMathContent(text) {
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match) => match);
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match) => match);
 
-    // 2. 捕获 AI 偷懒写的 [ ... ] 独立公式，并将其替换为标准的 \[ ... \]
+    // 2. 捕获 AI 偷懒写的 [ ... ] 独立公式
     processed = processed.replace(/\[([\s\S]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             return '\\\[' + content + '\\\]';
@@ -43,7 +43,7 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // 3. 捕获 AI 偷懒写的 ( ... ) 行内公式（支持一层嵌套括号），替换为标准的 \( ... \)
+    // 3. 捕获 AI 偷懒写的 ( ... ) 行内公式（支持一层嵌套括号）
     processed = processed.replace(/\(((?:[^()]|\([^()]*\))*)\)/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             return '\\\\( ' + content + ' \\\\)';
@@ -51,12 +51,11 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // 4. 将标准格式交给 marked 解析 Markdown 语法（标题、粗体等）
     let html = marked.parse(processed);
     return html;
 }
 
-// ========== 聊天应用逻辑（无改动） ==========
+// ========== 聊天应用逻辑 ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
@@ -104,19 +103,29 @@ function send() {
     input.value = "";
     enableInput(false);
 
+    // 【关键修改点】：增加了对 Content-Type 的检查，防止直接解析 HTML 导致崩溃
     fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
     })
-    .then(res => res.json())
+    .then(async res => {
+        const contentType = res.headers.get("content-type");
+        // 如果返回的不是 JSON，直接抛出详细的错误供用户排查后端
+        if (!contentType || !contentType.includes("application/json")) {
+            const textContent = await res.text();
+            throw new Error(`服务器返回了非 JSON 数据 (状态码 ${res.status})。\n请检查后端控制台日志及网关状态。内容片段: ${textContent.substring(0, 50)}...`);
+        }
+        return res.json();
+    })
     .then(data => {
         const reply = data.reply || "（未收到回复）";
         startTyping(reply, s);
     })
     .catch(err => {
         console.error(err);
-        startTyping("❌ 请求失败: " + err.message, s);
+        // 将完整的错误信息显示在界面上，方便排查
+        startTyping("❌ 请求失败: " + err.message + "\n\n(提示：请检查 Flask 后台终端是否报错，或者 API 网络环境是否正常)", s);
     });
 }
 
