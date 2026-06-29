@@ -1,39 +1,36 @@
 // ===== Markdown 配置 =====
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// 修复 AI 常见错误 LaTeX 命令
+// 修复常见 LaTeX 错误命令
 function fixCommonLaTeXErrors(text) {
     return text.replace(/\\textrightarrow/g, '\\rightarrow')
                .replace(/\\textleftarrow/g, '\\leftarrow')
                .replace(/\\textbackslash/g, '\\backslash');
 }
 
-// 检测字符串是否包含 LaTeX 命令
+// 检测是否包含 LaTeX 命令或数学符号
 function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// 核心：将公式用 <span class="math-tex"> 包裹，内部反斜杠转义为 &#92;，防止被 Markdown 破坏
+// 核心：将所有公式片段转换为 <span class="math-tex">\(...\)</span> 或 \[...\]
 function prepareMathContent(text) {
     let processed = fixCommonLaTeXErrors(text);
 
-    // 处理 $$...$$ 块级公式
+    // 统一处理所有可能的公式分隔符，并转义反斜杠为 &#92;（防止 marked 破坏）
+    // 顺序很重要：先处理块级，再处理行内，避免交叉干扰
+
+    // 1. 处理 $$...$$ 块级
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
         return '<span class="math-tex">\\[' + content.replace(/\\/g, '&#92;') + '\\]</span>';
     });
-    // 处理 $...$ 行内公式
-    processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        return '<span class="math-tex">\\(' + content.replace(/\\/g, '&#92;') + '\\)</span>';
-    });
-    // 处理 \[...\] 块级公式
+
+    // 2. 处理 \[...\] 块级（可能已被转义）
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
         return '<span class="math-tex">\\[' + content.replace(/\\/g, '&#92;') + '\\]</span>';
     });
-    // 处理 \(...\) 行内公式
-    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
-        return '<span class="math-tex">\\(' + content.replace(/\\/g, '&#92;') + '\\)</span>';
-    });
-    // 处理未转义的 [ ... ] 块（若包含 LaTeX）
+
+    // 3. 处理未转义的 [ ... ] 块（若包含 LaTeX 命令）
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             return '<span class="math-tex">\\[' + content.replace(/\\/g, '&#92;') + '\\]</span>';
@@ -41,10 +38,22 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // 处理裸 LaTeX 命令（未包裹的）
+    // 4. 处理 $...$ 行内
+    processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
+        return '<span class="math-tex">\\(' + content.replace(/\\/g, '&#92;') + '\\)</span>';
+    });
+
+    // 5. 处理 \(...\) 行内（可能已被转义）
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
+        return '<span class="math-tex">\\(' + content.replace(/\\/g, '&#92;') + '\\)</span>';
+    });
+
+    // 6. 处理剩余的裸 LaTeX 命令（包含 \ 或 _ 或 ^ 等，且未被上述规则覆盖）
+    // 使用 split 分段，只处理非 span 部分
     const parts = processed.split(/(<span[^>]*>[\s\S]*?<\/span>)/g);
     const finalParts = parts.map(part => {
-        if (part.startsWith('<span')) return part; // 已保护部分跳过
+        if (part.startsWith('<span')) return part; // 已保护跳过
+        // 如果包含 LaTeX 特征且没有被任何公式分隔符包裹，则自动包裹
         if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
             const isDisplay = part.includes('\n');
             const content = part.replace(/\\/g, '&#92;');
@@ -56,7 +65,7 @@ function prepareMathContent(text) {
     return finalParts.join('');
 }
 
-// ===== 应用状态 =====
+// ===== 以下为应用逻辑（保持不变）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
@@ -68,7 +77,6 @@ const TYPING_SPEED = 15;
 
 function getCurrent() { return sessions.find(s => s.id === currentId); }
 
-// 启用/禁用输入框
 function enableInput(enable) {
     const input = document.getElementById("text");
     const btn = document.getElementById("sendBtn");
@@ -80,7 +88,6 @@ function enableInput(enable) {
     if (btn) btn.disabled = !enable;
 }
 
-// 新建对话
 function newChat() {
     if (typingTimer) forceCompleteTyping();
     const id = Date.now();
@@ -90,7 +97,6 @@ function newChat() {
     enableInput(true);
 }
 
-// 发送消息
 function send() {
     if (typingTimer) return;
     const input = document.getElementById("text");
@@ -132,7 +138,6 @@ function send() {
     });
 }
 
-// 打字机效果
 function startTyping(text, session) {
     if (typingTimer) forceCompleteTyping();
     typingFullText = text || "";
@@ -177,7 +182,6 @@ function startTyping(text, session) {
     }
 }
 
-// 强制完成当前打字（切换会话时）
 function forceCompleteTyping() {
     if (!typingTimer) return;
     clearInterval(typingTimer);
@@ -197,7 +201,6 @@ function forceCompleteTyping() {
     }
 }
 
-// 渲染聊天区
 function renderChat() {
     const chat = document.getElementById("chat");
     if (!chat) return;
@@ -235,7 +238,6 @@ function renderChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-// 渲染左侧会话列表
 function renderSessions() {
     const box = document.getElementById("sessions");
     if (!box) return;
@@ -271,7 +273,6 @@ function renderSessions() {
     });
 }
 
-// 删除会话
 function deleteSession(id) {
     sessions = sessions.filter(s => s.id !== id);
     if (!sessions.some(s => s.id === currentId)) {
@@ -287,7 +288,6 @@ function deleteSession(id) {
     }
 }
 
-// 更新右侧信息
 function renderInfo() {
     const info = document.getElementById("info");
     if (!info) return;
@@ -295,14 +295,12 @@ function renderInfo() {
     info.innerText = s ? `名称: ${s.name}\n消息数: ${s.messages.length}` : "无会话";
 }
 
-// 全刷新
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-// 初始化
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
     if (input) {
