@@ -16,22 +16,32 @@ function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
+// =====================
 function enableInput(v) {
     document.getElementById("text").disabled = !v;
 }
 
 // =====================
-// ⭐关键：统一渲染入口（防 MathJax 混乱）
-function renderHTML(text) {
-    return marked.parse(text);
+// ⭐核心：安全渲染 + MathJax重新扫描
+function renderHTML(el, text) {
+    el.innerHTML = marked.parse(text);
+
+    // ⭐关键修复：重新渲染数学公式
+    if (window.MathJax) {
+        MathJax.typesetPromise([el]).catch(err => {
+            console.warn("MathJax error:", err);
+        });
+    }
 }
 
 // =====================
 function newChat() {
     stopTyping();
+
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
     currentId = id;
+
     renderAll();
 }
 
@@ -79,9 +89,11 @@ function startTyping(text, sessionId) {
 
     chat.appendChild(div);
 
+    let i = 0;
+
     typingTimer = setInterval(() => {
-        if (div.innerText.length < text.length) {
-            div.innerText += text[div.innerText.length];
+        if (i < text.length) {
+            div.innerText += text[i++];
         } else {
             stopTyping(true);
         }
@@ -99,11 +111,7 @@ function stopTyping(force = false) {
     const last = chat.lastElementChild;
 
     if (force && last) {
-        const html = renderHTML(typingText);
-        last.innerHTML = html;
-
-        // ⭐关键：MathJax只渲染最后一个节点
-        MathJax.typesetPromise([last]);
+        renderHTML(last, typingText);
     }
 
     if (typingSessionId) {
@@ -124,24 +132,20 @@ function renderChat() {
     chat.innerHTML = "";
 
     const s = getCurrent();
-    if (!s) {
-        chat.innerHTML = '<div>暂无对话</div>';
-        return;
-    }
+    if (!s) return;
 
     s.messages.forEach(m => {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
 
-        div.innerHTML = (m.role === "user")
-            ? m.text
-            : renderHTML(m.text);
+        if (m.role === "user") {
+            div.innerText = m.text;
+        } else {
+            renderHTML(div, m.text);
+        }
 
         chat.appendChild(div);
     });
-
-    // ⭐统一 MathJax 渲染
-    MathJax.typesetPromise([chat]);
 }
 
 // =====================
@@ -161,7 +165,6 @@ function renderSessions() {
             renderAll();
         };
 
-        // ⭐稳定双击改名
         span.ondblclick = () => {
             const name = prompt("修改名称：", s.name);
             if (name?.trim()) {
@@ -175,7 +178,6 @@ function renderSessions() {
 
         del.onclick = (e) => {
             e.stopPropagation();
-
             sessions = sessions.filter(x => x.id !== s.id);
             renderAll();
         };
