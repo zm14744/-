@@ -1,6 +1,5 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ===== 修复 AI 常见错误 =====
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '\\]')
@@ -16,49 +15,46 @@ function fixAIErrors(text) {
         .replace(/\\text{ *le *}/g, '\\le ')
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
         .replace(/\bINLINE\b/g, '')
-        .replace(/\bBLOCK\b/g, '')
-        // ⭐ 关键：移除可能已存在的错误 span 包裹，避免双重包裹
-        .replace(/<span class="math-tex">/g, '')
-        .replace(/<\/span>/g, '')
-        // 修复未闭合的 \[ 和 \]
-        .replace(/\\\[([\s\S]*?)(?=\\begin|\$|\\\[|\\\]|$)/g, (match, content) => {
-            // 如果后面没有对应的 \]，则补上
-            if (!match.includes('\\]')) {
-                return '\\[' + content + '\\]';
-            }
-            return match;
-        });
+        .replace(/\bBLOCK\b/g, '');
 }
 
 function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// ===== 主函数：直接替换公式为 <span class="math-tex"> =====
 function prepareMathContent(text) {
     let processed = fixAIErrors(text);
     const escapeBS = s => s.replace(/\\/g, '&#92;');
 
-    // ⭐ 优先处理 \begin{...}...\end{...} 环境（块级）
+    // ===== 新增：保护已有的 <span class="math-tex"> 标签 =====
+    const existingSpanPlaceholders = [];
+    let spanIdx = 0;
+    processed = processed.replace(/<span class="math-tex">([\s\S]*?)<\/span>/g, (match, content) => {
+        const ph = '@@EXISTING_SPAN_' + (spanIdx++) + '@@';
+        existingSpanPlaceholders.push({ ph, content: match });
+        return ph;
+    });
+
+    // ===== 处理 \begin{...}...\end{...} =====
     processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
         const full = match;
-        const escaped = full.replace(/\\/g, '&#92;');
+        const escaped = escapeBS(full);
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // ⭐ 处理 $$...$$ 块级
+    // ===== $$...$$ =====
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // ⭐ 处理 \[...\] 块级（确保内部完整）
+    // ===== \[...\] =====
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // ⭐ 处理未转义的 [...] 但包含 LaTeX（视为块级）
+    // ===== [...] 含 LaTeX =====
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             const escaped = escapeBS(content);
@@ -67,24 +63,37 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // ⭐ 处理 $...$ 行内
+    // ===== $...$ =====
     processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\(' + escaped + '\\)</span>';
     });
 
-    // ⭐ 处理 \(...\) 行内
+    // ===== \(...\) =====
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\(' + escaped + '\\)</span>';
     });
 
-    // ⭐ 额外：处理未闭合的 \( 或 \[ 可能导致的混乱，但已由 fixAIErrors 处理
+    // ===== 还原已有的 span =====
+    existingSpanPlaceholders.forEach(p => {
+        // 将内容中的反斜杠转义（但保留 <span> 标签结构）
+        // 因为内容是完整的 <span> 标签，我们直接保留，但需要确保其中的反斜杠被转义
+        // 方法：提取 span 内部内容，转义后重新包裹
+        const inner = p.content.match(/<span class="math-tex">([\s\S]*?)<\/span>/);
+        if (inner) {
+            const escapedInner = escapeBS(inner[1]);
+            const restored = '<span class="math-tex">' + escapedInner + '</span>';
+            processed = processed.replace(p.ph, restored);
+        } else {
+            processed = processed.replace(p.ph, p.content);
+        }
+    });
 
-    // ⭐ 将结果交给 marked 解析
+    // ===== 用 marked 解析 =====
     let html = marked.parse(processed);
 
-    // ⭐ 后处理：保护所有 \( 和 \[
+    // ===== 后处理 =====
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
@@ -93,7 +102,7 @@ function prepareMathContent(text) {
     return html;
 }
 
-// ========== 以下为应用逻辑（完全保留，稳定） ==========
+// ========== 应用逻辑（不变） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
