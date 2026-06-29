@@ -1,6 +1,9 @@
 import requests
+import os
 
-API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86" 
+ASK_AI_MOCK = False 
+
+API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"  # 请替换
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 LaTeX 编写，并严格用 `$...$` 或 `$$...$$` 包裹。
@@ -15,6 +18,21 @@ SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 
 **禁止**使用 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等非标准标记。"""
 
 def ask_ai(text, retries=1):
+    if ASK_AI_MOCK:
+        return """
+        $$\\begin{bmatrix} 1 & 2 \\\\ 3 & 4 \\end{bmatrix}$$
+        
+        行内公式：$v_1, v_2, \\dots, v_n$
+        
+        集合：$A = \\{1, 2, \\dots, 10\\}$
+        
+        组合数：$\\binom{n}{k}$
+        
+        图论：$\\operatorname{tr}(A^2)$
+        
+        ✅ 这是模拟模式，说明后端已正常响应。请检查 API Key 是否正确。
+        """
+    
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
@@ -29,7 +47,6 @@ def ask_ai(text, retries=1):
 
     for attempt in range(retries + 1):
         try:
-            # 连接超时 5 秒，读取超时 20 秒（总计最多 25 秒）
             res = requests.post(API_URL, headers=headers, json=data, timeout=(5, 20))
             res.raise_for_status()
             result = res.json()
@@ -49,4 +66,5 @@ def ask_ai(text, retries=1):
         except Exception as e:
             return f"❌ 未知错误: {str(e)}"
     return "❌ 所有重试均失败"
+
 
