@@ -1,89 +1,84 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// 修复 AI 常见错误标记
+// 修复 AI 常见错误
 function fixAIErrors(text) {
     return text
+        // 错误标记
         .replace(/\\JBLOCK/g, '\\]')
         .replace(/IJBLOCK/g, '\\]')
         .replace(/Icdot/g, '\\cdot')
         .replace(/Itimes/g, '\\times')
         .replace(/\\text\{/g, '\\text{')
         .replace(/\\boxed\{/g, '\\boxed{')
-        .replace(/\bINLINE\b/g, '')  // 移除残留的 INLINE 标记
-        .replace(/\bBLOCK\b/g, '');  // 移除残留的 BLOCK 标记
+        .replace(/\bINLINE\b/g, '')
+        .replace(/\bBLOCK\b/g, '')
+        // 常见命令错误
+        .replace(/\\operatomame/g, '\\operatorname')
+        .replace(/\\text\{([^}]*)\}/g, '\\text{$1}')
+        .replace(/\\text{dots}/g, '\\dots')
+        .replace(/\\text{overline}/g, '\\overline')
+        // 修复未闭合的括号（如 \{ 后缺 }）
+        .replace(/\\{([^}]*)$/g, '\\{$1}')
+        // 修复类似 \(V(n \text{ le }5)\) 中错误的空格
+        .replace(/\\text{ le }/g, '\\le ');
 }
 
-// 检测是否含 LaTeX
+// 检测是否包含 LaTeX 命令
 function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// 主函数：分段处理，公式直接生成 span
+// 主函数：占位符保护
 function prepareMathContent(text) {
     let raw = fixAIErrors(text);
-    const segments = [];
-    let lastIndex = 0;
+    const placeholders = [];
+    let idx = 0;
 
-    // 匹配所有公式：\[...\]、$$...$$、\(...\)、$...$、[...]（含 LaTeX）
+    // 第一步：提取所有公式片段，替换为占位符
+    // 匹配：\[...\]、$$...$$、\(...\)、$...$、[...]（含 LaTeX）
     const regex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$|\[([^\]]*?)\]/g;
-    let match;
+    raw = raw.replace(regex, (match, d1, d2, i1, i2, bracket) => {
+        let content = d1 || d2 || i1 || i2 || bracket;
+        if (!content || !content.trim()) return match;
+        // 对于未转义的 [...] 但内容不含 LaTeX，则保留原样
+        if (match.startsWith('[') && !hasLatex(content)) return match;
+        const isDisplay = match.startsWith('\\[') || match.startsWith('$$') || (match.startsWith('[') && !match.startsWith('\\['));
+        const ph = '@@MATH_' + (idx++) + '@@';
+        placeholders.push({ ph, content, isDisplay });
+        return ph;
+    });
 
-    while ((match = regex.exec(raw)) !== null) {
-        // 前面的非公式文本
-        const before = raw.substring(lastIndex, match.index);
-        if (before) segments.push({ type: 'text', content: before });
-
-        // 提取公式内容和类型
-        let content = match[1] || match[2] || match[3] || match[4] || match[5];
-        let isDisplay = match[0].startsWith('\\[') || match[0].startsWith('$$') || (match[0].startsWith('[') && !match[0].startsWith('\\['));
-
-        // 如果匹配的是未转义的 [...] 但不含 LaTeX，则当作普通文本
-        if (match[0].startsWith('[') && !hasLatex(content)) {
-            segments.push({ type: 'text', content: match[0] });
-            lastIndex = regex.lastIndex;
-            continue;
+    // 第二步：处理裸 LaTeX（未被上述规则匹配的）
+    // 按占位符分割，只处理非占位符部分
+    const parts = raw.split(/(@@MATH_\d+@@)/g);
+    const finalParts = parts.map(part => {
+        if (part.startsWith('@@MATH_')) return part; // 已保护
+        if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
+            const isDisplay = part.includes('\n');
+            const ph = '@@MATH_' + (idx++) + '@@';
+            placeholders.push({ ph, content: part, isDisplay });
+            return ph;
         }
+        return part;
+    });
+    const pureText = finalParts.join('');
 
-        // 转义反斜杠
-        const escaped = content.replace(/\\/g, '&#92;');
-        const span = isDisplay
+    // 第三步：用 marked 解析纯文本（占位符不受影响）
+    let html = marked.parse(pureText);
+
+    // 第四步：替换占位符为 <span class="math-tex">，并转义反斜杠
+    placeholders.forEach(p => {
+        const escaped = p.content.replace(/\\/g, '&#92;');
+        const span = p.isDisplay
             ? '<span class="math-tex">\\[' + escaped + '\\]</span>'
             : '<span class="math-tex">\\(' + escaped + '\\)</span>';
-        segments.push({ type: 'math', html: span });
+        html = html.replace(p.ph, span);
+    });
 
-        lastIndex = regex.lastIndex;
-    }
-
-    // 剩余文本
-    const remaining = raw.substring(lastIndex);
-    if (remaining) segments.push({ type: 'text', content: remaining });
-
-    // 处理裸 LaTeX（未被上述正则匹配的）
-    const finalSegments = [];
-    for (const seg of segments) {
-        if (seg.type === 'math') {
-            finalSegments.push(seg.html);
-        } else {
-            let text = seg.content;
-            // 如果包含 LaTeX 但未被任何公式分隔符包裹，则包裹为行内公式
-            if (hasLatex(text) && !/\$/.test(text) && !/\\\(/.test(text) && !/\\\[/.test(text)) {
-                const isDisplay = text.includes('\n');
-                const escaped = text.replace(/\\/g, '&#92;');
-                const span = isDisplay
-                    ? '<span class="math-tex">\\[' + escaped + '\\]</span>'
-                    : '<span class="math-tex">\\(' + escaped + '\\)</span>';
-                finalSegments.push(span);
-            } else {
-                // 普通文本交给 marked 解析
-                finalSegments.push(marked.parse(text));
-            }
-        }
-    }
-
-    return finalSegments.join('');
+    return html;
 }
 
-// ===== 以下为应用逻辑（完全不变）=====
+// ===== 应用逻辑（保持不变）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
