@@ -25,6 +25,8 @@ def chat():
         if not messages:
             return jsonify({"reply": "⚠️ 没有消息内容"}), 400
 
+        # 记录请求（便于调试）
+        print(f"收到请求，消息数: {len(messages)}")
         reply = ask_ai(messages)
         return jsonify({"reply": reply})
 
