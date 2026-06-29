@@ -3,43 +3,20 @@ import requests
 import os
 import re
 
+# ✅ 导入 ai.py 的 ask_ai（保留其重试、模拟、上下文能力）
+from ai import ask_ai
+
 app = Flask(__name__)
 
 # =====================
-# DeepSeek 配置（保留你的）
-# =====================
-API_KEY = "你的deepseek key"
-API_URL = "https://api.deepseek.com/v1/chat/completions"
-
-SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 LaTeX 编写，并严格用 `$...$` 或 `$$...$$` 包裹。"""
-
-MAX_HISTORY_ROUND = 8
-
-ILLEGAL_LATEX = [
-    (r"\\JBLOCK", ""),
-    (r"IJBLOCK", ""),
-    (r"Icdot", r"\\cdot"),
-    (r"Itimes", r"\\times"),
-    (r"\\operatomame", r"\\operatorname"),
-]
-
-def clean_latex(text: str):
-    res = text
-    for pattern, repl in ILLEGAL_LATEX:
-        res = re.sub(pattern, repl, res)
-    return res
-
-
-# =====================
-# ✅ 首页（必须有，不然 Render 404）
+# 首页
 # =====================
 @app.route("/")
 def index():
     return render_template("index.html")
 
-
 # =====================
-# CORS（你原来的）
+# CORS 支持（保留原样）
 # =====================
 @app.after_request
 def add_cors_headers(response):
@@ -48,9 +25,8 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     return response
 
-
 # =====================
-# ✅ 核心接口（真正调用 DeepSeek）
+# 核心聊天接口（使用 ask_ai 保证上下文）
 # =====================
 @app.route("/chat", methods=["POST", "OPTIONS"])
 def chat():
@@ -60,40 +36,23 @@ def chat():
     data = request.json
     messages = data.get("messages", [])
 
-    # 👉 转换前端格式 → DeepSeek格式
-    ds_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if not messages:
+        return jsonify({"reply": "❌ 没有消息"})
 
-    for msg in messages[-MAX_HISTORY_ROUND:]:
-        ds_messages.append({
-            "role": msg["role"],
-            "content": msg["content"]
-        })
+    # 取最后一条用户消息作为当前问题
+    last_msg = messages[-1]
+    if last_msg["role"] != "user":
+        return jsonify({"reply": "❌ 最后一条消息不是用户"})
 
-    try:
-        r = requests.post(
-            API_URL,
-            headers={
-                "Authorization": f"Bearer {API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": ds_messages
-            },
-            timeout=60
-        )
+    user_text = last_msg["content"]
+    # 历史消息为前面所有消息（保留完整上下文）
+    history = messages[:-1]
 
-        result = r.json()
+    # 调用 ai.py 的 ask_ai，传入历史和当前问题
+    reply = ask_ai(user_text, retries=1, history=history)
 
-        reply = result["choices"][0]["message"]["content"]
-
-        reply = clean_latex(reply)
-
-        return jsonify({"reply": reply})
-
-    except Exception as e:
-        return jsonify({"reply": f"❌ 错误: {str(e)}"})
-
+    return jsonify({"reply": reply})
 
 if __name__ == "__main__":
+    # 本地调试
     app.run(debug=True)
