@@ -4,7 +4,7 @@ marked.setOptions({
     sanitize: false
 });
 
-// ===================== 状态
+// =====================
 let sessions = [];
 let currentId = null;
 
@@ -12,22 +12,21 @@ let typingTimer = null;
 let typingText = "";
 let typingDiv = null;
 
-// ===================== 当前会话
+// =====================
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
-// ===================== 输入控制
+// =====================
 function enableInput(v) {
     const input = document.getElementById("text");
     const btn = document.getElementById("sendBtn");
 
     input.disabled = !v;
     btn.disabled = !v;
-    input.placeholder = v ? "输入消息…" : "等待回复…";
 }
 
-// ===================== 🔥统一清理（关键）
+// ===================== ❗只用于切换会话 / 新建
 function hardReset() {
     if (typingTimer) {
         clearInterval(typingTimer);
@@ -35,28 +34,28 @@ function hardReset() {
     }
 
     typingText = "";
+    typingDiv = null;
 
-    const chat = document.getElementById("chat");
-    chat.innerHTML = "";
+    document.getElementById("chat").innerHTML = "";
 }
 
-// ===================== 渲染单条消息
-function renderMsg(div, text, isAI) {
+// =====================
+function renderMsg(el, text, isAI) {
     if (!isAI) {
-        div.innerText = text;
+        el.innerText = text;
         return;
     }
 
-    div.innerHTML = marked.parse(text);
+    el.innerHTML = marked.parse(text);
 
     if (window.MathJax) {
-        MathJax.typesetPromise([div]).catch(() => {});
+        MathJax.typesetPromise([el]).catch(() => {});
     }
 }
 
-// ===================== 新对话（🔥修复关键点）
+// =====================
 function newChat() {
-    hardReset(); // ⭐必须
+    hardReset();
 
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
@@ -67,7 +66,7 @@ function newChat() {
     enableInput(true);
 }
 
-// ===================== 发送
+// =====================
 function send() {
     const input = document.getElementById("text");
     const text = input.value.trim();
@@ -80,8 +79,7 @@ function send() {
 
     renderChat();
 
-    input.value = ""; // ⭐只这里清
-
+    input.value = "";
     enableInput(false);
 
     fetch("/chat", {
@@ -94,18 +92,22 @@ function send() {
             }))
         })
     })
-    .then(r => r.json())
+    .then(r => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+    })
     .then(d => startTyping(d.reply || "（无回复）"))
-    .catch(e => startTyping("❌ " + e.message));
+    .catch(err => {
+        startTyping("❌ 请求失败: " + err.message);
+        enableInput(true);
+    });
 }
 
-// ===================== 🔥 typing（唯一写DOM入口）
+// ===================== ❗关键：不再 reset DOM
 function startTyping(text) {
-    hardReset(); // ⭐关键：彻底阻断旧渲染
+    const chat = document.getElementById("chat");
 
     typingText = text;
-
-    const chat = document.getElementById("chat");
 
     const div = document.createElement("div");
     div.className = "msg ai";
@@ -132,10 +134,10 @@ function startTyping(text) {
             renderInfo();
             enableInput(true);
         }
-    }, 12);
+    }, 10);
 }
 
-// ===================== 渲染聊天（纯历史）
+// =====================
 function renderChat() {
     hardReset();
 
@@ -157,19 +159,17 @@ function renderChat() {
     }
 }
 
-// ===================== 信息栏
+// =====================
 function renderInfo() {
     const info = document.getElementById("info");
     const s = getCurrent();
-
-    if (!info) return;
 
     info.innerText = s
         ? `名称: ${s.name}\n消息数: ${s.messages.length}`
         : "无会话";
 }
 
-// ===================== 左侧列表
+// =====================
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -182,7 +182,7 @@ function renderSessions() {
         span.innerText = s.name;
 
         span.onclick = () => {
-            hardReset(); // ⭐关键
+            hardReset();
             currentId = s.id;
             renderChat();
             renderInfo();
@@ -221,14 +221,14 @@ function renderSessions() {
     });
 }
 
-// ===================== 全局
+// =====================
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-// ===================== init
+// =====================
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
 
