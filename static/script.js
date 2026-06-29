@@ -7,11 +7,10 @@ marked.setOptions({
 let sessions = [];
 let currentId = null;
 
-// ⭐关键：防止删除时打断输出
 let typingTimer = null;
-let typingSessionId = null;
 let typingFullText = "";
 let typingDiv = null;
+let typingSessionId = null;
 
 // =====================
 function getCurrent() {
@@ -23,21 +22,18 @@ function enableInput(v) {
 }
 
 // =====================
-// ⭐核心：可复制渲染（文本真实存在）
 function renderContent(text) {
-    return `
-        <div class="ai-content">
-            <div class="text-layer">${marked.parse(text)}</div>
-        </div>
-    `;
+    return `<div class="ai-content">${marked.parse(text)}</div>`;
 }
 
 // =====================
 function newChat() {
     stopTyping();
+
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
     currentId = id;
+
     renderAll();
 }
 
@@ -72,7 +68,6 @@ function send() {
 }
 
 // =====================
-// ⭐关键修复：删除 session 不影响正在输出
 function startTyping(text, sessionId) {
     stopTyping();
 
@@ -84,17 +79,12 @@ function startTyping(text, sessionId) {
     const div = document.createElement("div");
     div.className = "msg ai";
 
-    // ⭐关键：允许选中
-    div.style.userSelect = "text";
-
     chat.appendChild(div);
     typingDiv = div;
 
     let i = 0;
 
     typingTimer = setInterval(() => {
-        if (!typingDiv) return;
-
         if (i < text.length) {
             typingDiv.innerText += text[i++];
         } else {
@@ -104,13 +94,13 @@ function startTyping(text, sessionId) {
 }
 
 // =====================
-function stopTyping(forceFinish = false) {
+function stopTyping(force = false) {
     if (!typingTimer) return;
 
     clearInterval(typingTimer);
     typingTimer = null;
 
-    if (typingDiv && forceFinish) {
+    if (typingDiv && force) {
         typingDiv.innerHTML = renderContent(typingFullText);
     }
 
@@ -129,7 +119,6 @@ function stopTyping(forceFinish = false) {
 function renderChat() {
     const chat = document.getElementById("chat");
 
-    // ⭐关键修复：如果正在打字，不清空
     if (typingTimer) return;
 
     chat.innerHTML = "";
@@ -144,22 +133,16 @@ function renderChat() {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
 
-        div.style.userSelect = "text";
-
-        if (m.role === "user") {
-            div.innerText = m.text;
-        } else {
-            div.innerHTML = renderContent(m.text);
-        }
+        div.innerHTML = (m.role === "user")
+            ? m.text
+            : renderContent(m.text);
 
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
 
-    if (window.MathJax) {
-        MathJax.typesetPromise([chat]);
-    }
+    if (window.MathJax) MathJax.typesetPromise([chat]);
 }
 
 // =====================
@@ -179,19 +162,26 @@ function renderSessions() {
             renderAll();
         };
 
+        // ⭐双击改名（恢复）
+        span.ondblclick = () => {
+            const name = prompt("修改名称：", s.name);
+            if (name && name.trim()) {
+                s.name = name.trim();
+                renderSessions();
+            }
+        };
+
         const del = document.createElement("button");
         del.className = "del";
 
         del.onclick = (e) => {
             e.stopPropagation();
 
-            // ⭐关键：如果删的是当前对话 → 停止输出
             if (s.id === typingSessionId) {
                 stopTyping(true);
             }
 
             sessions = sessions.filter(x => x.id !== s.id);
-
             renderAll();
         };
 
@@ -222,6 +212,7 @@ function renderAll() {
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
 
+    // ⭐Enter发送恢复
     input.addEventListener("keydown", e => {
         if (e.key === "Enter") {
             e.preventDefault();
