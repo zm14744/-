@@ -9,8 +9,8 @@ function fixAIErrors(text) {
         .replace(/Itimes/g, '\\times')
         .replace(/\\text\{/g, '\\text{')
         .replace(/\\boxed\{/g, '\\boxed{')
-        .replace(/\\begin\{([^}]*)\}/g, '\\begin{$1}')
-        .replace(/\\end\{([^}]*)\}/g, '\\end{$1}');
+        .replace(/\bINLINE\b/g, '')  // 移除残留的 INLINE 标记
+        .replace(/\bBLOCK\b/g, '');  // 移除残留的 BLOCK 标记
 }
 
 // 检测是否含 LaTeX
@@ -18,7 +18,7 @@ function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// 主函数：分段处理，公式直接生成 span，非公式用 marked
+// 主函数：分段处理，公式直接生成 span
 function prepareMathContent(text) {
     let raw = fixAIErrors(text);
     const segments = [];
@@ -83,7 +83,7 @@ function prepareMathContent(text) {
     return finalSegments.join('');
 }
 
-// ===== 以下为应用逻辑（保持不变）=====
+// ===== 以下为应用逻辑（完全不变）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
