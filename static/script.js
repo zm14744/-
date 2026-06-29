@@ -1,11 +1,10 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ===== 强化清理：移除所有 INLINE、BLOCK 及多余空格 =====
 function fixAIErrors(text) {
-    let cleaned = text
-        .replace(/\b(INLINE|BLOCK)\b/gi, '')   // 移除大小写 INLINE/BLOCK
-        .replace(/\s+/g, ' ')                  // 合并多余空格
-        .trim();
+    // 先移除所有 INLINE 和 BLOCK 单词
+    let cleaned = text.replace(/\b(INLINE|BLOCK)\b/gi, '');
+    // 移除多余空格
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
     return cleaned
         .replace(/\\JBLOCK/g, '\\]')
         .replace(/IJBLOCK/g, '\\]')
@@ -18,9 +17,7 @@ function fixAIErrors(text) {
         .replace(/\\text{overline}/g, '\\overline')
         .replace(/\\text{ le }/g, '\\le ')
         .replace(/\\text{ *le *}/g, '\\le ')
-        .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
-        .replace(/\bINLINE\b/g, '')
-        .replace(/\bBLOCK\b/g, '');
+        .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}');
 }
 
 function hasLatex(text) {
@@ -32,35 +29,28 @@ function prepareMathContent(text) {
     const placeholders = [];
     let idx = 0;
 
-    // 1. 保护已有的 <span class="math-tex"> 标签
+    // 保护已有的 <span class="math-tex">
     processed = processed.replace(/<span class="math-tex">([\s\S]*?)<\/span>/g, (match, content) => {
         const ph = '@@EXISTING_SPAN_' + (idx++) + '@@';
         placeholders.push({ ph, content: match, type: 'existing' });
         return ph;
     });
 
-    // 2. 保护 \[...\] 块级
-    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
-        const ph = '@@BLOCK_' + (idx++) + '@@';
-        placeholders.push({ ph, content: match, type: 'display' });
-        return ph;
+    // 保护块级公式
+    const blockPatterns = [
+        /\\\[([\s\S]*?)\\\]/g,
+        /\$\$([\s\S]*?)\$\$/g,
+        /\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g
+    ];
+    blockPatterns.forEach(pattern => {
+        processed = processed.replace(pattern, (match, ...args) => {
+            const ph = '@@BLOCK_' + (idx++) + '@@';
+            placeholders.push({ ph, content: match, type: 'display' });
+            return ph;
+        });
     });
 
-    // 3. 保护 $$...$$ 块级
-    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        const ph = '@@BLOCK_' + (idx++) + '@@';
-        placeholders.push({ ph, content: match, type: 'display' });
-        return ph;
-    });
-
-    // 4. 保护 \begin{...}...\end{...}
-    processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
-        const ph = '@@BLOCK_' + (idx++) + '@@';
-        placeholders.push({ ph, content: match, type: 'display' });
-        return ph;
-    });
-
-    // 5. 保护未转义的 [...] 但含 LaTeX
+    // 保护未转义的 [...] 含 LaTeX
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             const ph = '@@BLOCK_' + (idx++) + '@@';
@@ -70,21 +60,19 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // 6. 保护 \(...\) 行内
+    // 保护行内公式
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
         const ph = '@@INLINE_' + (idx++) + '@@';
         placeholders.push({ ph, content: match, type: 'inline' });
         return ph;
     });
-
-    // 7. 保护 $...$ 行内
     processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
         const ph = '@@INLINE_' + (idx++) + '@@';
         placeholders.push({ ph, content: match, type: 'inline' });
         return ph;
     });
 
-    // 8. 处理裸 LaTeX
+    // 处理裸 LaTeX
     const parts = processed.split(/(@@(EXISTING_SPAN|BLOCK|INLINE)_\d+@@)/g);
     const finalParts = parts.map(part => {
         if (part.startsWith('@@')) return part;
@@ -102,10 +90,9 @@ function prepareMathContent(text) {
     });
     const pureText = finalParts.join('');
 
-    // 9. marked 解析
     let html = marked.parse(pureText);
 
-    // 10. 还原占位符
+    // 还原占位符
     placeholders.forEach(p => {
         let spanContent = p.content;
         if (p.type === 'existing') {
@@ -133,7 +120,7 @@ function prepareMathContent(text) {
         }
     });
 
-    // 11. 最后后处理
+    // 后处理
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
@@ -142,7 +129,7 @@ function prepareMathContent(text) {
     return html;
 }
 
-// ========== 应用逻辑（保持不变） ==========
+// ========== 应用逻辑 ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
