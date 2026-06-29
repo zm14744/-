@@ -9,12 +9,12 @@ API_URL = "https://api.deepseek.com/v1/chat/completions"
 SYSTEM_PROMPT = """你是离散数学专家。
 
 【强制的数学格式标准】：
-1. 所有的行内公式**必须**用 `\(...\)` 包裹，不要用 `$`。
-2. 所有的独立块级公式**必须**用 `\[...\]` 包裹，不要用 `$$`。
+1. 所有的行内公式**必须**用 `\(...\)` 包裹。
+2. 所有的独立块级公式**必须**用 `\[...\]` 包裹。
 3. 所有的希腊字母、上下标、花括号、运算符必须写在上述定界符之内。
 4. 绝对禁止输出 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等错误拼写。"""
 
-def ask_ai(text, retries=1):
+def ask_ai(text, history=[], retries=1):
     if ASK_AI_MOCK:
         return """
         \[
@@ -27,16 +27,25 @@ def ask_ai(text, retries=1):
         ✅ 模拟模式运行正常，请检查 API Key。
         """
     
+    # 【核心修复】：构建完整的多轮对话消息数组
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    
+    # 将前端的聊天历史追加进去
+    for msg in history:
+        # 只要保证传过来的是 user 和 ai 的消息即可
+        if msg.get("role") in ["user", "ai"]:
+            messages.append({"role": msg["role"], "content": msg["text"]})
+            
+    # 将最新的问题追加到最后
+    messages.append({"role": "user", "content": text})
+    
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
     data = {
         "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text}
-        ]
+        "messages": messages
     }
 
     for attempt in range(retries + 1):
