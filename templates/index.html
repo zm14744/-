@@ -9,7 +9,7 @@
 
 body {
     margin:0;
-    font-family:Arial;
+    font-family:Arial, sans-serif;
     background:#0f172a;
     color:white;
 }
@@ -32,7 +32,41 @@ body {
     border:none;
     color:white;
     border-radius:8px;
+    cursor:pointer;
     margin-bottom:10px;
+}
+
+/* sessions */
+#sessions { flex:1; overflow-y:auto; }
+
+.session {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:10px;
+    background:#111827;
+    border-radius:8px;
+    margin-bottom:8px;
+}
+
+.session span {
+    flex:1;
+    cursor:pointer;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+
+/* ⭐ 删除按钮：完全保留你原来的 */
+.session .del {
+    width:20px;
+    height:20px;
+    border-radius:50%;
+    border:none;
+    background:#ef4444;
+    cursor:pointer;
+    padding:0;
+    margin-left:8px;
 }
 
 /* 中间 */
@@ -60,28 +94,10 @@ body {
 .user { background:#3b82f6; margin-left:auto; }
 .ai { background:#1f2937; }
 
-/* ✔️ 关键修复：Markdown排版 */
-.ai-content p {
-    margin:10px 0;
-}
-
-.ai-content h1,
-.ai-content h2,
-.ai-content h3 {
-    margin:14px 0 8px;
-}
-
-.ai-content ul,
-.ai-content ol {
-    padding-left:20px;
-    margin:10px 0;
-}
-
-/* ✔️ 公式 */
-.MathJax_Display {
-    margin:14px 0 !important;
-    overflow-x:auto;
-}
+/* Markdown排版 */
+.ai-content p { margin:10px 0; }
+.ai-content h1,.ai-content h2,.ai-content h3 { margin:12px 0 8px; }
+.ai-content ul,.ai-content ol { padding-left:20px; margin:10px 0; }
 
 /* 输入 */
 .input {
@@ -125,16 +141,15 @@ body {
 }
 </style>
 
-<!-- MathJax -->
 <script>
 window.MathJax = {
   tex: {
-    inlineMath: [['\\(', '\\)'], ['$', '$']],
-    displayMath: [['\\[', '\\]'], ['$$', '$$']]
-  },
-  svg: { fontCache: 'global' }
+    inlineMath: [['\\(', '\\)'], ['$','$']],
+    displayMath: [['\\[', '\\]'], ['$$','$$']]
+  }
 };
 </script>
+
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
@@ -151,7 +166,6 @@ window.MathJax = {
 
 <div class="center">
     <div id="chat" class="chat"></div>
-
     <div class="input">
         <input id="text" placeholder="输入消息…">
         <button onclick="send()">发送</button>
