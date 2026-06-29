@@ -15,7 +15,6 @@ function fixAIErrors(text) {
         .replace(/\\text{ le }/g, '\\le ')
         .replace(/\\text{ *le *}/g, '\\le ')
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
-        // 移除 INLINE 和 BLOCK 标记
         .replace(/\bINLINE\b/g, '')
         .replace(/\bBLOCK\b/g, '');
 }
@@ -26,32 +25,29 @@ function hasLatex(text) {
 
 // ===== 主函数：直接替换公式为 <span class="math-tex"> =====
 function prepareMathContent(text) {
-    // 1. 修复错误
     let processed = fixAIErrors(text);
-    
-    // 2. 将各种公式替换为 span 标签（同时转义反斜杠）
     const escapeBS = s => s.replace(/\\/g, '&#92;');
 
-    // 处理 \begin{...}...\end{...} 环境（块级）
+    // 处理 \begin{...}...\end{...}
     processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
         const full = match;
         const escaped = full.replace(/\\/g, '&#92;');
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // 处理 $$...$$ 块级
+    // $$...$$
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // 处理 \[...\] 块级
+    // \[...\]
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // 处理未转义的 [...] 但包含 LaTeX（视为块级）
+    // [...] (含 LaTeX)
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             const escaped = escapeBS(content);
@@ -60,22 +56,21 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // 处理 $...$ 行内（非贪婪匹配）
+    // $...$
     processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\(' + escaped + '\\)</span>';
     });
 
-    // 处理 \(...\) 行内
+    // \(...\)
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\(' + escaped + '\\)</span>';
     });
 
-    // 3. 将结果交给 marked 解析（marked 会保留 HTML 标签）
     let html = marked.parse(processed);
 
-    // 4. 额外保护：如果还有残留的 \( 和 \[，转义为实体
+    // 后处理
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
@@ -84,7 +79,7 @@ function prepareMathContent(text) {
     return html;
 }
 
-// ========== 应用逻辑（支持上下文） ==========
+// ========== 应用逻辑 ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
@@ -126,14 +121,12 @@ function send() {
     const s = getCurrent();
     if (!s) return;
 
-    // 添加用户消息到会话
     s.messages.push({ role: "user", text });
     try { renderChat(); } catch (e) { console.error(e); }
     try { renderInfo(); } catch (e) { console.error(e); }
     input.value = "";
     enableInput(false);
 
-    // 准备发送给后端的消息历史（格式：{role, content}）
     const history = s.messages.map(m => ({
         role: m.role === "user" ? "user" : "assistant",
         content: m.text
@@ -155,7 +148,6 @@ function send() {
     })
     .then(data => {
         const reply = data.reply || "（未收到回复）";
-        // 注意：回复尚未添加到会话，由打字机完成后添加
         startTyping(reply, s);
     })
     .catch(err => {
@@ -197,7 +189,6 @@ function startTyping(text, session) {
             console.error(e);
             typingDiv.innerText = typingFullText;
         }
-        // 将 AI 回复添加到会话
         const s = sessions.find(s => s.id === typingSessionId);
         if (s) s.messages.push({ role: "ai", text: typingFullText });
         typingDiv = null;
