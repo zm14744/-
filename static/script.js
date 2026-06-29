@@ -1,10 +1,16 @@
-marked.setOptions({ gfm: true, breaks: true, sanitize: false });
+marked.setOptions({
+    gfm: true,
+    breaks: true,
+    sanitize: false,
+    pedantic: false
+});
 
+// ===== 清理干扰标记 =====
 function fixAIErrors(text) {
-    // 先移除所有 INLINE 和 BLOCK 单词
+    // 移除所有 INLINE 和 BLOCK 单词（不区分大小写），并合并多余空格
     let cleaned = text.replace(/\b(INLINE|BLOCK)\b/gi, '');
-    // 移除多余空格
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    // 修复常见错误命令
     return cleaned
         .replace(/\\JBLOCK/g, '\\]')
         .replace(/IJBLOCK/g, '\\]')
@@ -29,14 +35,14 @@ function prepareMathContent(text) {
     const placeholders = [];
     let idx = 0;
 
-    // 保护已有的 <span class="math-tex">
+    // ---- 1. 保护已有的 <span class="math-tex"> ----
     processed = processed.replace(/<span class="math-tex">([\s\S]*?)<\/span>/g, (match, content) => {
         const ph = '@@EXISTING_SPAN_' + (idx++) + '@@';
         placeholders.push({ ph, content: match, type: 'existing' });
         return ph;
     });
 
-    // 保护块级公式
+    // ---- 2. 保护块级公式：\[...\]、$$...$$、\begin...\end ----
     const blockPatterns = [
         /\\\[([\s\S]*?)\\\]/g,
         /\$\$([\s\S]*?)\$\$/g,
@@ -50,7 +56,7 @@ function prepareMathContent(text) {
         });
     });
 
-    // 保护未转义的 [...] 含 LaTeX
+    // ---- 3. 保护未转义的 [...] 但含 LaTeX ----
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             const ph = '@@BLOCK_' + (idx++) + '@@';
@@ -60,7 +66,7 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // 保护行内公式
+    // ---- 4. 保护行内公式：\(...\)、$...$ ----
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
         const ph = '@@INLINE_' + (idx++) + '@@';
         placeholders.push({ ph, content: match, type: 'inline' });
@@ -72,7 +78,7 @@ function prepareMathContent(text) {
         return ph;
     });
 
-    // 处理裸 LaTeX
+    // ---- 5. 处理裸 LaTeX（未被上述规则匹配的） ----
     const parts = processed.split(/(@@(EXISTING_SPAN|BLOCK|INLINE)_\d+@@)/g);
     const finalParts = parts.map(part => {
         if (part.startsWith('@@')) return part;
@@ -90,9 +96,10 @@ function prepareMathContent(text) {
     });
     const pureText = finalParts.join('');
 
+    // ---- 6. 用 marked 解析纯文本 ----
     let html = marked.parse(pureText);
 
-    // 还原占位符
+    // ---- 7. 还原占位符为 <span class="math-tex"> ----
     placeholders.forEach(p => {
         let spanContent = p.content;
         if (p.type === 'existing') {
@@ -100,9 +107,11 @@ function prepareMathContent(text) {
             return;
         }
         if (p.type === 'display') {
+            // 确保内容以 \[...\] 形式存在
             if (!/^\\\[/.test(spanContent) && !/^\$\$/.test(spanContent)) {
                 spanContent = '\\[' + spanContent + '\\]';
             }
+            // 将 $$...$$ 转换为 \[...\]
             if (/^\$\$/.test(spanContent) && /\$\$$/.test(spanContent)) {
                 spanContent = spanContent.replace(/^\$\$/, '\\[').replace(/\$\$$/, '\\]');
             }
@@ -120,16 +129,23 @@ function prepareMathContent(text) {
         }
     });
 
-    // 后处理
+    // ---- 8. 后处理：确保所有反斜杠被转义，避免被浏览器解析 ----
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
                .replace(/\\\]/g, '&#92;]');
 
+    // ---- 9. 优化排版：为块级公式添加换行和居中样式 ----
+    // 在 span 外部包裹 div，并添加样式（如果尚未包裹）
+    html = html.replace(/<span class="math-tex">\\\[([\s\S]*?)\\\]<\/span>/g, (match, content) => {
+        return '<div style="text-align:center; margin: 12px 0; overflow-x:auto;">' +
+               '<span class="math-tex">\\[' + content + '\\]</span></div>';
+    });
+
     return html;
 }
 
-// ========== 应用逻辑 ==========
+// ========== 应用逻辑（完整保留） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
