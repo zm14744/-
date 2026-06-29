@@ -8,11 +8,11 @@ let sessions = [];
 let currentId = null;
 
 let typingTimer = null;
-let typingFullText = "";
 let typingDiv = null;
+let typingFullText = "";
 let typingSessionId = null;
 
-// ===================
+// ================= 基础 =================
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
@@ -21,12 +21,12 @@ function enableInput(enable) {
     document.getElementById("text").disabled = !enable;
 }
 
-// ===================
+// ================= Markdown =================
 function renderContent(text) {
     return `<div class="ai-content">${marked.parse(text)}</div>`;
 }
 
-// ===================
+// ================= 新建 =================
 function newChat() {
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
@@ -34,7 +34,7 @@ function newChat() {
     renderAll();
 }
 
-// ===================
+// ================= 发送 =================
 function send() {
     const input = document.getElementById("text");
     const text = input.value.trim();
@@ -64,16 +64,20 @@ function send() {
     .catch(e => startTyping("请求失败：" + e.message, s));
 }
 
-// ===================
+// ================= 打字 =================
 function startTyping(text, session) {
     typingFullText = text;
     typingSessionId = session.id;
 
     const chat = document.getElementById("chat");
+
     const div = document.createElement("div");
     div.className = "msg ai";
-    chat.appendChild(div);
 
+    // ⭐关键：允许选中文本（解决“不能复制”核心问题）
+    div.style.userSelect = "text";
+
+    chat.appendChild(div);
     typingDiv = div;
 
     let i = 0;
@@ -99,11 +103,27 @@ function startTyping(text, session) {
         renderChat();
         enableInput(true);
 
-        if (window.MathJax) MathJax.typesetPromise();
+        if (window.MathJax) {
+            MathJax.typesetPromise([document.getElementById("chat")]);
+        }
     }
 }
 
-// ===================
+// ================= 强制刷新 =================
+function forceCompleteTyping() {
+    if (!typingTimer) return;
+
+    clearInterval(typingTimer);
+    typingTimer = null;
+
+    if (typingDiv) {
+        typingDiv.innerHTML = renderContent(typingFullText);
+        typingDiv = null;
+        enableInput(true);
+    }
+}
+
+// ================= 渲染聊天 =================
 function renderChat() {
     const chat = document.getElementById("chat");
     chat.innerHTML = "";
@@ -118,19 +138,26 @@ function renderChat() {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
 
-        div.innerHTML = (m.role === "user")
-            ? m.text
-            : renderContent(m.text);
+        // ⭐关键：允许复制
+        div.style.userSelect = "text";
+
+        if (m.role === "user") {
+            div.innerText = m.text;
+        } else {
+            div.innerHTML = renderContent(m.text);
+        }
 
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
 
-    if (window.MathJax) MathJax.typesetPromise([chat]);
+    if (window.MathJax) {
+        MathJax.typesetPromise([chat]);
+    }
 }
 
-// ===================
+// ================= sessions（不动删除按钮） =================
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -162,7 +189,7 @@ function renderSessions() {
     });
 }
 
-// ===================
+// ================= info =================
 function renderInfo() {
     const info = document.getElementById("info");
     const s = getCurrent();
@@ -171,13 +198,24 @@ function renderInfo() {
         : "无会话";
 }
 
-// ===================
+// ================= 全渲染 =================
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
+// ================= ⭐ Enter发送（修复点） =================
 document.addEventListener("DOMContentLoaded", () => {
+    const input = document.getElementById("text");
+
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            send();
+        }
+    });
+
     newChat();
+    enableInput(true);
 });
