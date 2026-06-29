@@ -7,10 +7,14 @@ marked.setOptions({
 let sessions = [];
 let currentId = null;
 
+// ===== 状态控制 =====
 let typingTimer = null;
-let typingFullText = "";
+let typingText = "";
 let typingDiv = null;
 let typingSessionId = null;
+
+// click/dblclick 防冲突
+let clickTimer = null;
 
 // =====================
 function getCurrent() {
@@ -71,7 +75,7 @@ function send() {
 function startTyping(text, sessionId) {
     stopTyping();
 
-    typingFullText = text;
+    typingText = text;
     typingSessionId = sessionId;
 
     const chat = document.getElementById("chat");
@@ -101,12 +105,12 @@ function stopTyping(force = false) {
     typingTimer = null;
 
     if (typingDiv && force) {
-        typingDiv.innerHTML = renderContent(typingFullText);
+        typingDiv.innerHTML = renderContent(typingText);
     }
 
     if (typingDiv && typingSessionId) {
         const s = sessions.find(x => x.id === typingSessionId);
-        if (s) s.messages.push({ role: "ai", text: typingFullText });
+        if (s) s.messages.push({ role: "ai", text: typingText });
     }
 
     typingDiv = null;
@@ -142,10 +146,13 @@ function renderChat() {
 
     chat.scrollTop = chat.scrollHeight;
 
-    if (window.MathJax) MathJax.typesetPromise([chat]);
+    if (window.MathJax) {
+        MathJax.typesetPromise([chat]);
+    }
 }
 
 // =====================
+// ⭐⭐⭐ 双击改名（稳定版）
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -157,19 +164,26 @@ function renderSessions() {
         const span = document.createElement("span");
         span.innerText = s.name;
 
-        span.onclick = () => {
-            currentId = s.id;
-            renderAll();
-        };
+        // 单击（防抖）
+        span.addEventListener("click", () => {
+            clearTimeout(clickTimer);
+            clickTimer = setTimeout(() => {
+                currentId = s.id;
+                renderAll();
+            }, 200);
+        });
 
-        // ⭐双击改名（恢复）
-        span.ondblclick = () => {
+        // ⭐双击改名（关键修复）
+        span.addEventListener("dblclick", (e) => {
+            e.preventDefault();
+            clearTimeout(clickTimer);
+
             const name = prompt("修改名称：", s.name);
             if (name && name.trim()) {
                 s.name = name.trim();
                 renderSessions();
             }
-        };
+        });
 
         const del = document.createElement("button");
         del.className = "del";
@@ -212,7 +226,6 @@ function renderAll() {
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
 
-    // ⭐Enter发送恢复
     input.addEventListener("keydown", e => {
         if (e.key === "Enter") {
             e.preventDefault();
