@@ -13,7 +13,7 @@ function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// 核心：将所有公式模式转换为 <span class="math-tex">\(...\)</span> 或 <span class="math-tex">\[...\]</span>
+// 全面公式保护：将所有公式模式转换为 <span class="math-tex">\(...\)</span> 或 <span class="math-tex">\[...\]</span>
 function convertAllMathToSpans(text) {
     // 1. 保护标准块级公式 \[...\] 和 \(...\)
     text = text.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
@@ -32,23 +32,22 @@ function convertAllMathToSpans(text) {
     });
 
     // 3. 保护未转义的块级公式 [ ... ] 但内部有 LaTeX 命令
-    // 注意：不匹配嵌套，且只处理没有其他公式分隔符的片段
-    text = text.replace(/\[([^\]]*?)\]/g, (match, content) => {
-        // 如果内部包含 LaTeX 命令且尚未被保护（不包含 <span class="math-tex">）
+    // 先处理多行块，再处理单行，避免贪婪匹配
+    text = text.replace(/\[([\s\S]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             return '<span class="math-tex">\\[' + content + '\\]</span>';
         }
-        return match; // 否则保留原样
+        return match;
     });
 
-    // 4. 对剩余文本中裸 LaTeX 命令（未包裹的）自动加 $...$ 并转 span
-    // 为避免重复处理，只处理不包含 <span 的片段
+    // 4. 处理剩余的裸 LaTeX 命令（如 \infty, \rightarrow 等未被包裹的）
+    // 使用 split 分段处理，避免重复修改已保护部分
     const parts = text.split(/(<span[^>]*>[\s\S]*?<\/span>)/g);
     const processed = parts.map(part => {
-        if (part.startsWith('<span')) return part; // 已保护部分跳过
-        // 如果检测到 LaTeX 且还没有被保护，用 $ 包裹
+        if (part.startsWith('<span')) return part; // 已保护跳过
+        // 如果包含 LaTeX 命令且没有被任何公式分隔符包裹，则加 $...$
         if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
-            // 判断是否多行
+            // 如果包含换行，使用块级，否则行内
             if (part.includes('\n')) {
                 return '<span class="math-tex">\\[' + part + '\\]</span>';
             } else {
