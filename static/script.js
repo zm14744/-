@@ -1,8 +1,10 @@
 marked.setOptions({
     gfm: true,
-    breaks: true
+    breaks: true,
+    sanitize: false
 });
 
+// ===================== 数据
 let sessions = [];
 let currentId = null;
 
@@ -10,20 +12,24 @@ let typingTimer = null;
 let typingText = "";
 let typingSessionId = null;
 
-// =====================
+// ===================== 工具
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
 
-// =====================
+// ===================== 输入控制
 function enableInput(v) {
     const input = document.getElementById("text");
     const btn = document.getElementById("sendBtn");
-    if (input) input.disabled = !v;
+
+    if (input) {
+        input.disabled = !v;
+        input.placeholder = v ? "输入消息…" : "等待回复…";
+    }
     if (btn) btn.disabled = !v;
 }
 
-// =====================
+// ===================== 停止打字
 function stopTyping() {
     if (typingTimer) {
         clearInterval(typingTimer);
@@ -32,14 +38,25 @@ function stopTyping() {
 
     if (typingSessionId) {
         const s = sessions.find(x => x.id === typingSessionId);
-        if (s) s.messages.push({ role: "ai", text: typingText });
+        if (s) {
+            s.messages.push({ role: "ai", text: typingText });
+        }
     }
 
     typingSessionId = null;
-    enableInput(true);
+    typingText = "";
 }
 
-// =====================
+// ===================== Markdown + Math 渲染
+function renderMessage(el, text) {
+    el.innerHTML = marked.parse(text || "");
+
+    if (window.MathJax) {
+        MathJax.typesetPromise([el]).catch(() => {});
+    }
+}
+
+// ===================== 新对话
 function newChat() {
     stopTyping();
 
@@ -48,12 +65,11 @@ function newChat() {
 
     currentId = id;
 
-    renderSessions();
-    renderChat();
-    renderInfo();
+    renderAll();
+    enableInput(true);
 }
 
-// =====================
+// ===================== 发送
 function send() {
     const input = document.getElementById("text");
     const text = input.value.trim();
@@ -71,7 +87,7 @@ function send() {
 
     fetch("/chat", {
         method: "POST",
-        headers: {"Content-Type":"application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             messages: s.messages.map(m => ({
                 role: m.role === "user" ? "user" : "assistant",
@@ -80,11 +96,11 @@ function send() {
         })
     })
     .then(r => r.json())
-    .then(d => startTyping(d.reply || ""))
-    .catch(e => startTyping("请求失败：" + e.message));
+    .then(d => startTyping(d.reply || "（无回复）"))
+    .catch(err => startTyping("❌ 请求失败: " + err.message));
 }
 
-// =====================
+// ===================== 打字效果
 function startTyping(text) {
     stopTyping();
 
@@ -100,35 +116,71 @@ function startTyping(text) {
     let i = 0;
 
     typingTimer = setInterval(() => {
-        if (i < text.length) {
-            div.innerText += text[i++];
+        if (i < typingText.length) {
+            div.innerText += typingText[i++];
         } else {
-            stopTyping();
-            renderChat(); // ⭐关键：一次性渲染
+            clearInterval(typingTimer);
+            typingTimer = null;
+
+            renderMessage(div, typingText);
+
+            const s = getCurrent();
+            if (s) s.messages.push({ role: "ai", text: typingText });
+
+            typingSessionId = null;
+
+            renderInfo();
+            enableInput(true);
         }
-    }, 10);
+    }, 15);
 }
 
-// =====================
+// ===================== 渲染聊天
 function renderChat() {
-    const chat = document.getElementById("chat");
+    stopTyping();
 
+    const chat = document.getElementById("chat");
     chat.innerHTML = "";
 
     const s = getCurrent();
-    if (!s) return;
+    if (!s) {
+        chat.innerHTML = '<div class="empty-tip">暂无对话，请新建</div>';
+        return;
+    }
 
     s.messages.forEach(m => {
         const div = document.createElement("div");
         div.className = "msg " + (m.role === "user" ? "user" : "ai");
-        div.innerText = m.text;
+
+        if (m.role === "user") {
+            div.innerText = m.text;
+        } else {
+            renderMessage(div, m.text);
+        }
+
         chat.appendChild(div);
     });
 
     chat.scrollTop = chat.scrollHeight;
 }
 
-// =====================
+// ===================== 右侧信息栏（保持你原样结构）
+function renderInfo() {
+    const info = document.getElementById("info");
+    const s = getCurrent();
+
+    if (!info) return;
+
+    if (!s) {
+        info.innerText = "无会话";
+        return;
+    }
+
+    info.innerText =
+        "名称: " + s.name + "\n消息数: " + s.messages.length;
+}
+
+// ===================== 会话列表（不改删除按钮样式）
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -141,16 +193,18 @@ function renderSessions() {
         span.innerText = s.name;
 
         span.onclick = () => {
+            stopTyping();
             currentId = s.id;
-            renderChat();
-            renderInfo();
+            renderAll();
+            enableInput(true);
         };
 
         span.ondblclick = () => {
             const name = prompt("修改名称：", s.name);
-            if (name?.trim()) {
+            if (name && name.trim()) {
                 s.name = name.trim();
                 renderSessions();
+                renderInfo();
             }
         };
 
@@ -160,15 +214,15 @@ function renderSessions() {
         del.onclick = (e) => {
             e.stopPropagation();
 
+            stopTyping();
+
             sessions = sessions.filter(x => x.id !== s.id);
 
             if (currentId === s.id) {
                 currentId = sessions.length ? sessions[0].id : null;
             }
 
-            renderSessions();
-            renderChat();
-            renderInfo();
+            renderAll();
         };
 
         div.appendChild(span);
@@ -177,31 +231,24 @@ function renderSessions() {
     });
 }
 
-// =====================
-function renderInfo() {
-    const info = document.getElementById("info");
-    const s = getCurrent();
-
-    if (!info) return;
-
-    if (!s) {
-        info.innerText = "无会话";
-        return;
-    }
-
-    info.innerText = `名称: ${s.name}\n消息数: ${s.messages.length}`;
+// ===================== 全局渲染
+function renderAll() {
+    renderSessions();
+    renderChat();
+    renderInfo();
 }
 
-// =====================
+// ===================== 初始化
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
 
     input.addEventListener("keydown", e => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !input.disabled) {
             e.preventDefault();
             send();
         }
     });
 
     newChat();
+    setTimeout(() => enableInput(true), 100);
 });
