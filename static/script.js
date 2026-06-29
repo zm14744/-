@@ -26,21 +26,42 @@ function enableInput(v) {
 }
 
 // =====================
-// 安全渲染（MathJax稳定版）
-function renderHTML(el, text) {
-    el.innerHTML = marked.parse(text);
+// ⭐关键：统一终止流式
+function stopTyping(force = false) {
+    if (!typingTimer) return;
 
-    if (window.MathJax) {
-        MathJax.typesetPromise([el]).catch(() => {});
+    clearInterval(typingTimer);
+    typingTimer = null;
+
+    const chat = document.getElementById("chat");
+    const last = chat?.lastElementChild;
+
+    if (force && last) {
+        last.innerHTML = marked.parse(typingText);
+
+        if (window.MathJax) {
+            MathJax.typesetPromise([last]).catch(()=>{});
+        }
     }
+
+    if (typingSessionId) {
+        const s = sessions.find(x => x.id === typingSessionId);
+        if (s) {
+            s.messages.push({ role: "ai", text: typingText });
+        }
+    }
+
+    typingSessionId = null;
+    enableInput(true);
 }
 
 // =====================
 function newChat() {
-    stopTyping();
+    stopTyping(true);
 
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
+
     currentId = id;
 
     renderAll();
@@ -58,6 +79,7 @@ function send() {
     s.messages.push({ role: "user", text });
 
     renderChat();
+
     input.value = "";
     enableInput(false);
 
@@ -71,28 +93,14 @@ function send() {
             }))
         })
     })
-    .then(async r => {
-        const ct = r.headers.get("content-type") || "";
-
-        // ⭐关键：防 HTML 崩溃
-        if (!ct.includes("application/json")) {
-            const t = await r.text();
-            throw new Error("后端未返回JSON：" + t.slice(0, 80));
-        }
-
-        return r.json();
-    })
-    .then(d => {
-        startTyping(d.reply || "（空回复）", currentId);
-    })
-    .catch(err => {
-        startTyping("❌ 请求失败：" + err.message, currentId);
-    });
+    .then(r => r.json())
+    .then(d => startTyping(d.reply || "", currentId))
+    .catch(e => startTyping("❌ 请求失败：" + e.message, currentId));
 }
 
 // =====================
 function startTyping(text, sessionId) {
-    stopTyping();
+    stopTyping(true);
 
     typingText = text;
     typingSessionId = sessionId;
@@ -115,38 +123,20 @@ function startTyping(text, sessionId) {
 }
 
 // =====================
-function stopTyping(force = false) {
-    if (!typingTimer) return;
-
-    clearInterval(typingTimer);
-    typingTimer = null;
-
-    const chat = document.getElementById("chat");
-    const last = chat.lastElementChild;
-
-    if (force && last) {
-        renderHTML(last, typingText);
-    }
-
-    if (typingSessionId) {
-        const s = sessions.find(x => x.id === typingSessionId);
-        if (s) s.messages.push({ role: "ai", text: typingText });
-    }
-
-    typingSessionId = null;
-    enableInput(true);
-}
-
-// =====================
+// ⭐关键修复：不允许残留 + 不允许 return
 function renderChat() {
     const chat = document.getElementById("chat");
 
-    if (typingTimer) return;
+    // ⭐关键：必须先停止流式
+    stopTyping(true);
 
     chat.innerHTML = "";
 
     const s = getCurrent();
-    if (!s) return;
+    if (!s) {
+        chat.innerHTML = "<div>暂无对话</div>";
+        return;
+    }
 
     s.messages.forEach(m => {
         const div = document.createElement("div");
@@ -155,7 +145,11 @@ function renderChat() {
         if (m.role === "user") {
             div.innerText = m.text;
         } else {
-            renderHTML(div, m.text);
+            div.innerHTML = marked.parse(m.text);
+
+            if (window.MathJax) {
+                MathJax.typesetPromise([div]).catch(()=>{});
+            }
         }
 
         chat.appendChild(div);
@@ -165,7 +159,6 @@ function renderChat() {
 }
 
 // =====================
-// ⭐修复：右侧信息栏消失问题
 function renderInfo() {
     const info = document.getElementById("info");
     const s = getCurrent();
@@ -177,8 +170,7 @@ function renderInfo() {
         return;
     }
 
-    info.innerText =
-        `名称: ${s.name}\n消息数: ${s.messages.length}`;
+    info.innerText = `名称: ${s.name}\n消息数: ${s.messages.length}`;
 }
 
 // =====================
@@ -194,6 +186,7 @@ function renderSessions() {
         span.innerText = s.name;
 
         span.onclick = () => {
+            stopTyping(true);     // ⭐关键
             currentId = s.id;
             renderAll();
         };
@@ -203,6 +196,7 @@ function renderSessions() {
             if (name?.trim()) {
                 s.name = name.trim();
                 renderSessions();
+                renderInfo();
             }
         };
 
@@ -211,6 +205,8 @@ function renderSessions() {
 
         del.onclick = (e) => {
             e.stopPropagation();
+
+            stopTyping(true);   // ⭐关键
 
             sessions = sessions.filter(x => x.id !== s.id);
 
@@ -231,7 +227,7 @@ function renderSessions() {
 function renderAll() {
     renderSessions();
     renderChat();
-    renderInfo();   // ⭐关键修复
+    renderInfo();   // ⭐关键保证
 }
 
 // =====================
