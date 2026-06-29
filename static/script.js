@@ -24,7 +24,7 @@ function enableInput(enable) {
     btn.disabled = !enable;
 }
 
-// ================= 新对话 =================
+// 新对话
 function newChat() {
     if (typingTimer) forceCompleteTyping();
 
@@ -35,7 +35,7 @@ function newChat() {
     renderAll();
 }
 
-// ================= 发送 =================
+// 发送
 function send() {
     if (typingTimer) return;
 
@@ -69,7 +69,7 @@ function send() {
     .catch(e => startTyping("请求失败：" + e.message, s));
 }
 
-// ================= 打字 =================
+// 打字
 function startTyping(text, session) {
     if (typingTimer) forceCompleteTyping();
 
@@ -112,7 +112,7 @@ function startTyping(text, session) {
     }
 }
 
-// ================= 强制完成 =================
+// 强制完成
 function forceCompleteTyping() {
     if (!typingTimer) return;
 
@@ -135,7 +135,7 @@ function forceCompleteTyping() {
     }
 }
 
-// ================= 渲染聊天 =================
+// 渲染聊天
 function renderChat() {
     const chat = document.getElementById("chat");
     chat.innerHTML = "";
@@ -164,7 +164,7 @@ function renderChat() {
     }
 }
 
-// ================= sessions（全部功能恢复） =================
+// sessions
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -213,7 +213,7 @@ function renderSessions() {
     });
 }
 
-// ================= info =================
+// info
 function renderInfo() {
     const info = document.getElementById("info");
     const s = getCurrent();
@@ -223,14 +223,14 @@ function renderInfo() {
         : "无会话";
 }
 
-// ================= 全刷新 =================
+// 全刷新
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-// ================= Enter发送 =================
+// Enter发送
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
 
