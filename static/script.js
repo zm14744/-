@@ -21,7 +21,8 @@ function fixAIErrors(text) {
 }
 
 function hasLatex(text) {
-    return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
+    // 【修改点】：增加了 \{\} 和 \{\} 的识别，解决集合符号无法识别的问题
+    return /\\[a-zA-Z]+|\\[{}]|\\begin|\\end|\^|_|~/.test(text);
 }
 
 // ===== 主函数：直接替换公式为 <span class="math-tex"> =====
@@ -77,11 +78,11 @@ function prepareMathContent(text) {
     // 3. 将结果交给 marked 解析（marked 会保留 HTML 标签）
     let html = marked.parse(processed);
 
-    // 4. 额外保护：如果还有残留的 \( 和 \[，转义为实体
-    html = html.replace(/\\\(/g, '&#92;(')
-               .replace(/\\\)/g, '&#92;)')
-               .replace(/\\\[/g, '&#92;[')
-               .replace(/\\\]/g, '&#92;]');
+    // 【修改点】：删除了以下4行对 MathJax 定界符的实体转义，避免破坏渲染
+    // html = html.replace(/\\\(/g, '&#92;(')
+    //            .replace(/\\\)/g, '&#92;)')
+    //            .replace(/\\\[/g, '&#92;[')
+    //            .replace(/\\\]/g, '&#92;]');
 
     return html;
 }
