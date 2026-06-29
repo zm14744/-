@@ -4,7 +4,7 @@ marked.setOptions({
     sanitize: false
 });
 
-// ===================== 数据
+// ===================== 状态
 let sessions = [];
 let currentId = null;
 
@@ -29,25 +29,18 @@ function enableInput(v) {
     if (btn) btn.disabled = !v;
 }
 
-// ===================== 停止打字
+// ===================== 停止所有状态（核心防糊屏）
 function stopTyping() {
     if (typingTimer) {
         clearInterval(typingTimer);
         typingTimer = null;
     }
 
-    if (typingSessionId) {
-        const s = sessions.find(x => x.id === typingSessionId);
-        if (s) {
-            s.messages.push({ role: "ai", text: typingText });
-        }
-    }
-
-    typingSessionId = null;
     typingText = "";
+    typingSessionId = null;
 }
 
-// ===================== Markdown + Math 渲染
+// ===================== Markdown + MathJax 渲染
 function renderMessage(el, text) {
     el.innerHTML = marked.parse(text || "");
 
@@ -69,7 +62,7 @@ function newChat() {
     enableInput(true);
 }
 
-// ===================== 发送
+// ===================== 发送消息
 function send() {
     const input = document.getElementById("text");
     const text = input.value.trim();
@@ -100,7 +93,7 @@ function send() {
     .catch(err => startTyping("❌ 请求失败: " + err.message));
 }
 
-// ===================== 打字效果
+// ===================== 打字效果（不会污染 DOM）
 function startTyping(text) {
     stopTyping();
 
@@ -132,10 +125,10 @@ function startTyping(text) {
             renderInfo();
             enableInput(true);
         }
-    }, 15);
+    }, 12);
 }
 
-// ===================== 渲染聊天
+// ===================== 渲染聊天（核心防糊屏）
 function renderChat() {
     stopTyping();
 
@@ -143,6 +136,7 @@ function renderChat() {
     chat.innerHTML = "";
 
     const s = getCurrent();
+
     if (!s) {
         chat.innerHTML = '<div class="empty-tip">暂无对话，请新建</div>';
         return;
@@ -164,7 +158,7 @@ function renderChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-// ===================== 右侧信息栏（保持你原样结构）
+// ===================== 右侧信息栏（完全保留你原结构）
 function renderInfo() {
     const info = document.getElementById("info");
     const s = getCurrent();
@@ -176,11 +170,10 @@ function renderInfo() {
         return;
     }
 
-    info.innerText =
-        "名称: " + s.name + "\n消息数: " + s.messages.length;
+    info.innerText = `名称: ${s.name}\n消息数: ${s.messages.length}`;
 }
 
-// ===================== 会话列表（不改删除按钮样式）
+// ===================== 左侧会话列表（不改UI）
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -194,8 +187,11 @@ function renderSessions() {
 
         span.onclick = () => {
             stopTyping();
+
             currentId = s.id;
-            renderAll();
+
+            renderChat();
+            renderInfo();
             enableInput(true);
         };
 
@@ -250,5 +246,5 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     newChat();
-    setTimeout(() => enableInput(true), 100);
+    enableInput(true);
 });
