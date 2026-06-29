@@ -1,12 +1,13 @@
 import requests
 import os
+import sys
 
-# 优先使用环境变量，若未设置则使用硬编码（便于测试）
+# 优先使用环境变量，若未设置则使用硬编码
 API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-0aaf311b073a419dbc352c02ef019b86")
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# 设为 True 则跳过真实 API，返回模拟回复（用于调试）
-ASK_AI_MOCK = False  # 生产环境请设为 False
+# 调试模式：设为 True 则返回模拟回复，不调用真实 API
+ASK_AI_MOCK = False
 
 SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 LaTeX 编写，并严格用 `$...$` 或 `$$...$$` 包裹。
 
@@ -43,7 +44,7 @@ def ask_ai(messages, retries=2):
         "Content-Type": "application/json"
     }
     
-    # 构建 API 请求体，包含系统提示和完整对话历史
+    # 构建 API 请求体
     api_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
     
     data = {
@@ -53,16 +54,17 @@ def ask_ai(messages, retries=2):
 
     for attempt in range(retries + 1):
         try:
-            # 增加超时时间：连接10秒，读取60秒
+            print(f"🔄 正在调用 DeepSeek API (尝试 {attempt+1}/{retries+1})...")
             res = requests.post(API_URL, headers=headers, json=data, timeout=(10, 60))
             res.raise_for_status()
             result = res.json()
             if "error" in result:
                 return f"❌ API 错误: {result['error'].get('message', '未知错误')}"
+            print("✅ API 调用成功")
             return result["choices"][0]["message"]["content"]
         except requests.exceptions.Timeout:
             if attempt < retries:
-                print(f"⏱️ 请求超时，正在重试 ({attempt+1}/{retries})...")
+                print(f"⏱️ 请求超时，正在重试...")
                 continue
             else:
                 return "❌ 请求超时，请稍后再试（已重试多次）"
