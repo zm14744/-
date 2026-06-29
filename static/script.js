@@ -1,9 +1,8 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ========== AI 错误修复（覆盖全部已知错误） ==========
+// 修复 AI 常见错误
 function fixAIErrors(text) {
-    let fixed = text
-        // 修复常见错误标记
+    return text
         .replace(/\\JBLOCK/g, '\\]')
         .replace(/IJBLOCK/g, '\\]')
         .replace(/Icdot/g, '\\cdot')
@@ -12,46 +11,25 @@ function fixAIErrors(text) {
         .replace(/\\boxed\{/g, '\\boxed{')
         .replace(/\bINLINE\b/g, '')
         .replace(/\bBLOCK\b/g, '')
-        // 修复 \operatomame → \operatorname
         .replace(/\\operatomame/g, '\\operatorname')
-        // 修复 \text{...} 内的内容
-        .replace(/\\text\{([^}]*)\}/g, '\\text{$1}')
-        // 修复 \text{dots} → \dots
         .replace(/\\text{dots}/g, '\\dots')
-        // 修复 \text{overline} → \overline
         .replace(/\\text{overline}/g, '\\overline')
-        // 修复 \text{ le } → \le
         .replace(/\\text{ le }/g, '\\le ')
-        // 修复 { 未闭合的情况（例如 \{ 后缺 }）
-        .replace(/\\{([^}]*)$/gm, '\\{$1}')
-        // 修复 \( V(n \text{ le }5) \) 中 \text{ le } → \le
         .replace(/\\text{ *le *}/g, '\\le ')
-        // 修复多余的 } 或 {
         .replace(/\\{/g, '\\{')
         .replace(/\\}/g, '\\}')
-        // 修复 \dots 后跟逗号或空格
         .replace(/\\dots,/g, '\\dots,')
-        // 修复 \begin{pmatrix} 等缺少 \end
         .replace(/\\begin\{([^}]*)\}([\s\S]*?)(?=\\end|$)/g, (match, env, content) => {
-            // 如果后面没有 \end{env}，则补上
             if (!match.includes('\\end{' + env + '}')) {
                 return '\\begin{' + env + '}' + content + '\\end{' + env + '}';
             }
             return match;
         })
-        // 修复 \left( ... \right) 等
         .replace(/\\left\(/g, '\\left(')
         .replace(/\\right\)/g, '\\right)')
-        // 修复矩阵中 \ 和 \\ 问题（保留正确的换行）
-        .replace(/\\\\/g, '\\\\') // 确保双反斜杠保留
-        // 移除 \text{...} 中的多余空格
-        .replace(/\\text\{([^}]*)\}/g, (match, content) => {
-            return '\\text{' + content.trim() + '}';
-        });
-    return fixed;
+        .replace(/\\\\/g, '\\\\');
 }
 
-// ========== 占位符保护 ==========
 function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
@@ -61,12 +39,10 @@ function prepareMathContent(text) {
     const placeholders = [];
     let idx = 0;
 
-    // 提取所有公式：\[...\]、$$...$$、\(...\)、$...$、[...]（含 LaTeX）
     const regex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$|\[([^\]]*?)\]/g;
     raw = raw.replace(regex, (match, d1, d2, i1, i2, bracket) => {
         let content = d1 || d2 || i1 || i2 || bracket;
         if (!content || !content.trim()) return match;
-        // 如果匹配的是未转义的 [...] 但不含 LaTeX，则保留
         if (match.startsWith('[') && !hasLatex(content)) return match;
         const isDisplay = match.startsWith('\\[') || match.startsWith('$$') || (match.startsWith('[') && !match.startsWith('\\['));
         const ph = '@@MATH_' + (idx++) + '@@';
@@ -74,7 +50,6 @@ function prepareMathContent(text) {
         return ph;
     });
 
-    // 处理裸 LaTeX
     const parts = raw.split(/(@@MATH_\d+@@)/g);
     const finalParts = parts.map(part => {
         if (part.startsWith('@@MATH_')) return part;
@@ -87,11 +62,8 @@ function prepareMathContent(text) {
         return part;
     });
     const pureText = finalParts.join('');
-
-    // marked 解析纯文本
     let html = marked.parse(pureText);
 
-    // 还原占位符
     placeholders.forEach(p => {
         const escaped = p.content.replace(/\\/g, '&#92;');
         const span = p.isDisplay
@@ -103,7 +75,7 @@ function prepareMathContent(text) {
     return html;
 }
 
-// ========== 应用逻辑（完全不变） ==========
+// ===== 应用逻辑 =====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
