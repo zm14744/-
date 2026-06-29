@@ -12,7 +12,7 @@ let typingTimer = null;
 let typingText = "";
 let typingSessionId = null;
 
-// ===================== 工具
+// ===================== 获取当前会话
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
@@ -29,8 +29,8 @@ function enableInput(v) {
     if (btn) btn.disabled = !v;
 }
 
-// ===================== 停止所有状态（核心防糊屏）
-function stopTyping() {
+// ===================== ★ 核心修复：统一清理状态（防糊屏关键）
+function resetChatState() {
     if (typingTimer) {
         clearInterval(typingTimer);
         typingTimer = null;
@@ -38,9 +38,12 @@ function stopTyping() {
 
     typingText = "";
     typingSessionId = null;
+
+    const chat = document.getElementById("chat");
+    if (chat) chat.innerHTML = "";
 }
 
-// ===================== Markdown + MathJax 渲染
+// ===================== Markdown + MathJax
 function renderMessage(el, text) {
     el.innerHTML = marked.parse(text || "");
 
@@ -51,7 +54,7 @@ function renderMessage(el, text) {
 
 // ===================== 新对话
 function newChat() {
-    stopTyping();
+    resetChatState();
 
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
@@ -62,7 +65,7 @@ function newChat() {
     enableInput(true);
 }
 
-// ===================== 发送消息
+// ===================== 发送
 function send() {
     const input = document.getElementById("text");
     const text = input.value.trim();
@@ -93,9 +96,9 @@ function send() {
     .catch(err => startTyping("❌ 请求失败: " + err.message));
 }
 
-// ===================== 打字效果（不会污染 DOM）
+// ===================== 打字效果（唯一 DOM 写入口）
 function startTyping(text) {
-    stopTyping();
+    resetChatState();
 
     typingText = text;
     typingSessionId = currentId;
@@ -128,13 +131,11 @@ function startTyping(text) {
     }, 12);
 }
 
-// ===================== 渲染聊天（核心防糊屏）
+// ===================== 渲染聊天（稳定版）
 function renderChat() {
-    stopTyping();
+    resetChatState();
 
     const chat = document.getElementById("chat");
-    chat.innerHTML = "";
-
     const s = getCurrent();
 
     if (!s) {
@@ -158,7 +159,7 @@ function renderChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-// ===================== 右侧信息栏（完全保留你原结构）
+// ===================== 右侧信息栏（保持原样）
 function renderInfo() {
     const info = document.getElementById("info");
     const s = getCurrent();
@@ -186,8 +187,7 @@ function renderSessions() {
         span.innerText = s.name;
 
         span.onclick = () => {
-            stopTyping();
-
+            resetChatState();   // ★关键
             currentId = s.id;
 
             renderChat();
@@ -210,7 +210,7 @@ function renderSessions() {
         del.onclick = (e) => {
             e.stopPropagation();
 
-            stopTyping();
+            resetChatState();
 
             sessions = sessions.filter(x => x.id !== s.id);
 
