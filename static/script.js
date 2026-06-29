@@ -1,6 +1,5 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ===== 修复 AI 常见拼写错误 =====
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '$$')
@@ -20,29 +19,29 @@ function fixAIErrors(text) {
 }
 
 function hasLatex(text) {
-    return /\\[a-zA-Z]+|\\[{}]|\\begin|\\end|\^|_|~/.test(text);
+    // 修复：增加对圆括号 \( \) 的识别
+    return /\\[a-zA-Z(){}]|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// ===== 主函数：提取数学源码并完整保留定界符交由 MathJax 渲染 =====
 function prepareMathContent(text) {
     let processed = fixAIErrors(text);
 
-    // 1. 处理 \begin{...}...\end{...} 环境（块级）
+    // 处理 \begin{...}...\end{...} 环境（块级）
     processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match) => {
         return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 2. 处理 $$...$$ 块级
+    // 处理 $$...$$ 块级
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match) => {
         return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 3. 处理 \[...\] 块级
+    // 处理 \[...\] 块级
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match) => {
         return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 4. 处理 [ ... ] 块级（兼容 AI 偶尔偷懒使用的带方括号独立公式）
+    // 处理 [ ... ] 块级（兼容 AI 偷懒写法）
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             return '<span class="math-tex">' + match + '</span>';
@@ -50,21 +49,22 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // 5. 处理 $...$ 行内（**核心修复：保留 ${content}$ 定界符**）
+    // 处理 $...$ 行内
     processed = processed.replace(/\$([^\$]*?)\$/g, (match) => {
         return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 6. 处理 \(...\) 行内（降级兼容）
+    // 处理 \(...\) 行内（降级兼容）
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match) => {
         return '<span class="math-tex">' + match + '</span>';
     });
 
     let html = marked.parse(processed);
+    // 注意：这里删除了所有对 \ 实体的替换逻辑，原封不动交给 MathJax
     return html;
 }
 
-// ========== 以下为应用逻辑（完全保留原样） ==========
+// ========== 以下为应用逻辑 ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
