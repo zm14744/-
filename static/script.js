@@ -17,7 +17,6 @@ function fixAIErrors(text) {
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
         .replace(/\bINLINE\b/g, '')
         .replace(/\bBLOCK\b/g, '')
-        // 如果AI用 $ 包裹，自动纠正为标准的 \( \)
         .replace(/\$\$([\s\S]*?)\$\$/g, '\\\[$1\\\]')
         .replace(/\$([^\$]*?)\$/g, '\\\($1\\\)');
 }
@@ -27,32 +26,66 @@ function hasLatex(text) {
     return /\\[a-zA-Z(){}]|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// ===== 核心渲染逻辑 =====
+// ===== 占位符替换逻辑：保护 LaTeX 不被 Markdown 转义 =====
 function prepareMathContent(text) {
     let processed = fixAIErrors(text);
+    let placeholders = [];
+    let counter = 0;
 
-    // 1. 忽略已正确的标准 \[...\] 和 \(...\)
-    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match) => match);
-    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match) => match);
+    // 1. 提取块级公式 \[ ... \]
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
+        let placeholder = `__MATH_BLOCK_${counter++}__`;
+        placeholders.push({ type: 'block', content: content, placeholder: placeholder });
+        return placeholder;
+    });
 
-    // 2. 捕获 AI 偷懒写的 [ ... ] 独立公式
+    // 2. 提取行内公式 \( ... \)
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
+        let placeholder = `__MATH_INLINE_${counter++}__`;
+        placeholders.push({ type: 'inline', content: content, placeholder: placeholder });
+        return placeholder;
+    });
+
+    // 3. 兼容 AI 常犯的 [ ... ] 块级错误
     processed = processed.replace(/\[([\s\S]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
-            return '\\\[' + content + '\\\]';
+            let placeholder = `__MATH_BLOCK_${counter++}__`;
+            placeholders.push({ type: 'block', content: content, placeholder: placeholder });
+            return placeholder;
         }
         return match;
     });
 
-    // 3. 捕获 AI 偷懒写的 ( ... ) 行内公式（支持一层嵌套括号）
+    // 4. 兼容 AI 常犯的 ( ... ) 行内错误
     processed = processed.replace(/\(((?:[^()]|\([^()]*\))*)\)/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
-            return '\\\\( ' + content + ' \\\\)';
+            let placeholder = `__MATH_INLINE_${counter++}__`;
+            placeholders.push({ type: 'inline', content: content, placeholder: placeholder });
+            return placeholder;
         }
         return match;
     });
 
+    // 5. 让 marked 正常解析 Markdown 结构
     let html = marked.parse(processed);
+
+    // 6. 将占位符替换为原生的 <span> 标签，直接传给 MathJax 渲染
+    placeholders.forEach(p => {
+        let replacement;
+        if (p.type === 'block') {
+            replacement = `<span class="math-tex">\\[${p.content}\\]</span>`;
+        } else {
+            replacement = `<span class="math-tex">\\(${p.content}\\)</span>`;
+        }
+        // 使用替换所有匹配到的占位符
+        html = html.replace(new RegExp(escapeRegex(p.placeholder), 'g'), replacement);
+    });
+
     return html;
+}
+
+function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ========== 聊天应用逻辑 ==========
@@ -99,19 +132,17 @@ function send() {
 
     s.messages.push({ role: "user", text });
     try { renderChat(); } catch (e) { console.error(e); }
-    try { renderInfo(); } catch (e) { console.error(e); }
     input.value = "";
     enableInput(false);
 
-    // 【关键修改点】：增加了对 Content-Type 的检查，防止直接解析 HTML 导致崩溃
+    // 【核心修复】：将整个历史记录 s.messages 传给后端，解决上下文丢失问题！
     fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, history: s.messages })
     })
     .then(async res => {
         const contentType = res.headers.get("content-type");
-        // 如果返回的不是 JSON，直接抛出详细的错误供用户排查后端
         if (!contentType || !contentType.includes("application/json")) {
             const textContent = await res.text();
             throw new Error(`服务器返回了非 JSON 数据 (状态码 ${res.status})。\n请检查后端控制台日志及网关状态。内容片段: ${textContent.substring(0, 50)}...`);
@@ -124,7 +155,6 @@ function send() {
     })
     .catch(err => {
         console.error(err);
-        // 将完整的错误信息显示在界面上，方便排查
         startTyping("❌ 请求失败: " + err.message + "\n\n(提示：请检查 Flask 后台终端是否报错，或者 API 网络环境是否正常)", s);
     });
 }
@@ -167,7 +197,6 @@ function startTyping(text, session) {
         typingDiv = null;
         typingSessionId = null;
         try { renderChat(); } catch (e) { console.error(e); }
-        try { renderInfo(); } catch (e) { console.error(e); }
         enableInput(true);
     }
 }
@@ -185,7 +214,6 @@ function forceCompleteTyping() {
         typingDiv = null;
         typingSessionId = null;
         try { renderChat(); } catch (e) { console.error(e); }
-        try { renderInfo(); } catch (e) { console.error(e); }
         enableInput(true);
     }
 }
@@ -239,7 +267,6 @@ function renderSessions() {
             if (typingTimer) forceCompleteTyping();
             currentId = s.id;
             try { renderChat(); } catch (e) { console.error(e); }
-            try { renderInfo(); } catch (e) { console.error(e); }
             enableInput(true);
         };
         span.ondblclick = () => {
