@@ -1,6 +1,6 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// 修复常见 AI 错误标记
+// 修复 AI 常见错误标记
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '\\]')
@@ -8,7 +8,9 @@ function fixAIErrors(text) {
         .replace(/Icdot/g, '\\cdot')
         .replace(/Itimes/g, '\\times')
         .replace(/\\text\{/g, '\\text{')
-        .replace(/\\boxed\{/g, '\\boxed{');
+        .replace(/\\boxed\{/g, '\\boxed{')
+        .replace(/\\begin\{([^}]*)\}/g, '\\begin{$1}')
+        .replace(/\\end\{([^}]*)\}/g, '\\end{$1}');
 }
 
 // 检测是否含 LaTeX
@@ -16,13 +18,13 @@ function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// 主函数：分段处理文本，公式部分直接生成 span，非公式部分用 marked 解析
+// 主函数：分段处理，公式直接生成 span，非公式用 marked
 function prepareMathContent(text) {
     let raw = fixAIErrors(text);
     const segments = [];
     let lastIndex = 0;
 
-    // 正则匹配所有公式：\[...\]、$$...$$、\(...\)、$...$、[...]（含 LaTeX）
+    // 匹配所有公式：\[...\]、$$...$$、\(...\)、$...$、[...]（含 LaTeX）
     const regex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$|\[([^\]]*?)\]/g;
     let match;
 
@@ -35,9 +37,8 @@ function prepareMathContent(text) {
         let content = match[1] || match[2] || match[3] || match[4] || match[5];
         let isDisplay = match[0].startsWith('\\[') || match[0].startsWith('$$') || (match[0].startsWith('[') && !match[0].startsWith('\\['));
 
-        // 如果匹配的是未转义的 [...] 但不含 LaTeX，则不当作公式
+        // 如果匹配的是未转义的 [...] 但不含 LaTeX，则当作普通文本
         if (match[0].startsWith('[') && !hasLatex(content)) {
-            // 作为普通文本处理
             segments.push({ type: 'text', content: match[0] });
             lastIndex = regex.lastIndex;
             continue;
@@ -58,7 +59,6 @@ function prepareMathContent(text) {
     if (remaining) segments.push({ type: 'text', content: remaining });
 
     // 处理裸 LaTeX（未被上述正则匹配的）
-    // 分段处理，如果某段文本含 LaTeX 且未被包裹，则转为公式
     const finalSegments = [];
     for (const seg of segments) {
         if (seg.type === 'math') {
@@ -83,7 +83,7 @@ function prepareMathContent(text) {
     return finalSegments.join('');
 }
 
-// ===== 以下为应用逻辑（未改动）=====
+// ===== 以下为应用逻辑（保持不变）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
