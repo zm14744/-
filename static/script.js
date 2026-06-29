@@ -12,50 +12,61 @@ function hasLatex(text) {
 
 function prepareMathContent(text) {
     let processed = fixCommonLaTeXErrors(text);
-    const escapeBS = s => s.replace(/\\/g, '&#92;');
+    const placeholders = [];
+    let idx = 0;
 
-    // 处理 \[...\] 块级
-    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
-        return '<span class="math-tex">\\[' + escapeBS(content) + '\\]</span>';
-    });
-    // 处理 $$...$$ 块级
-    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        return '<span class="math-tex">\\[' + escapeBS(content) + '\\]</span>';
-    });
-    // 处理未转义的 [...] 块（含 LaTeX）
-    processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
-        if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
-            return '<span class="math-tex">\\[' + escapeBS(content) + '\\]</span>';
-        }
-        return match;
-    });
-    // 处理 \(...\) 行内
-    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
-        return '<span class="math-tex">\\(' + escapeBS(content) + '\\)</span>';
-    });
-    // 处理 $...$ 行内
-    processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        return '<span class="math-tex">\\(' + escapeBS(content) + '\\)</span>';
+    // 1. 提取块级公式：\[...\]、$$...$$、[...]（含 LaTeX）
+    const blockRegex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\[([^\]]*?)\]/g;
+    processed = processed.replace(blockRegex, (match, d1, d2, bracket) => {
+        let content = d1 || d2 || bracket;
+        if (!content || !content.trim()) return match;
+        if (match.startsWith('[') && !hasLatex(content)) return match;
+        const ph = '@@BLOCK_' + (idx++) + '@@';
+        placeholders.push({ ph, content, isDisplay: true });
+        return ph;
     });
 
-    // 处理裸 LaTeX（未被上述规则覆盖）
-    const parts = processed.split(/(<span[^>]*>[\s\S]*?<\/span>)/g);
+    // 2. 提取行内公式：\(...\)、$...$
+    const inlineRegex = /\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$/g;
+    processed = processed.replace(inlineRegex, (match, i1, i2) => {
+        let content = i1 || i2;
+        if (!content || !content.trim()) return match;
+        const ph = '@@INLINE_' + (idx++) + '@@';
+        placeholders.push({ ph, content, isDisplay: false });
+        return ph;
+    });
+
+    // 3. 处理裸 LaTeX（未被包裹的）
+    const parts = processed.split(/(@@(BLOCK|INLINE)_\d+@@)/g);
     const finalParts = parts.map(part => {
-        if (part.startsWith('<span')) return part;
+        if (part.startsWith('@@')) return part;
         if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
             const isDisplay = part.includes('\n');
-            const content = escapeBS(part);
-            return isDisplay ? '<span class="math-tex">\\[' + content + '\\]</span>'
-                             : '<span class="math-tex">\\(' + content + '\\)</span>';
+            const ph = (isDisplay ? '@@BLOCK_' : '@@INLINE_') + (idx++) + '@@';
+            placeholders.push({ ph, content: part, isDisplay });
+            return ph;
         }
         return part;
     });
     processed = finalParts.join('');
 
-    return marked.parse(processed);
+    // 4. 用 marked 解析（纯文本，占位符不受影响）
+    let html = marked.parse(processed);
+
+    // 5. 替换占位符为 span，转义反斜杠
+    placeholders.forEach(p => {
+        // 将反斜杠替换为 &#92;，防止被浏览器或后续处理转义
+        const escaped = p.content.replace(/\\/g, '&#92;');
+        const span = p.isDisplay
+            ? '<span class="math-tex">\\[' + escaped + '\\]</span>'
+            : '<span class="math-tex">\\(' + escaped + '\\)</span>';
+        html = html.replace(p.ph, span);
+    });
+
+    return html;
 }
 
-// ===== 应用逻辑（保持不变）=====
+// ===== 应用逻辑（完全不变）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
