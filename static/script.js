@@ -15,54 +15,69 @@ function fixAIErrors(text) {
         .replace(/\\text{ le }/g, '\\le ')
         .replace(/\\text{ *le *}/g, '\\le ')
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
-        // 移除 INLINE 和 BLOCK 标记（避免干扰）
+        // 移除 INLINE 和 BLOCK 标记
         .replace(/\bINLINE\b/g, '')
         .replace(/\bBLOCK\b/g, '');
 }
 
-// ===== 公式保护：提取 $...$ 和 $$...$$ 用占位符替换 =====
-function protectMath(text) {
-    const placeholders = [];
-    let idx = 0;
-
-    // 先处理 $$...$$ 块级
-    text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        const ph = '@@MATH_DISPLAY_' + (idx++) + '@@';
-        placeholders.push({ ph, content: match, display: true });
-        return ph;
-    });
-
-    // 再处理 $...$ 行内（注意不匹配 $$）
-    text = text.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        const ph = '@@MATH_INLINE_' + (idx++) + '@@';
-        placeholders.push({ ph, content: match, display: false });
-        return ph;
-    });
-
-    return { text, placeholders };
+function hasLatex(text) {
+    return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// ===== 主函数：准备 HTML =====
-function prepareMathContent(rawText) {
+// ===== 主函数：直接替换公式为 <span class="math-tex"> =====
+function prepareMathContent(text) {
     // 1. 修复错误
-    let text = fixAIErrors(rawText);
+    let processed = fixAIErrors(text);
+    
+    // 2. 将各种公式替换为 span 标签（同时转义反斜杠）
+    // 注意顺序：先处理块级，再处理行内，避免冲突
+    const escapeBS = s => s.replace(/\\/g, '&#92;');
 
-    // 2. 保护公式
-    const { text: protectedText, placeholders } = protectMath(text);
-
-    // 3. 用 marked 解析非公式部分
-    let html = marked.parse(protectedText);
-
-    // 4. 还原占位符为 span
-    placeholders.forEach(p => {
-        const escaped = p.content.replace(/\\/g, '&#92;');
-        const span = p.display
-            ? '<span class="math-tex">\\[' + escaped + '\\]</span>'
-            : '<span class="math-tex">\\(' + escaped + '\\)</span>';
-        html = html.replace(p.ph, span);
+    // 处理 \begin{...}...\end{...} 环境（块级）
+    processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
+        // 整个环境内容作为块级公式
+        const full = match;
+        const escaped = full.replace(/\\/g, '&#92;');
+        return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // 5. 额外保护残留的 \( 和 \[
+    // 处理 $$...$$ 块级
+    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
+        const escaped = escapeBS(content);
+        return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+    });
+
+    // 处理 \[...\] 块级
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
+        const escaped = escapeBS(content);
+        return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+    });
+
+    // 处理未转义的 [...] 但包含 LaTeX（视为块级）
+    processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
+        if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
+            const escaped = escapeBS(content);
+            return '<span class="math-tex">\\[' + escaped + '\\]</span>';
+        }
+        return match;
+    });
+
+    // 处理 $...$ 行内（非贪婪匹配，避免跨多个 $）
+    processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
+        const escaped = escapeBS(content);
+        return '<span class="math-tex">\\(' + escaped + '\\)</span>';
+    });
+
+    // 处理 \(...\) 行内
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
+        const escaped = escapeBS(content);
+        return '<span class="math-tex">\\(' + escaped + '\\)</span>';
+    });
+
+    // 3. 将结果交给 marked 解析（marked 会保留 HTML 标签）
+    let html = marked.parse(processed);
+
+    // 4. 额外保护：如果还有残留的 \( 和 \[，转义为实体
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
@@ -71,7 +86,7 @@ function prepareMathContent(rawText) {
     return html;
 }
 
-// ========== 应用逻辑（严格保留，确保界面正常） ==========
+// ========== 应用逻辑（稳定版，完全保留） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
