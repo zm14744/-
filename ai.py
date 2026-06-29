@@ -8,23 +8,24 @@ API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 SYSTEM_PROMPT = """你是离散数学专家。
 
-【绝对严格的数学格式要求】：
-1. 所有的行内公式**必须**用 `\(...\)` 包裹。
-2. 所有的独立块级公式**必须**用 `\[...\]` 包裹。
-3. 绝对禁止使用 `$`、`$$` 来包裹公式。
-4. 绝对禁止使用非标准标记如 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame`。
-5. 数学符号如 `\{ \}`、`\mathbf`、`\deg` 等**必须**写在上面的 `\(...\)` 定界符内部。"""
+【强制的数学格式标准】：
+1. 所有的行内公式**必须**用 `\(...\)` 包裹，不要用 `$`。
+2. 所有的独立块级公式**必须**用 `\[...\]` 包裹，不要用 `$$`。
+3. 所有的希腊字母、上下标、花括号、运算符必须写在上述定界符之内。
+4. 绝对禁止输出 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等错误拼写。"""
 
 def ask_ai(text, retries=1):
     if ASK_AI_MOCK:
-        return """\[
-\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
-\]
-行内公式：\(v_1, v_2, \dots, v_n\)
-集合：\(A = \{1, 2, \dots, 10\}\)
-组合数：\(\binom{n}{k}\)
-图论：\(\operatorname{tr}(A^2)\)
-✅ 这是模拟模式，说明后端已正常响应。请检查 API Key 是否正确。"""
+        return """
+        \[
+        \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+        \]
+        行内公式：\(v_1, v_2, \dots, v_n\)。
+        集合：\(A = \{1, 2, \dots, 10\}\)。
+        组合数：\(\binom{n}{k}\)。
+        图论：\(\operatorname{tr}(A^2)\)。
+        ✅ 模拟模式运行正常，请检查 API Key。
+        """
     
     headers = {
         "Authorization": f"Bearer {API_KEY}",
