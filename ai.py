@@ -57,4 +57,3 @@ def ask_ai(text, retries=3):
         except Exception as e:
             return f"❌ 未知错误: {str(e)}"
     return "❌ 所有重试均失败"
-
