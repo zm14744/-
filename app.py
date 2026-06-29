@@ -1,58 +1,40 @@
 from flask import Flask, request, jsonify, render_template
-import requests
+import traceback
 import os
-import re
 
-# ✅ 导入 ai.py 的 ask_ai（保留其重试、模拟、上下文能力）
-from ai import ask_ai
+try:
+    from ai import ask_ai
+except Exception as e:
+    print("❌ 导入 ai 模块失败:", e)
+    def ask_ai(messages):
+        return f"❌ AI 模块初始化失败: {str(e)}"
 
 app = Flask(__name__)
 
-# =====================
-# 首页
-# =====================
 @app.route("/")
 def index():
     return render_template("index.html")
 
-# =====================
-# CORS 支持（保留原样）
-# =====================
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-    return response
-
-# =====================
-# 核心聊天接口（使用 ask_ai 保证上下文）
-# =====================
-@app.route("/chat", methods=["POST", "OPTIONS"])
+@app.route("/chat", methods=["POST"])
 def chat():
-    if request.method == "OPTIONS":
-        return "", 200
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"reply": "⚠️ 请求缺少 JSON 数据"}), 400
+        
+        # 获取消息历史（前端会发送整个对话历史）
+        messages = data.get("messages", [])
+        if not messages:
+            return jsonify({"reply": "⚠️ 没有消息内容"}), 400
 
-    data = request.json
-    messages = data.get("messages", [])
+        # 调用 AI，传递完整历史
+        reply = ask_ai(messages)
+        return jsonify({"reply": reply})
 
-    if not messages:
-        return jsonify({"reply": "❌ 没有消息"})
-
-    # 取最后一条用户消息作为当前问题
-    last_msg = messages[-1]
-    if last_msg["role"] != "user":
-        return jsonify({"reply": "❌ 最后一条消息不是用户"})
-
-    user_text = last_msg["content"]
-    # 历史消息为前面所有消息（保留完整上下文）
-    history = messages[:-1]
-
-    # 调用 ai.py 的 ask_ai，传入历史和当前问题
-    reply = ask_ai(user_text, retries=1, history=history)
-
-    return jsonify({"reply": reply})
+    except Exception as e:
+        print("❌ /chat 错误:", traceback.format_exc())
+        return jsonify({"reply": f"❌ 服务器内部错误: {str(e)}"}), 500
 
 if __name__ == "__main__":
-    # 本地调试
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
