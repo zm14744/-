@@ -1,6 +1,6 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ===== 修复常见 AI 拼写错误 =====
+// ===== 修复 AI 常见拼写错误 =====
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '$$')
@@ -19,53 +19,52 @@ function fixAIErrors(text) {
         .replace(/\bBLOCK\b/g, '');
 }
 
-// ===== 判断文本中是否包含数学符号 =====
 function hasLatex(text) {
     return /\\[a-zA-Z]+|\\[{}]|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// ===== 主函数：直接提取数学源码并交由 MathJax 渲染 =====
+// ===== 主函数：提取数学源码并完整保留定界符交由 MathJax 渲染 =====
 function prepareMathContent(text) {
     let processed = fixAIErrors(text);
 
     // 1. 处理 \begin{...}...\end{...} 环境（块级）
-    processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
+    processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match) => {
         return '<span class="math-tex">' + match + '</span>';
     });
 
     // 2. 处理 $$...$$ 块级
-    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        return '<span class="math-tex">' + content + '</span>';
+    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match) => {
+        return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 3. 处理 \[...\] 块级 (保留源码防止被Markdown破坏)
-    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
-        return '<span class="math-tex">' + content + '</span>';
+    // 3. 处理 \[...\] 块级
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match) => {
+        return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 4. 处理 [ ... ] 块级（AI经常会用方括号当作独立公式标记）
+    // 4. 处理 [ ... ] 块级（兼容 AI 偶尔偷懒使用的带方括号独立公式）
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
-            return '<span class="math-tex">' + content + '</span>';
+            return '<span class="math-tex">' + match + '</span>';
         }
         return match;
     });
 
-    // 5. 处理 $...$ 行内
-    processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        return '<span class="math-tex">' + content + '</span>';
+    // 5. 处理 $...$ 行内（**核心修复：保留 ${content}$ 定界符**）
+    processed = processed.replace(/\$([^\$]*?)\$/g, (match) => {
+        return '<span class="math-tex">' + match + '</span>';
     });
 
-    // 6. 处理 \(...\) 行内
-    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
-        return '<span class="math-tex">' + content + '</span>';
+    // 6. 处理 \(...\) 行内（降级兼容）
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match) => {
+        return '<span class="math-tex">' + match + '</span>';
     });
 
     let html = marked.parse(processed);
     return html;
 }
 
-// ========== 应用逻辑 ==========
+// ========== 以下为应用逻辑（完全保留原样） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
