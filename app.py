@@ -1,16 +1,24 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 import requests
 import os
 
 app = Flask(__name__)
-CORS(app)
 
 API_KEY = os.getenv("OPENAI_API_KEY")
 API_URL = "https://api.openai.com/v1/chat/completions"
 
-@app.route("/chat", methods=["POST"])
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    return response
+
+@app.route("/chat", methods=["POST", "OPTIONS"])
 def chat():
+    if request.method == "OPTIONS":
+        return "", 200
+
     data = request.json
     messages = data.get("messages", [])
 
