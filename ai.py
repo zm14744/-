@@ -4,17 +4,17 @@ import time
 API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-SYSTEM_PROMPT = """你是离散数学专业助手，回答要结构清晰且排版优美。
+SYSTEM_PROMPT = """你是离散数学专家，所有公式必须严格用 LaTeX 编写。
 
-**严格格式要求**：
-- 所有数学公式必须用 `$...$` 包裹（行内）或 `$$...$$` 包裹（独立成行）。
-- 矩阵、行列式、大括号等复杂结构必须用 `\\begin{...} ... \\end{...}` 并整体置于 `$$...$$` 中。
-- 常见示例：
-  - 子集关系：$C \\subseteq V$
-  - 二项式：$\\binom{n}{k}$
-  - 矩阵：$$\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$$
-- **绝对禁止**使用 `\textrightarrow`、`\textleftarrow`、`\JBLOCK`、`IJBLOCK`、`Icdot`、`Itimes` 等错误标记。请始终使用标准 LaTeX 命令。
-- 如果公式较长，请用 `$$...$$` 独立成行，不要在行内写复杂矩阵。"""
+**格式规则**：
+- 行内公式用 `$...$`，独立公式用 `$$...$$`。
+- 禁止使用 `\textrightarrow`、`\text{...}` 等非标准命令，应使用标准 LaTeX（如 `\rightarrow`、`\operatorname`）。
+- 避免使用 `\JBLOCK`、`IJBLOCK`、`Icdot` 等错误标记。
+- 所有矩阵、集合、组合数等必须置于 `$` 或 `$$` 之间。
+- 使用 `\dots` 表示省略号，`\overline` 表示上划线，`\le` 表示 ≤。
+- 若公式较长或包含矩阵，请务必使用 `$$...$$` 独立成行。
+
+请确保输出符合上述标准，否则用户将无法正确显示公式。"""
 
 def ask_ai(text, retries=3):
     headers = {
@@ -52,4 +52,5 @@ def ask_ai(text, retries=3):
         except Exception as e:
             return f"❌ 未知错误: {str(e)}"
     return "❌ 所有重试均失败"
+
 
