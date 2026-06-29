@@ -7,14 +7,9 @@ marked.setOptions({
 let sessions = [];
 let currentId = null;
 
-// ===== 状态控制 =====
 let typingTimer = null;
 let typingText = "";
-let typingDiv = null;
 let typingSessionId = null;
-
-// click/dblclick 防冲突
-let clickTimer = null;
 
 // =====================
 function getCurrent() {
@@ -26,18 +21,17 @@ function enableInput(v) {
 }
 
 // =====================
-function renderContent(text) {
-    return `<div class="ai-content">${marked.parse(text)}</div>`;
+// ⭐关键：统一渲染入口（防 MathJax 混乱）
+function renderHTML(text) {
+    return marked.parse(text);
 }
 
 // =====================
 function newChat() {
     stopTyping();
-
     const id = Date.now();
     sessions.push({ id, name: "新对话", messages: [] });
     currentId = id;
-
     renderAll();
 }
 
@@ -84,13 +78,10 @@ function startTyping(text, sessionId) {
     div.className = "msg ai";
 
     chat.appendChild(div);
-    typingDiv = div;
-
-    let i = 0;
 
     typingTimer = setInterval(() => {
-        if (i < text.length) {
-            typingDiv.innerText += text[i++];
+        if (div.innerText.length < text.length) {
+            div.innerText += text[div.innerText.length];
         } else {
             stopTyping(true);
         }
@@ -104,18 +95,23 @@ function stopTyping(force = false) {
     clearInterval(typingTimer);
     typingTimer = null;
 
-    if (typingDiv && force) {
-        typingDiv.innerHTML = renderContent(typingText);
+    const chat = document.getElementById("chat");
+    const last = chat.lastElementChild;
+
+    if (force && last) {
+        const html = renderHTML(typingText);
+        last.innerHTML = html;
+
+        // ⭐关键：MathJax只渲染最后一个节点
+        MathJax.typesetPromise([last]);
     }
 
-    if (typingDiv && typingSessionId) {
+    if (typingSessionId) {
         const s = sessions.find(x => x.id === typingSessionId);
         if (s) s.messages.push({ role: "ai", text: typingText });
     }
 
-    typingDiv = null;
     typingSessionId = null;
-
     enableInput(true);
 }
 
@@ -129,7 +125,7 @@ function renderChat() {
 
     const s = getCurrent();
     if (!s) {
-        chat.innerHTML = '<div class="empty-tip">暂无对话</div>';
+        chat.innerHTML = '<div>暂无对话</div>';
         return;
     }
 
@@ -139,20 +135,16 @@ function renderChat() {
 
         div.innerHTML = (m.role === "user")
             ? m.text
-            : renderContent(m.text);
+            : renderHTML(m.text);
 
         chat.appendChild(div);
     });
 
-    chat.scrollTop = chat.scrollHeight;
-
-    if (window.MathJax) {
-        MathJax.typesetPromise([chat]);
-    }
+    // ⭐统一 MathJax 渲染
+    MathJax.typesetPromise([chat]);
 }
 
 // =====================
-// ⭐⭐⭐ 双击改名（稳定版）
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -164,36 +156,25 @@ function renderSessions() {
         const span = document.createElement("span");
         span.innerText = s.name;
 
-        // 单击（防抖）
-        span.addEventListener("click", () => {
-            clearTimeout(clickTimer);
-            clickTimer = setTimeout(() => {
-                currentId = s.id;
-                renderAll();
-            }, 200);
-        });
+        span.onclick = () => {
+            currentId = s.id;
+            renderAll();
+        };
 
-        // ⭐双击改名（关键修复）
-        span.addEventListener("dblclick", (e) => {
-            e.preventDefault();
-            clearTimeout(clickTimer);
-
+        // ⭐稳定双击改名
+        span.ondblclick = () => {
             const name = prompt("修改名称：", s.name);
-            if (name && name.trim()) {
+            if (name?.trim()) {
                 s.name = name.trim();
                 renderSessions();
             }
-        });
+        };
 
         const del = document.createElement("button");
         del.className = "del";
 
         del.onclick = (e) => {
             e.stopPropagation();
-
-            if (s.id === typingSessionId) {
-                stopTyping(true);
-            }
 
             sessions = sessions.filter(x => x.id !== s.id);
             renderAll();
@@ -206,20 +187,9 @@ function renderSessions() {
 }
 
 // =====================
-function renderInfo() {
-    const info = document.getElementById("info");
-    const s = getCurrent();
-
-    info.innerText = s
-        ? `名称: ${s.name}\n消息数: ${s.messages.length}`
-        : "无会话";
-}
-
-// =====================
 function renderAll() {
     renderSessions();
     renderChat();
-    renderInfo();
 }
 
 // =====================
