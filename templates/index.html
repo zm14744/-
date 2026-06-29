@@ -5,181 +5,97 @@
 <title>离散数学学习系统</title>
 
 <style>
-* { box-sizing: border-box; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:Arial, sans-serif; background:#0f172a; color:white; }
+.layout { display:flex; height:100vh; }
 
-body {
-    margin: 0;
-    font-family: Arial, sans-serif;
-    background: #0f172a;
-    color: white;
-}
+.left { width:240px; background:#0b1220; padding:10px; display:flex; flex-direction:column; }
+.btn { width:100%; padding:10px; background:#1f2937; border:none; color:white; border-radius:8px; cursor:pointer; margin-bottom:10px; }
+.btn:hover { background:#374151; }
 
-.layout {
-    display: flex;
-    height: 100vh;
-}
-
-/* 左侧会话 */
-.left {
-    width: 240px;
-    background: #0b1220;
-    padding: 10px;
-    display: flex;
-    flex-direction: column;
-}
-
-.btn {
-    width: 100%;
-    padding: 10px;
-    background: #1f2937;
-    border: none;
-    color: white;
-    border-radius: 8px;
-    cursor: pointer;
-    margin-bottom: 10px;
-}
-
-.btn:hover {
-    background: #374151;
-}
-
-#sessions {
-    flex: 1;
-    overflow-y: auto;
-}
+#sessions { flex:1; overflow-y:auto; }
 
 .session {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px;
-    background: #111827;
-    border-radius: 8px;
-    margin-bottom: 8px;
-}
-
-.session:hover {
-    background: #1f2937;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px; background:#111827; border-radius:8px;
+  margin-bottom:8px;
 }
 
 .session span {
-    flex: 1;
-    cursor: pointer;
-    font-size: 14px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  flex:1;
+  cursor:pointer;
+  font-size:14px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
 }
 
 .session .del {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    border: none;
-    background: #ef4444;
-    cursor: pointer;
+  width:20px; height:20px; border-radius:50%;
+  border:none; background:#ef4444; cursor:pointer;
 }
 
-/* 中间聊天 */
-.center {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-}
+.center { flex:1; display:flex; flex-direction:column; min-width:0; }
 
-.chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
-}
+.chat { flex:1; overflow-y:auto; padding:20px; }
 
 .msg {
-    max-width: 75%;
-    padding: 14px 18px;
-    margin: 10px 0;
-    border-radius: 12px;
-    line-height: 1.6;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
+  max-width:75%;
+  padding:14px 18px;
+  margin:10px 0;
+  border-radius:12px;
+  word-wrap:break-word;
+  line-height:1.6;
 }
 
-.user {
-    background: #3b82f6;
-    margin-left: auto;
-}
+.user { background:#3b82f6; margin-left:auto; }
+.ai { background:#1f2937; }
 
-.ai {
-    background: #1f2937;
-}
-
-/* 公式优化 */
-.ai .MathJax {
-    line-height: 1.6 !important;
-}
-
-.ai .MathJax_Display {
-    margin: 12px 0 !important;
-}
-
-/* 输入框 */
 .input {
-    display: flex;
-    padding: 10px;
-    background: #0b1220;
-    gap: 8px;
+  display:flex;
+  padding:10px;
+  background:#0b1220;
+  gap:8px;
 }
 
 .input input {
-    flex: 1;
-    padding: 8px 12px;
-    border: none;
-    border-radius: 6px;
-    background: #1f2937;
-    color: white;
-    outline: none;
+  flex:1;
+  padding:8px 12px;
+  border:none;
+  border-radius:6px;
+  background:#1f2937;
+  color:white;
 }
 
 .input button {
-    padding: 8px 20px;
-    background: #3b82f6;
-    border: none;
-    border-radius: 6px;
-    color: white;
-    cursor: pointer;
+  padding:8px 20px;
+  background:#3b82f6;
+  border:none;
+  border-radius:6px;
+  color:white;
+  cursor:pointer;
 }
 
-.input button:hover {
-    background: #2563eb;
-}
-
-.input input:disabled,
-.input button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-/* 右侧信息 */
 .right {
-    width: 240px;
-    background: #0b1220;
-    padding: 10px;
+  width:240px;
+  background:#0b1220;
+  padding:10px;
 }
 
 .small {
-    font-size: 13px;
-    color: #aaa;
-    white-space: pre-wrap;
+  font-size:13px;
+  color:#aaa;
+  white-space:pre-wrap;
 }
 
 .empty-tip {
-    text-align: center;
-    color: #6b7280;
-    margin-top: 60px;
+  text-align:center;
+  color:#6b7280;
+  margin-top:60px;
 }
 </style>
 
-<!-- ✅ MathJax（关键修复版） -->
+<!-- ✔ MathJax（稳定版） -->
 <script>
 window.MathJax = {
   tex: {
@@ -189,7 +105,6 @@ window.MathJax = {
   svg: { fontCache: 'global' }
 };
 </script>
-
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
@@ -199,31 +114,27 @@ window.MathJax = {
 
 <div class="layout">
 
-    <!-- 左侧 -->
-    <div class="left">
-        <button class="btn" onclick="newChat()">＋ 新对话</button>
-        <div id="sessions"></div>
-    </div>
+  <div class="left">
+    <button class="btn" onclick="newChat()">＋ 新对话</button>
+    <div id="sessions"></div>
+  </div>
 
-    <!-- 中间 -->
-    <div class="center">
-        <div id="chat" class="chat"></div>
+  <div class="center">
+    <div id="chat" class="chat"></div>
 
-        <div class="input">
-            <input id="text" placeholder="输入消息…">
-            <button id="sendBtn" onclick="send()">发送</button>
-        </div>
+    <div class="input">
+      <input id="text" placeholder="输入消息…">
+      <button id="sendBtn" onclick="send()">发送</button>
     </div>
+  </div>
 
-    <!-- 右侧 -->
-    <div class="right">
-        <div style="margin-bottom:8px;">📋 会话信息</div>
-        <div id="info" class="small"></div>
-    </div>
+  <div class="right">
+    <div style="margin-bottom:8px;">📋 会话信息</div>
+    <div id="info" class="small"></div>
+  </div>
 
 </div>
 
-<!-- 你的 JS -->
 <script src="/static/script.js"></script>
 
 </body>
