@@ -4,28 +4,6 @@ marked.setOptions({
     sanitize: false
 });
 
-// ========= 只做轻微清洗，不碰 \ =========
-function cleanText(text) {
-    return text
-        .replace(/\b(INLINE|BLOCK)\b/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/Icdot/g, '\\cdot')
-        .replace(/Itimes/g, '\\times')
-        .replace(/\\operatomame/g, '\\operatorname');
-}
-
-// ========= 核心：不再破坏 LaTeX =========
-function prepareMathContent(text) {
-    const processed = cleanText(text);
-
-    // 直接交给 marked，不做任何 LaTeX 包装
-    let html = marked.parse(processed);
-
-    return html;
-}
-
-// ================= 状态 =================
 let sessions = [];
 let currentId = null;
 
@@ -37,7 +15,6 @@ let typingSessionId = null;
 
 const TYPING_SPEED = 15;
 
-// ================= 工具 =================
 function getCurrent() {
     return sessions.find(s => s.id === currentId);
 }
@@ -54,7 +31,14 @@ function enableInput(enable) {
     if (btn) btn.disabled = !enable;
 }
 
-// ================= 新建对话 =================
+function cleanText(text) {
+    return text.replace(/\b(INLINE|BLOCK)\b/gi, '').trim();
+}
+
+function prepareMathContent(text) {
+    return marked.parse(cleanText(text));
+}
+
 function newChat() {
     if (typingTimer) forceCompleteTyping();
 
@@ -66,7 +50,6 @@ function newChat() {
     enableInput(true);
 }
 
-// ================= 发送 =================
 function send() {
     if (typingTimer) return;
 
@@ -77,12 +60,15 @@ function send() {
     if (!currentId) newChat();
 
     const s = getCurrent();
+    if (!s) return;
+
     s.messages.push({ role: "user", text });
 
     renderChat();
     renderInfo();
 
-    input.value = "";
+    input.value = ""; // ✔ 必须清空
+
     enableInput(false);
 
     const history = s.messages.map(m => ({
@@ -95,17 +81,22 @@ function send() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: history })
     })
-    .then(res => res.json())
-    .then(data => {
-        const reply = data.reply || "（未收到回复）";
-        startTyping(reply, s);
+    .then(async res => {
+        const t = await res.text();
+
+        try {
+            const data = JSON.parse(t);
+            startTyping(data.reply || "（未收到回复）", s);
+        } catch (e) {
+            console.error("非JSON:", t);
+            startTyping("❌ 后端返回错误", s);
+        }
     })
     .catch(err => {
         startTyping("❌ 请求失败: " + err.message, s);
     });
 }
 
-// ================= 打字效果 =================
 function startTyping(text, session) {
     if (typingTimer) forceCompleteTyping();
 
@@ -114,6 +105,10 @@ function startTyping(text, session) {
     typingSessionId = session.id;
 
     const chat = document.getElementById("chat");
+    if (!chat) {
+        enableInput(true);
+        return;
+    }
 
     const div = document.createElement("div");
     div.className = "msg ai";
@@ -137,7 +132,6 @@ function startTyping(text, session) {
     }, TYPING_SPEED);
 
     function finish() {
-        // ⭐ 关键：这里才做 Markdown + MathJax
         typingDiv.innerHTML = prepareMathContent(typingFullText);
 
         const s = sessions.find(x => x.id === typingSessionId);
@@ -150,9 +144,7 @@ function startTyping(text, session) {
         renderInfo();
         enableInput(true);
 
-        if (window.MathJax) {
-            MathJax.typesetPromise();
-        }
+        if (window.MathJax) MathJax.typesetPromise();
     }
 }
 
@@ -179,7 +171,6 @@ function forceCompleteTyping() {
     }
 }
 
-// ================= 渲染聊天 =================
 function renderChat() {
     const chat = document.getElementById("chat");
     chat.innerHTML = "";
@@ -205,12 +196,9 @@ function renderChat() {
 
     chat.scrollTop = chat.scrollHeight;
 
-    if (window.MathJax) {
-        MathJax.typesetPromise([chat]);
-    }
+    if (window.MathJax) MathJax.typesetPromise([chat]);
 }
 
-// ================= 会话列表 =================
 function renderSessions() {
     const box = document.getElementById("sessions");
     box.innerHTML = "";
@@ -229,14 +217,6 @@ function renderSessions() {
             enableInput(true);
         };
 
-        span.ondblclick = () => {
-            const newName = prompt("修改名称：", s.name);
-            if (newName) {
-                s.name = newName;
-                renderSessions();
-            }
-        };
-
         const del = document.createElement("button");
         del.className = "del";
         del.onclick = (e) => {
@@ -251,7 +231,6 @@ function renderSessions() {
     });
 }
 
-// ================= info =================
 function renderInfo() {
     const info = document.getElementById("info");
     const s = getCurrent();
@@ -260,14 +239,12 @@ function renderInfo() {
         : "无会话";
 }
 
-// ================= 总渲染 =================
 function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
 }
 
-// ================= 初始化 =================
 document.addEventListener("DOMContentLoaded", () => {
     const input = document.getElementById("text");
 
