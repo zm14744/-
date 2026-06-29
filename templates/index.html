@@ -16,7 +16,6 @@ body {
 
 .layout { display:flex; height:100vh; }
 
-/* 左侧 */
 .left {
     width:240px;
     background:#0b1220;
@@ -32,7 +31,6 @@ body {
     border:none;
     color:white;
     border-radius:8px;
-    cursor:pointer;
     margin-bottom:10px;
 }
 
@@ -51,15 +49,9 @@ body {
 .session span {
     flex:1;
     cursor:pointer;
-    overflow:hidden;
-    text-overflow:ellipsis;
-    white-space:nowrap;
-
-    /* ⭐允许复制 */
     user-select:text;
 }
 
-/* ⭐删除按钮：完全不改你原样式 */
 .session .del {
     width:20px;
     height:20px;
@@ -70,7 +62,6 @@ body {
     margin-left:8px;
 }
 
-/* 中间 */
 .center {
     flex:1;
     display:flex;
@@ -90,8 +81,6 @@ body {
     border-radius:12px;
     line-height:1.6;
     word-break:break-word;
-
-    /* ⭐关键：可复制 */
     user-select:text;
 }
 
@@ -130,14 +119,9 @@ body {
     color:#aaa;
     white-space:pre-wrap;
 }
-
-.empty-tip {
-    text-align:center;
-    margin-top:60px;
-    color:#6b7280;
-}
 </style>
 
+<!-- MathJax：只负责公式 -->
 <script>
 window.MathJax = {
   tex: {
@@ -163,7 +147,6 @@ window.MathJax = {
 
 <div class="center">
     <div id="chat" class="chat"></div>
-
     <div class="input">
         <input id="text" placeholder="输入消息…">
         <button onclick="send()">发送</button>
@@ -171,7 +154,7 @@ window.MathJax = {
 </div>
 
 <div class="right">
-    <div style="margin-bottom:8px;">📋 会话信息</div>
+    <div>📋 会话信息</div>
     <div id="info" class="small"></div>
 </div>
 
