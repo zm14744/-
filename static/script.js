@@ -76,7 +76,7 @@ function send() {
     try { renderInfo(); } catch (e) { console.error(e); }
     input.value = "";
     enableInput(false);
-    // 关键改动：上传当前会话全部历史消息实现上下文记忆
+    // 上传当前会话全部历史消息实现上下文记忆
     fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
