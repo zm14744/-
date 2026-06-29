@@ -11,7 +11,9 @@ let typingDiv = null;
 
 const SPEED = 20;
 
+// =====================
 // 发送
+// =====================
 async function send() {
     const text = input.value.trim();
     if (!text) return;
@@ -20,6 +22,9 @@ async function send() {
 
     addMessage("user", text);
     messages.push({ role: "user", content: text });
+
+    // ❗ 防止重复打字机
+    stopTyping();
 
     const res = await fetch("/chat", {
         method: "POST",
@@ -35,7 +40,9 @@ async function send() {
     typeWriter(reply);
 }
 
+// =====================
 // 用户消息
+// =====================
 function addMessage(role, text) {
     const div = document.createElement("div");
     div.className = "msg " + role;
@@ -44,7 +51,19 @@ function addMessage(role, text) {
     chat.scrollTop = chat.scrollHeight;
 }
 
-// ✅ 打字机（不改效果，只修稳定性）
+// =====================
+// 停止打字机（关键修复）
+// =====================
+function stopTyping() {
+    if (typingTimer) {
+        clearInterval(typingTimer);
+        typingTimer = null;
+    }
+}
+
+// =====================
+// 打字机（最终稳定版）
+// =====================
 function typeWriter(text) {
 
     typingText = text;
@@ -54,7 +73,7 @@ function typeWriter(text) {
     typingDiv.className = "msg bot";
     chat.appendChild(typingDiv);
 
-    clearInterval(typingTimer);
+    stopTyping();
 
     typingTimer = setInterval(() => {
 
@@ -62,21 +81,33 @@ function typeWriter(text) {
 
         const current = typingText.slice(0, typingIndex);
 
-        // ✅ 关键修复：防止 markdown / 数学炸
+        // ❗ 核心修复：避免未闭合 markdown 破坏 DOM
+        let safeText = current;
+
+        // 临时防止代码块未闭合
+        const codeBlockCount = (current.match(/```/g) || []).length;
+        if (codeBlockCount % 2 !== 0) {
+            safeText += "\n```";
+        }
+
         try {
-            typingDiv.innerHTML = marked.parse(current);
+            typingDiv.innerHTML = marked.parse(safeText);
         } catch {
             typingDiv.innerText = current;
         }
 
         chat.scrollTop = chat.scrollHeight;
 
+        // =====================
         // 完成
+        // =====================
         if (typingIndex >= typingText.length) {
-            clearInterval(typingTimer);
-            typingTimer = null;
+            stopTyping();
 
-            // ✅ 只在结束后 MathJax
+            // 最终一次完整渲染（保证正确）
+            typingDiv.innerHTML = marked.parse(typingText);
+
+            // ❗ 只在最终渲染 MathJax
             if (window.MathJax) {
                 MathJax.typesetPromise([typingDiv]).catch(()=>{});
             }
