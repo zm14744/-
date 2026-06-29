@@ -17,9 +17,9 @@ SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 
 - 组合数：`$\\binom{n}{k}$`
 - 图论：`$\\operatorname{tr}(A^2)$`
 
-**禁止**使用 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等非标准标记。"""
+**禁止**使用 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等非标准标记，也禁止输出 `INLINE`、`BLOCK` 等单词。"""
 
-def ask_ai(messages, retries=1):
+def ask_ai(messages, retries=2):
     """
     参数 messages: 列表，每个元素为 {"role": "user" 或 "assistant", "content": "..."}
     """
@@ -53,7 +53,8 @@ def ask_ai(messages, retries=1):
 
     for attempt in range(retries + 1):
         try:
-            res = requests.post(API_URL, headers=headers, json=data, timeout=(5, 20))
+            # 增加超时时间：连接10秒，读取60秒
+            res = requests.post(API_URL, headers=headers, json=data, timeout=(10, 60))
             res.raise_for_status()
             result = res.json()
             if "error" in result:
@@ -61,11 +62,13 @@ def ask_ai(messages, retries=1):
             return result["choices"][0]["message"]["content"]
         except requests.exceptions.Timeout:
             if attempt < retries:
+                print(f"⏱️ 请求超时，正在重试 ({attempt+1}/{retries})...")
                 continue
             else:
-                return "❌ 请求超时，请稍后再试（已重试）"
+                return "❌ 请求超时，请稍后再试（已重试多次）"
         except requests.exceptions.RequestException as e:
             if attempt < retries:
+                print(f"⚠️ 请求异常: {e}，正在重试...")
                 continue
             else:
                 return f"❌ 网络请求失败: {str(e)}"
