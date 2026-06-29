@@ -1,5 +1,6 @@
 const chat = document.getElementById("chat");
-const input = document.getElementById("input");
+// ✅ 正确获取文本框（HTML 中 id="text"）
+const input = document.getElementById("text");
 
 let messages = [];
 
@@ -12,7 +13,7 @@ let typingDiv = null;
 const SPEED = 20;
 
 // =====================
-// 发送
+// 发送（点击按钮调用）
 // =====================
 async function send() {
     const text = input.value.trim();
@@ -23,7 +24,6 @@ async function send() {
     addMessage("user", text);
     messages.push({ role: "user", content: text });
 
-    // ❗ 防止重复打字机
     stopTyping();
 
     const res = await fetch("/chat", {
@@ -41,7 +41,17 @@ async function send() {
 }
 
 // =====================
-// 用户消息
+// 回车发送（Shift+Enter 换行）
+// =====================
+input.addEventListener("keydown", function(e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+    }
+});
+
+// =====================
+// 添加消息
 // =====================
 function addMessage(role, text) {
     const div = document.createElement("div");
@@ -52,7 +62,7 @@ function addMessage(role, text) {
 }
 
 // =====================
-// 停止打字机（关键修复）
+// 停止打字机
 // =====================
 function stopTyping() {
     if (typingTimer) {
@@ -62,10 +72,9 @@ function stopTyping() {
 }
 
 // =====================
-// 打字机（最终稳定版）
+// 打字机（最终版）
 // =====================
 function typeWriter(text) {
-
     typingText = text;
     typingIndex = 0;
 
@@ -76,15 +85,11 @@ function typeWriter(text) {
     stopTyping();
 
     typingTimer = setInterval(() => {
-
         typingIndex++;
-
         const current = typingText.slice(0, typingIndex);
 
-        // ❗ 核心修复：避免未闭合 markdown 破坏 DOM
+        // 防止未闭合代码块破坏 DOM
         let safeText = current;
-
-        // 临时防止代码块未闭合
         const codeBlockCount = (current.match(/```/g) || []).length;
         if (codeBlockCount % 2 !== 0) {
             safeText += "\n```";
@@ -98,20 +103,14 @@ function typeWriter(text) {
 
         chat.scrollTop = chat.scrollHeight;
 
-        // =====================
         // 完成
-        // =====================
         if (typingIndex >= typingText.length) {
             stopTyping();
-
-            // 最终一次完整渲染（保证正确）
             typingDiv.innerHTML = marked.parse(typingText);
-
-            // ❗ 只在最终渲染 MathJax
+            // ✅ 只在最终渲染时调用 MathJax，可复制且不卡顿
             if (window.MathJax) {
                 MathJax.typesetPromise([typingDiv]).catch(()=>{});
             }
         }
-
     }, SPEED);
 }
