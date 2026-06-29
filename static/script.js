@@ -1,6 +1,6 @@
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// ===== 安全地修复 AI 常见错误 =====
+// ===== 修复 AI 常见错误 =====
 function fixAIErrors(text) {
     return text
         .replace(/\\JBLOCK/g, '\\]')
@@ -16,7 +16,18 @@ function fixAIErrors(text) {
         .replace(/\\text{ *le *}/g, '\\le ')
         .replace(/\\end\{([^}]*)\\end\{\1\}/g, '\\end{$1}')
         .replace(/\bINLINE\b/g, '')
-        .replace(/\bBLOCK\b/g, '');
+        .replace(/\bBLOCK\b/g, '')
+        // ⭐ 关键：移除可能已存在的错误 span 包裹，避免双重包裹
+        .replace(/<span class="math-tex">/g, '')
+        .replace(/<\/span>/g, '')
+        // 修复未闭合的 \[ 和 \]
+        .replace(/\\\[([\s\S]*?)(?=\\begin|\$|\\\[|\\\]|$)/g, (match, content) => {
+            // 如果后面没有对应的 \]，则补上
+            if (!match.includes('\\]')) {
+                return '\\[' + content + '\\]';
+            }
+            return match;
+        });
 }
 
 function hasLatex(text) {
@@ -28,26 +39,26 @@ function prepareMathContent(text) {
     let processed = fixAIErrors(text);
     const escapeBS = s => s.replace(/\\/g, '&#92;');
 
-    // 处理 \begin{...}...\end{...}
+    // ⭐ 优先处理 \begin{...}...\end{...} 环境（块级）
     processed = processed.replace(/\\begin\{([^}]*)\}([\s\S]*?)\\end\{\1\}/g, (match, env, content) => {
         const full = match;
         const escaped = full.replace(/\\/g, '&#92;');
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // $$...$$
+    // ⭐ 处理 $$...$$ 块级
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // \[...\]
+    // ⭐ 处理 \[...\] 块级（确保内部完整）
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\[' + escaped + '\\]</span>';
     });
 
-    // [...] (含 LaTeX)
+    // ⭐ 处理未转义的 [...] 但包含 LaTeX（视为块级）
     processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
         if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
             const escaped = escapeBS(content);
@@ -56,21 +67,24 @@ function prepareMathContent(text) {
         return match;
     });
 
-    // $...$
+    // ⭐ 处理 $...$ 行内
     processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\(' + escaped + '\\)</span>';
     });
 
-    // \(...\)
+    // ⭐ 处理 \(...\) 行内
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
         const escaped = escapeBS(content);
         return '<span class="math-tex">\\(' + escaped + '\\)</span>';
     });
 
+    // ⭐ 额外：处理未闭合的 \( 或 \[ 可能导致的混乱，但已由 fixAIErrors 处理
+
+    // ⭐ 将结果交给 marked 解析
     let html = marked.parse(processed);
 
-    // 后处理
+    // ⭐ 后处理：保护所有 \( 和 \[
     html = html.replace(/\\\(/g, '&#92;(')
                .replace(/\\\)/g, '&#92;)')
                .replace(/\\\[/g, '&#92;[')
@@ -79,7 +93,7 @@ function prepareMathContent(text) {
     return html;
 }
 
-// ========== 应用逻辑 ==========
+// ========== 以下为应用逻辑（完全保留，稳定） ==========
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
