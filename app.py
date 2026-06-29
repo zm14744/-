@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import traceback
+import os
 
 try:
     from ai import ask_ai
@@ -32,4 +33,5 @@ def chat():
         return jsonify({"reply": f"❌ 服务器内部错误: {str(e)}"}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
