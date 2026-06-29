@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import re
 
-# 只加载一次（性能关键）
+# 只加载一次
 reader = easyocr.Reader(['ch_sim','en'], gpu=False, verbose=False)
 
 
@@ -11,7 +11,7 @@ def preprocess(img):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # ⚡ 降低计算量（提速核心）
+    # 降低计算量
     gray = cv2.resize(gray, None, fx=1.8, fy=1.8)
 
     gray = cv2.GaussianBlur(gray, (3,3), 0)
