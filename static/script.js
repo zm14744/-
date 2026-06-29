@@ -1,71 +1,71 @@
-// ===== Markdown 配置 =====
 marked.setOptions({ gfm: true, breaks: true, sanitize: false });
 
-// 修复常见 LaTeX 错误命令
 function fixCommonLaTeXErrors(text) {
     return text.replace(/\\textrightarrow/g, '\\rightarrow')
                .replace(/\\textleftarrow/g, '\\leftarrow')
                .replace(/\\textbackslash/g, '\\backslash');
 }
 
-// 检测是否包含 LaTeX 命令或数学符号
 function hasLatex(text) {
     return /\\[a-zA-Z]+|\\begin|\\end|\^|_|~/.test(text);
 }
 
-// 核心：将所有公式片段转换为 <span class="math-tex">\(...\)</span> 或 \[...\]
 function prepareMathContent(text) {
     let processed = fixCommonLaTeXErrors(text);
+    const placeholders = [];
+    let idx = 0;
 
-    // 统一处理所有可能的公式分隔符，并转义反斜杠为 &#92;（防止 marked 破坏）
-    // 顺序很重要：先处理块级，再处理行内，避免交叉干扰
-
-    // 1. 处理 $$...$$ 块级
-    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-        return '<span class="math-tex">\\[' + content.replace(/\\/g, '&#92;') + '\\]</span>';
+    // 1. 保护块级公式：\[...\]、$$...$$、未转义的 [...]（含 LaTeX）
+    const blockRegex = /\\\[([\s\S]*?)\\\]|\$\$([\s\S]*?)\$\$|\[([^\]]*?)\]/g;
+    processed = processed.replace(blockRegex, (match, d1, d2, bracket) => {
+        let content = d1 || d2 || bracket;
+        if (!content || !content.trim()) return match;
+        if (match.startsWith('[') && !hasLatex(content)) return match;
+        const ph = '@@BLOCK_' + (idx++) + '@@';
+        placeholders.push({ ph, content, display: true });
+        return ph;
     });
 
-    // 2. 处理 \[...\] 块级（可能已被转义）
-    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
-        return '<span class="math-tex">\\[' + content.replace(/\\/g, '&#92;') + '\\]</span>';
+    // 2. 保护行内公式：\(...\)、$...$
+    const inlineRegex = /\\\(([\s\S]*?)\\\)|\$([^\$]*?)\$/g;
+    processed = processed.replace(inlineRegex, (match, i1, i2) => {
+        let content = i1 || i2;
+        if (!content || !content.trim()) return match;
+        const ph = '@@INLINE_' + (idx++) + '@@';
+        placeholders.push({ ph, content, display: false });
+        return ph;
     });
 
-    // 3. 处理未转义的 [ ... ] 块（若包含 LaTeX 命令）
-    processed = processed.replace(/\[([^\]]*?)\]/g, (match, content) => {
-        if (hasLatex(content) && !match.includes('<span class="math-tex">')) {
-            return '<span class="math-tex">\\[' + content.replace(/\\/g, '&#92;') + '\\]</span>';
-        }
-        return match;
-    });
-
-    // 4. 处理 $...$ 行内
-    processed = processed.replace(/\$([^\$]*?)\$/g, (match, content) => {
-        return '<span class="math-tex">\\(' + content.replace(/\\/g, '&#92;') + '\\)</span>';
-    });
-
-    // 5. 处理 \(...\) 行内（可能已被转义）
-    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (match, content) => {
-        return '<span class="math-tex">\\(' + content.replace(/\\/g, '&#92;') + '\\)</span>';
-    });
-
-    // 6. 处理剩余的裸 LaTeX 命令（包含 \ 或 _ 或 ^ 等，且未被上述规则覆盖）
-    // 使用 split 分段，只处理非 span 部分
-    const parts = processed.split(/(<span[^>]*>[\s\S]*?<\/span>)/g);
+    // 3. 保护裸 LaTeX（未被上述规则覆盖）
+    const parts = processed.split(/(@@(BLOCK|INLINE)_\d+@@)/g);
     const finalParts = parts.map(part => {
-        if (part.startsWith('<span')) return part; // 已保护跳过
-        // 如果包含 LaTeX 特征且没有被任何公式分隔符包裹，则自动包裹
+        if (part.startsWith('@@')) return part;
         if (hasLatex(part) && !/\$/.test(part) && !/\\\(/.test(part) && !/\\\[/.test(part)) {
-            const isDisplay = part.includes('\n');
-            const content = part.replace(/\\/g, '&#92;');
-            return isDisplay ? '<span class="math-tex">\\[' + content + '\\]</span>'
-                             : '<span class="math-tex">\\(' + content + '\\)</span>';
+            const display = part.includes('\n');
+            const ph = (display ? '@@BLOCK_' : '@@INLINE_') + (idx++) + '@@';
+            placeholders.push({ ph, content: part, display });
+            return ph;
         }
         return part;
     });
-    return finalParts.join('');
+    processed = finalParts.join('');
+
+    // 4. 用 marked 解析（纯文本，占位符不受影响）
+    let html = marked.parse(processed);
+
+    // 5. 替换占位符为 span，转义反斜杠
+    placeholders.forEach(p => {
+        const escaped = p.content.replace(/\\/g, '&#92;');
+        const span = p.display
+            ? '<span class="math-tex">\\[' + escaped + '\\]</span>'
+            : '<span class="math-tex">\\(' + escaped + '\\)</span>';
+        html = html.replace(p.ph, span);
+    });
+
+    return html;
 }
 
-// ===== 以下为应用逻辑（保持不变）=====
+// ===== 应用逻辑（不变）=====
 let sessions = [];
 let currentId = null;
 let typingTimer = null;
@@ -103,7 +103,6 @@ function send() {
     if (!input) return;
     const text = input.value.trim();
     if (!text) return;
-
     if (!currentId) newChat();
     const s = getCurrent();
     if (!s) return;
@@ -166,8 +165,7 @@ function startTyping(text, session) {
 
     function finish() {
         try {
-            const processed = prepareMathContent(typingFullText);
-            typingDiv.innerHTML = marked.parse(processed);
+            typingDiv.innerHTML = prepareMathContent(typingFullText);
         } catch (e) {
             console.error(e);
             typingDiv.innerText = typingFullText;
@@ -188,8 +186,7 @@ function forceCompleteTyping() {
     typingTimer = null;
     if (typingDiv) {
         try {
-            const processed = prepareMathContent(typingFullText);
-            typingDiv.innerHTML = marked.parse(processed);
+            typingDiv.innerHTML = prepareMathContent(typingFullText);
         } catch (e) { typingDiv.innerText = typingFullText; }
         const s = sessions.find(s => s.id === typingSessionId);
         if (s) s.messages.push({ role: "ai", text: typingFullText });
@@ -214,8 +211,7 @@ function renderChat() {
             div.innerText = m.text;
         } else {
             try {
-                const processed = prepareMathContent(m.text);
-                div.innerHTML = marked.parse(processed);
+                div.innerHTML = prepareMathContent(m.text);
             } catch (e) {
                 console.error(e);
                 div.innerText = m.text;
