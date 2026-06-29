@@ -3,28 +3,23 @@ import os
 
 ASK_AI_MOCK = False 
 
-API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"
+API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"  # 请替换
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 LaTeX 编写，并严格用 `$...$` 或 `$$...$$` 包裹。
+SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 LaTeX 编写。
 
-**格式要求**：
-- 行内公式：`$...$`
-- 独立公式：`$$...$$`
-- 矩阵示例：`$$\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$$`
-- 组合数：`$\\binom{n}{k}$`
-- 图论：`$\\operatorname{tr}(A^2)$`
+**【强制的数学格式要求】**：
+1. 行内公式**必须**用 `$...$` 包裹，例如：`$V = \{1, 2, 3\}$`。
+2. 独立块级公式**必须**用 `$$...$$` 包裹，例如：`$$\sum_{i=1}^{n} i$$`。
+3. **绝对禁止使用** `\[...\]` 或 `\(...\)` 包裹数学公式！请统一转为 `$` 和 `$$`。
+4. 集合相关的花括号请务必写成 `$\\{a,b\\}$`，不要漏掉 `$` 符号。
 
-【重要新增要求】：
-**所有数学符号（包括花括号 `\{ \}`、希腊字母、下标 `_`、上标 `^` 等）都必须用 `$...$` 或 `$$...$$` 包裹，绝对不能出现未包裹的 LaTeX 命令。** 
-（例如：集合请写 `$\\{a,b\\}$`，而不要写 `(\\{a,b\\})` 或 `\{a,b\}`）。
-
-**禁止**使用 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等非标准标记。"""
+遵守以上规则可极大提升你的回答的渲染清晰度。禁止使用 `\JBLOCK`、`IJBLOCK`、`Icdot`、`\operatomame` 等非标准标记。"""
 
 def ask_ai(text, retries=1):
     if ASK_AI_MOCK:
         return """
-        $$\\begin{bmatrix} 1 & 2 \\\\ 3 & 4 \\end{bmatrix}$$
+        $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
         
         行内公式：$v_1, v_2, \\dots, v_n$
         
@@ -70,6 +65,5 @@ def ask_ai(text, retries=1):
         except Exception as e:
             return f"❌ 未知错误: {str(e)}"
     return "❌ 所有重试均失败"
-
 
 
