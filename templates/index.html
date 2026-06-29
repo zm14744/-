@@ -16,6 +16,7 @@ body {
 
 .layout { display:flex; height:100vh; }
 
+/* 左侧 */
 .left {
     width:240px;
     background:#0b1220;
@@ -31,13 +32,16 @@ body {
     border:none;
     color:white;
     border-radius:8px;
+    cursor:pointer;
     margin-bottom:10px;
 }
 
+/* sessions */
 #sessions { flex:1; overflow-y:auto; }
 
 .session {
     display:flex;
+    align-items:center;
     justify-content:space-between;
     padding:10px;
     background:#111827;
@@ -48,18 +52,24 @@ body {
 .session span {
     flex:1;
     cursor:pointer;
-    user-select:text;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
 }
 
+/* ⭐ 删除按钮：完全保留你原来的 */
 .session .del {
     width:20px;
     height:20px;
     border-radius:50%;
     border:none;
     background:#ef4444;
+    cursor:pointer;
+    padding:0;
     margin-left:8px;
 }
 
+/* 中间 */
 .center {
     flex:1;
     display:flex;
@@ -79,12 +89,17 @@ body {
     border-radius:12px;
     line-height:1.6;
     word-break:break-word;
-    user-select:text;
 }
 
 .user { background:#3b82f6; margin-left:auto; }
 .ai { background:#1f2937; }
 
+/* Markdown排版 */
+.ai-content p { margin:10px 0; }
+.ai-content h1,.ai-content h2,.ai-content h3 { margin:12px 0 8px; }
+.ai-content ul,.ai-content ol { padding-left:20px; margin:10px 0; }
+
+/* 输入 */
 .input {
     display:flex;
     padding:10px;
@@ -106,23 +121,31 @@ body {
     color:white;
 }
 
+/* 右侧 */
 .right {
     width:240px;
     background:#0b1220;
     padding:10px;
 }
+
+.small {
+    font-size:13px;
+    color:#aaa;
+    white-space:pre-wrap;
+}
+
+.empty-tip {
+    text-align:center;
+    margin-top:60px;
+    color:#6b7280;
+}
 </style>
 
-<!-- ⭐ MathJax：关键升级 -->
 <script>
 window.MathJax = {
   tex: {
     inlineMath: [['\\(', '\\)'], ['$','$']],
     displayMath: [['\\[', '\\]'], ['$$','$$']]
-  },
-  svg: { fontCache: 'global' },
-  startup: {
-    typeset: false   // ⭐关键：关闭自动渲染，手动控制
   }
 };
 </script>
@@ -143,7 +166,6 @@ window.MathJax = {
 
 <div class="center">
     <div id="chat" class="chat"></div>
-
     <div class="input">
         <input id="text" placeholder="输入消息…">
         <button onclick="send()">发送</button>
@@ -151,8 +173,8 @@ window.MathJax = {
 </div>
 
 <div class="right">
-    <div>📋 会话信息</div>
-    <div id="info"></div>
+    <div style="margin-bottom:8px;">📋 会话信息</div>
+    <div id="info" class="small"></div>
 </div>
 
 </div>
