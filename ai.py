@@ -1,10 +1,12 @@
 import requests
+import os
 
-# 设为 True 则跳过真实 API，返回测试回复（用于调试）
-ASK_AI_MOCK = False  # 生产环境设为 False
-
-API_KEY = "sk-0aaf311b073a419dbc352c02ef019b86"  # 已填入您的密钥
+# 优先使用环境变量，若未设置则使用硬编码（便于测试）
+API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-0aaf311b073a419dbc352c02ef019b86")
 API_URL = "https://api.deepseek.com/v1/chat/completions"
+
+# 设为 True 则跳过真实 API，返回模拟回复（用于调试）
+ASK_AI_MOCK = False  # 生产环境请设为 False
 
 SYSTEM_PROMPT = """你是离散数学专家。所有数学公式必须用标准 LaTeX 编写，并严格用 `$...$` 或 `$$...$$` 包裹。
 
