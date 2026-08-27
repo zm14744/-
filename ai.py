@@ -4,7 +4,7 @@ import time
 import random
 
 API_KEY = os.environ.get("DEEPSEEK_API_KEY")
-API_URL = "https://api.deepseek.com/v1/chat/completions"
+API_URL = "https://api.deepseek.com/chat/completions"
 
 # 调试模式：True 时返回模拟回复，不调用真实 API
 ASK_AI_MOCK = False
@@ -139,7 +139,8 @@ $$
     data = {
         "model": "deepseek-v4-flash",
         "messages": api_messages,
-        "max_tokens": MAX_OUTPUT_TOKENS
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        "stream": False
     }
 
     total_attempts = max(1, retries + 1)
