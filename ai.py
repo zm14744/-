@@ -137,7 +137,7 @@ $$
     ] + clean_messages
 
     data = {
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "messages": api_messages,
         "max_tokens": MAX_OUTPUT_TOKENS
     }
