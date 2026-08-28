@@ -49,6 +49,20 @@ SYSTEM_PROMPT = """你是离散数学智能辅学系统中的教学助手。
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
+def _success(reply):
+    return {
+        "ok": True,
+        "reply": reply
+    }
+
+
+def _failure(error):
+    return {
+        "ok": False,
+        "error": error
+    }
+
+
 def _trim_messages(messages):
     """限制历史消息数量和单条长度，降低上下文成本。"""
     if not isinstance(messages, list):
@@ -64,6 +78,7 @@ def _trim_messages(messages):
 
         if role not in ("user", "assistant"):
             continue
+
         if not isinstance(content, str):
             content = str(content)
 
@@ -100,12 +115,24 @@ def _friendly_http_error(status_code):
 def ask_ai(messages, retries=2):
     """
     调用 DeepSeek。
-    messages: [{"role": "user"|"assistant", "content": "..."}]
+
+    返回：
+        成功：
+        {
+            "ok": True,
+            "reply": "..."
+        }
+
+        失败：
+        {
+            "ok": False,
+            "error": "中文错误提示"
+        }
 
     默认最多：首次请求 + 2 次自动重试。
     """
     if ASK_AI_MOCK:
-        return """这是一条模拟回复。
+        return _success("""这是一条模拟回复。
 
 提示：这道题可以先判断它属于哪个离散数学知识点，再尝试写出第一步需要构造的数学对象。
 
@@ -117,15 +144,15 @@ $$
 3 & 4
 \\end{bmatrix}
 $$
-"""
+""")
 
     if not API_KEY:
         print("DeepSeek API 配置错误：未设置 DEEPSEEK_API_KEY")
-        return "AI 服务尚未完成配置，请联系管理员。"
+        return _failure("AI 服务尚未完成配置，请联系管理员。")
 
     clean_messages = _trim_messages(messages)
     if not clean_messages:
-        return "没有检测到有效的消息内容。"
+        return _failure("没有检测到有效的消息内容。")
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -166,50 +193,43 @@ $$
                     time.sleep(wait_seconds)
                     continue
 
-                return _friendly_http_error(response.status_code)
+                return _failure(
+                    _friendly_http_error(response.status_code)
+                )
 
             if not response.ok:
                 print(
                     f"DeepSeek 请求失败：HTTP {response.status_code}；"
                     f"响应内容：{response.text[:500]}"
                 )
-                return _friendly_http_error(response.status_code)
+                return _failure(
+                    _friendly_http_error(response.status_code)
+                )
 
             try:
                 result = response.json()
-            except ValueError as e:
-                print(f"DeepSeek 返回内容解析失败：{repr(e)}")
-                return "AI 服务返回了异常数据，请稍后再试。"
+            except ValueError as exc:
+                print(f"DeepSeek 返回内容解析失败：{repr(exc)}")
+                return _failure("AI 服务返回了异常数据，请稍后再试。")
 
             if "error" in result:
                 print(f"DeepSeek API 返回错误：{result['error']}")
-                return "AI 服务暂时出现异常，请稍后再试。"
+                return _failure("AI 服务暂时出现异常，请稍后再试。")
 
             choices = result.get("choices")
             if not choices:
                 print(f"DeepSeek 返回缺少 choices：{result}")
-                return "AI 服务没有返回有效内容，请重新发送。"
+                return _failure("AI 服务没有返回有效内容，请重新发送。")
 
             content = choices[0].get("message", {}).get("content")
             if not content:
-                return "AI 服务没有生成有效回答，请重新发送。"
+                return _failure("AI 服务没有生成有效回答，请重新发送。")
 
             print("DeepSeek API 调用成功")
-            return content
+            return _success(content)
 
-        except requests.exceptions.Timeout as e:
-            print(f"DeepSeek 请求超时：{repr(e)}")
-
-            if attempt < total_attempts - 1:
-                wait_seconds = (2 ** attempt) + random.uniform(0, 0.4)
-                print(f"{wait_seconds:.1f} 秒后自动重试")
-                time.sleep(wait_seconds)
-                continue
-
-            return "AI 服务响应时间过长，请稍后重新发送。"
-
-        except requests.exceptions.ConnectionError as e:
-            print(f"DeepSeek 网络连接异常：{repr(e)}")
+        except requests.exceptions.Timeout as exc:
+            print(f"DeepSeek 请求超时：{repr(exc)}")
 
             if attempt < total_attempts - 1:
                 wait_seconds = (2 ** attempt) + random.uniform(0, 0.4)
@@ -217,15 +237,26 @@ $$
                 time.sleep(wait_seconds)
                 continue
 
-            return "暂时无法连接 AI 服务，请检查网络后重试。"
+            return _failure("AI 服务响应时间过长，请稍后重新发送。")
 
-        except requests.exceptions.RequestException as e:
-            print(f"DeepSeek 请求异常：{repr(e)}")
-            return "AI 服务请求失败，请稍后重试。"
+        except requests.exceptions.ConnectionError as exc:
+            print(f"DeepSeek 网络连接异常：{repr(exc)}")
 
-        except Exception as e:
+            if attempt < total_attempts - 1:
+                wait_seconds = (2 ** attempt) + random.uniform(0, 0.4)
+                print(f"{wait_seconds:.1f} 秒后自动重试")
+                time.sleep(wait_seconds)
+                continue
+
+            return _failure("暂时无法连接 AI 服务，请检查网络后重试。")
+
+        except requests.exceptions.RequestException as exc:
+            print(f"DeepSeek 请求异常：{repr(exc)}")
+            return _failure("AI 服务请求失败，请稍后重试。")
+
+        except Exception as exc:
             # 详细技术错误仅写服务器日志，不暴露给学生
-            print(f"AI 模块未知异常：{repr(e)}")
-            return "系统暂时出现异常，请稍后重试。"
+            print(f"AI 模块未知异常：{repr(exc)}")
+            return _failure("系统暂时出现异常，请稍后重试。")
 
-    return "AI 服务暂时不可用，请稍后重试。"
+    return _failure("AI 服务暂时不可用，请稍后重试。")
