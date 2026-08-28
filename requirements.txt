@@ -5,10 +5,9 @@ gunicorn==23.0.0
 
 # OCR / Math formula recognition (CPU)
 paddlepaddle==3.3.1
-paddleocr==3.7.0
+paddleocr[doc-parser]==3.7.0
 
 # Image processing
 numpy==1.26.4
-opencv-python==4.10.0.84
 opencv-contrib-python==4.10.0.84
 Pillow==11.3.0
