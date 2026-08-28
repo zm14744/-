@@ -6,9 +6,19 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+# Zeabur 亚洲节点优先使用 BOS 模型源；
+# 若外部环境已配置其他来源，则不覆盖。
 os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
 
-from paddleocr import PaddleOCR, FormulaRecognitionPipeline
+from paddleocr import PaddleOCR
+
+_formula_import_error = None
+try:
+    from paddleocr import FormulaRecognitionPipeline
+except Exception as exc:
+    # 公式模块导入失败时，仍允许普通文字 OCR 工作。
+    FormulaRecognitionPipeline = None
+    _formula_import_error = repr(exc)
 
 
 TEXT_DET_MODEL = "PP-OCRv6_small_det"
@@ -21,6 +31,9 @@ MIN_TEXT_SCORE = 0.45
 _text_ocr = None
 _formula_ocr = None
 
+_formula_load_attempted = False
+_formula_load_error = _formula_import_error
+
 _model_lock = threading.Lock()
 _inference_lock = threading.Lock()
 
@@ -31,11 +44,27 @@ class OCRError(Exception):
 
 
 def load_models():
-    """只加载一次模型。"""
-    global _text_ocr, _formula_ocr
+    """
+    加载 OCR 模型。
 
-    if _text_ocr is not None and _formula_ocr is not None:
-        return
+    普通文字模型是必需的：
+    - 加载失败时直接抛出异常。
+
+    公式模型是可降级的：
+    - 加载失败时记录日志；
+    - PP-OCRv6-small 仍然可以继续工作；
+    - 后续识别结果通过 warning 提醒用户检查公式。
+    """
+    global _text_ocr
+    global _formula_ocr
+    global _formula_load_attempted
+    global _formula_load_error
+
+    if _text_ocr is not None and _formula_load_attempted:
+        return {
+            "text_ready": True,
+            "formula_ready": _formula_ocr is not None,
+        }
 
     with _model_lock:
         if _text_ocr is None:
@@ -52,21 +81,53 @@ def load_models():
             )
             print("PP-OCRv6-small 加载完成")
 
-        if _formula_ocr is None:
-            print("正在加载 PP-FormulaNet_plus-S...")
-            _formula_ocr = FormulaRecognitionPipeline(
-                formula_recognition_model_name=FORMULA_MODEL,
-                formula_recognition_batch_size=1,
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_layout_detection=True,
-                device="cpu",
-                cpu_threads=2,
-            )
-            print("PP-FormulaNet_plus-S 加载完成")
+        if not _formula_load_attempted:
+            _formula_load_attempted = True
+
+            if FormulaRecognitionPipeline is None:
+                _formula_load_error = (
+                    _formula_import_error
+                    or "FormulaRecognitionPipeline 不可用"
+                )
+                print(
+                    "PP-FormulaNet_plus-S 未能加载，"
+                    f"已启用普通文字 OCR 降级：{_formula_load_error}"
+                )
+            else:
+                try:
+                    print("正在加载 PP-FormulaNet_plus-S...")
+                    _formula_ocr = FormulaRecognitionPipeline(
+                        formula_recognition_model_name=FORMULA_MODEL,
+                        formula_recognition_batch_size=1,
+                        use_doc_orientation_classify=False,
+                        use_doc_unwarping=False,
+                        use_layout_detection=True,
+                        device="cpu",
+                        cpu_threads=2,
+                    )
+                    _formula_load_error = None
+                    print("PP-FormulaNet_plus-S 加载完成")
+                except Exception as exc:
+                    _formula_ocr = None
+                    _formula_load_error = repr(exc)
+                    print(
+                        "PP-FormulaNet_plus-S 加载失败，"
+                        f"已启用普通文字 OCR 降级：{repr(exc)}"
+                    )
+
+    return {
+        "text_ready": _text_ocr is not None,
+        "formula_ready": _formula_ocr is not None,
+    }
 
 
 def _decode_image(image_data):
+    """
+    支持：
+    - bytes / bytearray
+    - Flask FileStorage（具有 read()）
+    - numpy.ndarray
+    """
     if isinstance(image_data, np.ndarray):
         image = image_data.copy()
     else:
@@ -81,12 +142,18 @@ def _decode_image(image_data):
             raise OCRError("图片内容为空，请重新上传。")
 
         try:
+            # 处理手机照片 EXIF 方向，再转换为 OpenCV BGR。
             pil_image = Image.open(io.BytesIO(raw))
             pil_image = ImageOps.exif_transpose(pil_image).convert("RGB")
-            image = cv2.cvtColor(np.asarray(pil_image), cv2.COLOR_RGB2BGR)
+            image = cv2.cvtColor(
+                np.asarray(pil_image),
+                cv2.COLOR_RGB2BGR
+            )
         except Exception as exc:
             print(f"图片解码失败：{repr(exc)}")
-            raise OCRError("图片读取失败，请重新选择图片。") from None
+            raise OCRError(
+                "图片读取失败，请重新选择图片。"
+            ) from None
 
     if image is None or image.size == 0:
         raise OCRError("图片读取失败，请重新选择图片。")
@@ -95,6 +162,10 @@ def _decode_image(image_data):
 
 
 def _resize_if_needed(image):
+    """
+    图片过大时只缩小，不强制放大、模糊或二值化，
+    尽量保留数学符号、上下标和细线。
+    """
     height, width = image.shape[:2]
     longest = max(height, width)
 
@@ -113,6 +184,7 @@ def _resize_if_needed(image):
 
 
 def _result_json(result):
+    """兼容 PaddleOCR Result 对象的 json 属性。"""
     payload = getattr(result, "json", None)
 
     if callable(payload):
@@ -128,6 +200,7 @@ def _result_json(result):
 
 
 def _normalize_box(box):
+    """统一为 [x1, y1, x2, y2]。"""
     try:
         arr = np.asarray(box, dtype=float).reshape(-1, 2)
         x1 = float(np.min(arr[:, 0]))
@@ -152,6 +225,10 @@ def _normalize_box(box):
 
 
 def _intersection_ratio(box_a, box_b):
+    """
+    计算 box_a 被 box_b 覆盖的比例，
+    用于删除被公式区域覆盖的普通 OCR 结果。
+    """
     ax1, ay1, ax2, ay2 = box_a
     bx1, by1, bx2, by2 = box_b
 
@@ -170,6 +247,7 @@ def _intersection_ratio(box_a, box_b):
 
 
 def _extract_text_items(image):
+    """提取 PP-OCRv6-small 的普通文字及坐标。"""
     output = _text_ocr.predict(
         image,
         text_rec_score_thresh=MIN_TEXT_SCORE,
@@ -196,7 +274,12 @@ def _extract_text_items(image):
             if not text:
                 continue
 
-            score = float(scores[index]) if index < len(scores) else 1.0
+            score = (
+                float(scores[index])
+                if index < len(scores)
+                else 1.0
+            )
+
             if score < MIN_TEXT_SCORE:
                 continue
 
@@ -218,6 +301,10 @@ def _extract_text_items(image):
 
 
 def _extract_formula_items(image):
+    """提取 PP-FormulaNet_plus-S 的 LaTeX 公式及坐标。"""
+    if _formula_ocr is None:
+        return []
+
     output = _formula_ocr.predict(
         image,
         use_layout_detection=True,
@@ -231,11 +318,16 @@ def _extract_formula_items(image):
         data = _result_json(result)
 
         for formula in data.get("formula_res_list") or []:
-            latex = str(formula.get("rec_formula", "")).strip()
+            latex = str(
+                formula.get("rec_formula", "")
+            ).strip()
+
             if not latex:
                 continue
 
-            box = _normalize_box(formula.get("dt_polys"))
+            box = _normalize_box(
+                formula.get("dt_polys")
+            )
             if box is None:
                 continue
 
@@ -252,14 +344,19 @@ def _remove_text_inside_formulas(text_items, formula_items):
     if not formula_items:
         return text_items
 
-    formula_boxes = [item["box"] for item in formula_items]
+    formula_boxes = [
+        item["box"] for item in formula_items
+    ]
     kept = []
 
     for text_item in text_items:
         text_box = text_item["box"]
 
         covered = any(
-            _intersection_ratio(text_box, formula_box) >= 0.45
+            _intersection_ratio(
+                text_box,
+                formula_box
+            ) >= 0.45
             for formula_box in formula_boxes
         )
 
@@ -271,8 +368,8 @@ def _remove_text_inside_formulas(text_items, formula_items):
 
 def _sort_reading_order(items):
     """
-    按识别框平均高度动态分行，
-    比固定像素阈值更适合不同分辨率和字号。
+    根据识别框平均高度动态分行，
+    适配不同分辨率和字号的单栏教材/试卷。
     """
     if not items:
         return []
@@ -285,9 +382,22 @@ def _sort_reading_order(items):
         box = item["box"]
         return max(1.0, box[3] - box[1])
 
-    rough = sorted(items, key=lambda item: (center_y(item), item["box"][0]))
-    avg_height = sum(height(item) for item in rough) / len(rough)
-    line_threshold = max(8.0, avg_height * 0.55)
+    rough = sorted(
+        items,
+        key=lambda item: (
+            center_y(item),
+            item["box"][0]
+        )
+    )
+
+    avg_height = (
+        sum(height(item) for item in rough)
+        / len(rough)
+    )
+    line_threshold = max(
+        8.0,
+        avg_height * 0.55
+    )
 
     lines = []
 
@@ -296,10 +406,16 @@ def _sort_reading_order(items):
         placed = False
 
         for line in lines:
-            if abs(cy - line["center_y"]) <= line_threshold:
+            if (
+                abs(cy - line["center_y"])
+                <= line_threshold
+            ):
                 line["items"].append(item)
                 line["center_y"] = (
-                    sum(center_y(x) for x in line["items"])
+                    sum(
+                        center_y(x)
+                        for x in line["items"]
+                    )
                     / len(line["items"])
                 )
                 placed = True
@@ -311,18 +427,29 @@ def _sort_reading_order(items):
                 "items": [item],
             })
 
-    lines.sort(key=lambda line: line["center_y"])
+    lines.sort(
+        key=lambda line: line["center_y"]
+    )
 
     ordered = []
     for line in lines:
-        line["items"].sort(key=lambda item: item["box"][0])
+        line["items"].sort(
+            key=lambda item: item["box"][0]
+        )
         ordered.extend(line["items"])
 
     return ordered
 
 
 def _formula_to_markdown(latex, box, image_width):
-    width = max(0.0, box[2] - box[0])
+    """
+    较宽或复杂公式使用块公式，
+    短公式使用行内公式。
+    """
+    width = max(
+        0.0,
+        box[2] - box[0]
+    )
 
     is_complex = (
         width >= image_width * 0.45
@@ -367,31 +494,44 @@ def recognize_image(image_data):
             "text": "Markdown + LaTeX",
             "text_count": 普通文字区域数量,
             "formula_count": 公式区域数量,
-            "warning": 公式识别降级时的中文提示，否则为 None
+            "warning": 公式模块降级时的中文提示，否则为 None
         }
 
     只负责识题，不调用 DeepSeek，也不生成答案。
     """
+    # 普通文字模型失败时让异常继续抛给 app.py；
+    # 公式模型失败由 load_models() 内部自动降级。
     load_models()
 
     image = _decode_image(image_data)
     image = _resize_if_needed(image)
 
     try:
-        # 2C4G 优先稳定：
-        # 同一时刻只执行一张图片的 OCR 推理。
         with _inference_lock:
             text_items = _extract_text_items(image)
 
             formula_items = []
             formula_warning = None
 
-            try:
-                formula_items = _extract_formula_items(image)
-            except Exception as exc:
-                # FormulaNet 失败时，普通文字 OCR 仍然可用。
-                print(f"公式识别失败，已降级为普通文字 OCR：{repr(exc)}")
-                formula_warning = "部分数学公式未能自动识别，请检查识别结果。"
+            if _formula_ocr is None:
+                formula_warning = (
+                    "公式识别模块暂时不可用，"
+                    "已使用普通文字识别，请检查数学公式。"
+                )
+            else:
+                try:
+                    formula_items = _extract_formula_items(
+                        image
+                    )
+                except Exception as exc:
+                    print(
+                        "公式识别失败，"
+                        f"已降级为普通文字 OCR：{repr(exc)}"
+                    )
+                    formula_warning = (
+                        "部分数学公式未能自动识别，"
+                        "请检查识别结果。"
+                    )
 
         text_items = _remove_text_inside_formulas(
             text_items,
@@ -399,6 +539,7 @@ def recognize_image(image_data):
         )
 
         all_items = text_items + formula_items
+
         text = _compose_markdown(
             all_items,
             image.shape[1]
@@ -406,7 +547,8 @@ def recognize_image(image_data):
 
         if not text:
             raise OCRError(
-                "没有识别到清晰的题目内容，请尝试重新拍摄或裁剪图片。"
+                "没有识别到清晰的题目内容，"
+                "请尝试重新拍摄或裁剪图片。"
             )
 
         return {
@@ -418,8 +560,12 @@ def recognize_image(image_data):
 
     except OCRError:
         raise
+
     except Exception as exc:
         print(f"OCR 识别异常：{repr(exc)}")
         raise OCRError(
+            "题目识别暂时失败，请稍后重试。"
+        ) from None
+
             "题目识别暂时失败，请稍后重试。"
         ) from None
