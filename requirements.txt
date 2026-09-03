@@ -3,7 +3,7 @@ Flask==3.1.2
 requests==2.32.5
 gunicorn==23.0.0
 
-# OCR / Math formula recognition (CPU)
+# OCR / Math formula recognition (CPU; formula pipeline uses doc-parser extra)
 paddlepaddle==3.3.1
 paddleocr[doc-parser]==3.7.0
 
