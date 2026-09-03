@@ -166,10 +166,10 @@ window.MathJax = {
     <div id="chat" class="chat"></div>
 
     <div class="input">
-        <input id="text" placeholder="输入消息…">
+        <input id="text" type="text" placeholder="输入消息…" autocomplete="off">
         <input id="imageInput" type="file" accept="image/*" hidden>
         <button id="imageBtn" type="button">图片识题</button>
-        <button id="sendBtn" onclick="send()">发送</button>
+        <button id="sendBtn" type="button" onclick="send()">发送</button>
     </div>
 </div>
 
@@ -181,9 +181,6 @@ window.MathJax = {
 </div>
 
 <script src="/static/script.js"></script>
-
-</body>
-</html>
 
 </body>
 </html>
