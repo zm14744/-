@@ -167,6 +167,8 @@ $$
         "model": "deepseek-v4-flash",
         "messages": api_messages,
         "max_tokens": MAX_OUTPUT_TOKENS,
+        # 教学场景以低延迟和稳定输出为优先，显式关闭默认高强度思考。
+        "thinking": {"type": "disabled"},
         "stream": False
     }
 
