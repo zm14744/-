@@ -311,6 +311,16 @@ def ocr():
     try:
         result = recognize_image(raw)
 
+        # 即使后台预热曾经失败，只要本次识别成功，就同步刷新就绪状态。
+        global _ocr_ready
+        global _ocr_status
+        _ocr_ready = True
+        _ocr_status = (
+            "已就绪（公式识别降级）"
+            if result.get("warning")
+            else "已就绪"
+        )
+
         return jsonify({
             "text": result.get("text", ""),
             "text_count": result.get(
@@ -365,4 +375,3 @@ if __name__ == "__main__":
         port=port,
         debug=False
     )
-
