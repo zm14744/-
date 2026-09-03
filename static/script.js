@@ -155,16 +155,23 @@ function loadState() {
 // -----------------------------
 // Markdown / MathJax
 // -----------------------------
-function markdownToHtml(text) {
-    const rawHtml = marked.parse(text || "");
+function escapeRawHtml(text) {
+    return String(text ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
 
-    // 下一步 index.html 会引入 DOMPurify。
-    // 在 DOMPurify 存在时自动启用净化。
+function markdownToHtml(text) {
+    const source = String(text ?? "");
+    const rawHtml = marked.parse(source);
+
     if (window.DOMPurify) {
-        return DOMPurify.sanitize(rawHtml);
+        return window.DOMPurify.sanitize(rawHtml);
     }
 
-    return rawHtml;
+    // DOMPurify CDN 异常时仍保留 Markdown，但不执行原始 HTML。
+    return marked.parse(escapeRawHtml(source));
 }
 
 function renderMath(target) {
@@ -715,6 +722,17 @@ function renderChat() {
     const chat = document.getElementById("chat");
     if (!chat) return;
 
+    if (
+        window.MathJax
+        && typeof MathJax.typesetClear === "function"
+    ) {
+        try {
+            MathJax.typesetClear([chat]);
+        } catch (error) {
+            console.warn("MathJax 清理旧公式失败：", error);
+        }
+    }
+
     chat.innerHTML = "";
 
     const session = getCurrent();
@@ -873,6 +891,8 @@ document.addEventListener(
     "DOMContentLoaded",
     () => {
         const input = document.getElementById("text");
+        const imageBtn = document.getElementById("imageBtn");
+        const imageInput = document.getElementById("imageInput");
 
         if (input) {
             input.addEventListener(
@@ -886,6 +906,20 @@ document.addEventListener(
                         send();
                     }
                 }
+            );
+        }
+
+        if (imageBtn) {
+            imageBtn.addEventListener(
+                "click",
+                openImagePicker
+            );
+        }
+
+        if (imageInput) {
+            imageInput.addEventListener(
+                "change",
+                handleImageSelected
             );
         }
 
