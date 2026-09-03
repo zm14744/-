@@ -112,6 +112,11 @@ body {
     background:#3b82f6;
     border:none;
     color:white;
+    cursor:pointer;
+}
+
+#imageBtn {
+    margin-right:8px;
 }
 
 .right {
@@ -144,6 +149,7 @@ window.MathJax = {
 
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
 
 </head>
 
@@ -161,6 +167,8 @@ window.MathJax = {
 
     <div class="input">
         <input id="text" placeholder="输入消息…">
+        <input id="imageInput" type="file" accept="image/*" hidden>
+        <button id="imageBtn" type="button">图片识题</button>
         <button id="sendBtn" onclick="send()">发送</button>
     </div>
 </div>
@@ -173,6 +181,9 @@ window.MathJax = {
 </div>
 
 <script src="/static/script.js"></script>
+
+</body>
+</html>
 
 </body>
 </html>
