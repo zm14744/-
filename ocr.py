@@ -607,7 +607,3 @@ def recognize_image(image_data):
         raise OCRError(
             "题目识别暂时失败，请稍后重试。"
         ) from None
-
-
-            "题目识别暂时失败，请稍后重试。"
-        ) from None
