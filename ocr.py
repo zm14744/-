@@ -1,6 +1,7 @@
 import io
 import os
 import threading
+import time
 
 import cv2
 import numpy as np
@@ -27,12 +28,14 @@ FORMULA_MODEL = "PP-FormulaNet_plus-S"
 
 MAX_IMAGE_SIDE = 2200
 MIN_TEXT_SCORE = 0.45
+FORMULA_RETRY_SECONDS = 300
 
 _text_ocr = None
 _formula_ocr = None
 
 _formula_load_attempted = False
 _formula_load_error = _formula_import_error
+_formula_last_attempt = 0.0
 
 _model_lock = threading.Lock()
 _inference_lock = threading.Lock()
@@ -51,19 +54,43 @@ def load_models():
     - 加载失败时直接抛出异常。
 
     公式模型是可降级的：
-    - 加载失败时记录日志；
-    - PP-OCRv6-small 仍然可以继续工作；
-    - 后续识别结果通过 warning 提醒用户检查公式。
+    - 导入失败时保持普通文字 OCR 可用；
+    - 运行时加载失败后进入降级模式；
+    - 对可能的临时网络/下载故障，5 分钟后允许再次尝试加载。
     """
     global _text_ocr
     global _formula_ocr
     global _formula_load_attempted
     global _formula_load_error
+    global _formula_last_attempt
 
-    if _text_ocr is not None and _formula_load_attempted:
+    now = time.monotonic()
+
+    if _text_ocr is not None and _formula_ocr is not None:
         return {
             "text_ready": True,
-            "formula_ready": _formula_ocr is not None,
+            "formula_ready": True,
+        }
+
+    if (
+        _text_ocr is not None
+        and _formula_load_attempted
+        and FormulaRecognitionPipeline is None
+    ):
+        return {
+            "text_ready": True,
+            "formula_ready": False,
+        }
+
+    if (
+        _text_ocr is not None
+        and _formula_load_attempted
+        and _formula_ocr is None
+        and now - _formula_last_attempt < FORMULA_RETRY_SECONDS
+    ):
+        return {
+            "text_ready": True,
+            "formula_ready": False,
         }
 
     with _model_lock:
@@ -81,10 +108,20 @@ def load_models():
             )
             print("PP-OCRv6-small 加载完成")
 
-        if not _formula_load_attempted:
-            _formula_load_attempted = True
+        now = time.monotonic()
+        should_try_formula = (
+            _formula_ocr is None
+            and FormulaRecognitionPipeline is not None
+            and (
+                not _formula_load_attempted
+                or now - _formula_last_attempt >= FORMULA_RETRY_SECONDS
+            )
+        )
 
-            if FormulaRecognitionPipeline is None:
+        if FormulaRecognitionPipeline is None:
+            if not _formula_load_attempted:
+                _formula_load_attempted = True
+                _formula_last_attempt = now
                 _formula_load_error = (
                     _formula_import_error
                     or "FormulaRecognitionPipeline 不可用"
@@ -93,27 +130,31 @@ def load_models():
                     "PP-FormulaNet_plus-S 未能加载，"
                     f"已启用普通文字 OCR 降级：{_formula_load_error}"
                 )
-            else:
-                try:
-                    print("正在加载 PP-FormulaNet_plus-S...")
-                    _formula_ocr = FormulaRecognitionPipeline(
-                        formula_recognition_model_name=FORMULA_MODEL,
-                        formula_recognition_batch_size=1,
-                        use_doc_orientation_classify=False,
-                        use_doc_unwarping=False,
-                        use_layout_detection=True,
-                        device="cpu",
-                        cpu_threads=2,
-                    )
-                    _formula_load_error = None
-                    print("PP-FormulaNet_plus-S 加载完成")
-                except Exception as exc:
-                    _formula_ocr = None
-                    _formula_load_error = repr(exc)
-                    print(
-                        "PP-FormulaNet_plus-S 加载失败，"
-                        f"已启用普通文字 OCR 降级：{repr(exc)}"
-                    )
+
+        elif should_try_formula:
+            _formula_load_attempted = True
+            _formula_last_attempt = now
+
+            try:
+                print("正在加载 PP-FormulaNet_plus-S...")
+                _formula_ocr = FormulaRecognitionPipeline(
+                    formula_recognition_model_name=FORMULA_MODEL,
+                    formula_recognition_batch_size=1,
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_layout_detection=True,
+                    device="cpu",
+                    cpu_threads=2,
+                )
+                _formula_load_error = None
+                print("PP-FormulaNet_plus-S 加载完成")
+            except Exception as exc:
+                _formula_ocr = None
+                _formula_load_error = repr(exc)
+                print(
+                    "PP-FormulaNet_plus-S 加载失败，"
+                    f"已启用普通文字 OCR 降级：{repr(exc)}"
+                )
 
     return {
         "text_ready": _text_ocr is not None,
@@ -566,6 +607,7 @@ def recognize_image(image_data):
         raise OCRError(
             "题目识别暂时失败，请稍后重试。"
         ) from None
+
 
             "题目识别暂时失败，请稍后重试。"
         ) from None
