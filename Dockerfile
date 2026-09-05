@@ -4,6 +4,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PADDLE_PDX_MODEL_SOURCE=BOS \
+    FLAGS_use_mkldnn=0 \
     OMP_NUM_THREADS=2 \
     MKL_NUM_THREADS=2 \
     OPENBLAS_NUM_THREADS=1 \
@@ -21,7 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-
 RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements.txt
 
