@@ -10,6 +10,7 @@ from PIL import Image, ImageOps
 # Zeabur 亚洲节点优先使用 BOS 模型源；
 # 若外部环境已配置其他来源，则不覆盖。
 os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
 
 from paddleocr import PaddleOCR
 
@@ -104,6 +105,7 @@ def load_models():
                 use_textline_orientation=False,
                 text_recognition_batch_size=1,
                 device="cpu",
+                enable_mkldnn=False,
                 cpu_threads=2,
             )
             print("PP-OCRv6-small 加载完成")
@@ -144,6 +146,7 @@ def load_models():
                     use_doc_unwarping=False,
                     use_layout_detection=True,
                     device="cpu",
+                    enable_mkldnn=False,
                     cpu_threads=2,
                 )
                 _formula_load_error = None
@@ -605,5 +608,8 @@ def recognize_image(image_data):
     except Exception as exc:
         print(f"OCR 识别异常：{repr(exc)}")
         raise OCRError(
+            "题目识别暂时失败，请稍后重试。"
+        ) from None
+
             "题目识别暂时失败，请稍后重试。"
         ) from None
