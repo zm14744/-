@@ -77,6 +77,8 @@ function normalizeTeaching(value) {
         category: asText(value.category) || "待识别",
         related_categories: asTextList(value.related_categories),
         knowledge_points: asTextList(value.knowledge_points),
+        prerequisite_points: asTextList(value.prerequisite_points),
+        knowledge_path: asTextList(value.knowledge_path),
         question_type: asText(value.question_type) || "综合题",
         mode: asText(value.mode) || "hint",
         mode_label: asText(value.mode_label) || "提示引导",
@@ -1033,6 +1035,18 @@ function renderInfo() {
         if (teaching.knowledge_points.length) {
             lines.push(
                 `涉及哪些知识：${teaching.knowledge_points.join("、")}`
+            );
+        }
+
+        if (teaching.prerequisite_points.length) {
+            lines.push(
+                `做这题前最好会：${teaching.prerequisite_points.join("、")}`
+            );
+        }
+
+        if (teaching.knowledge_path.length >= 2) {
+            lines.push(
+                `知识脉络：${teaching.knowledge_path.join(" → ")}`
             );
         }
 
