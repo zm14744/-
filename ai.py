@@ -43,12 +43,29 @@ SYSTEM_PROMPT = """你是离散数学智能辅学系统中的教学助手。
    - 能依据高置信度信息继续讲解时，就继续讲解，不要仅因为少量识别瑕疵要求学生重新确认原图。
 
 【数学格式要求】
-- 所有数学公式使用标准 LaTeX。
-- 行内公式使用 `$...$`。
-- 独立公式使用 `$$...$$`。
-- 矩阵示例：$$\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$$
-- 组合数：$\\binom{n}{k}$
-- 图论：$\\operatorname{tr}(A^2)$
+- 所有数学公式必须使用可被 MathJax 直接解析的标准 LaTeX。
+- 行内公式使用 `$...$`；独立公式使用 `$$...$$`；每一个 `$` 必须成对闭合。
+- 下标必须写成 `_`，例如 `$a_{ij}$`、`$v_1$`；表示下标时禁止写成 `\_`，更禁止写成 `*{ij}`。
+- 矩阵维数写成 `$A=(a_{ij})_{5\times 5}$`，禁止写成 `*{5\times5}`。
+- 分段定义必须使用 `cases`，例如：
+  $$
+  a_{ij}=
+  \begin{cases}
+  1, & v_i\text{ 与 }v_j\text{ 相邻},\\
+  0, & \text{否则}.
+  \end{cases}
+  $$
+- 公式中的中文说明必须放入 `\text{...}`，不要把“满足、否则、相邻”等中文裸写在数学公式内部。
+- 矩阵示例：
+  $$
+  \begin{bmatrix}
+  a & b\\
+  c & d
+  \end{bmatrix}
+  $$
+- 组合数：$\binom{n}{k}$。
+- 图论：$\operatorname{tr}(A^2)$。
+- 输出前自行检查：美元符号是否配对、上下标花括号是否闭合、`\begin{...}` 与 `\end{...}` 是否成对。
 - 禁止输出 `INLINE`、`BLOCK` 等内部占位词。
 - 禁止使用非标准伪 LaTeX 标记。
 
@@ -153,6 +170,41 @@ def _trim_messages(messages):
         })
 
     return trimmed
+
+
+
+def _repair_common_latex_typos(text):
+    """
+    只修复非常明确、低风险的 LaTeX 笔误。
+    不尝试猜测缺失的公式内容，避免“自动修公式”反而改错数学含义。
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    repaired = text
+
+    # 模型偶尔把数学下标写成 \_{ij}；这里改回标准 _{ij}。
+    repaired = re.sub(
+        r"\\_\\{([A-Za-z0-9,]+)\\}",
+        r"_{\\1}",
+        repaired
+    )
+
+    # 常见错误：a*{ij} -> a_{ij}
+    repaired = re.sub(
+        r"(?<![A-Za-z0-9])([A-Za-z])\\*\\{([A-Za-z0-9]{1,4})\\}",
+        r"\\1_{\\2}",
+        repaired
+    )
+
+    # 常见错误：(a_{ij})*{5\\times5} -> (a_{ij})_{5\\times5}
+    repaired = re.sub(
+        r"(\\))\\*\\{(\\d+\\s*\\\\times\\s*\\d+)\\}",
+        r"\\1_{\\2}",
+        repaired
+    )
+
+    return repaired
 
 
 def _friendly_http_error(status_code):
@@ -286,6 +338,8 @@ $$
             content = choices[0].get("message", {}).get("content")
             if not content:
                 return _failure("AI 服务没有生成有效回答，请重新发送。")
+
+            content = _repair_common_latex_typos(content)
 
             print("DeepSeek API 调用成功")
             return _success(content)
