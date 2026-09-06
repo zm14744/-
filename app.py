@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from flask import Flask, jsonify, render_template, request
 
 from ai import ask_ai, analyze_image_structure
+from teaching import analyze_messages
 
 
 # -----------------------------
@@ -230,8 +231,13 @@ def chat():
             "error": "没有检测到有效消息内容。"
         }), 400
 
+    teaching = analyze_messages(cleaned)
+
     try:
-        result = ask_ai(cleaned)
+        result = ask_ai(
+            cleaned,
+            teaching_context=teaching
+        )
     except Exception as exc:
         # app 层最后一道保险。
         print(
@@ -259,7 +265,8 @@ def chat():
             }), 502
 
         return jsonify({
-            "reply": reply
+            "reply": reply,
+            "teaching": teaching
         })
 
     error = result.get(
@@ -268,7 +275,8 @@ def chat():
     )
 
     return jsonify({
-        "error": error
+        "error": error,
+        "teaching": teaching
     }), 503
 
 
@@ -413,4 +421,3 @@ if __name__ == "__main__":
         port=port,
         debug=False
     )
-
