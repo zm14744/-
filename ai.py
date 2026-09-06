@@ -2,6 +2,7 @@ import requests
 import os
 import time
 import random
+import base64
 
 API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 API_URL = "https://api.deepseek.com/chat/completions"
@@ -28,6 +29,10 @@ SYSTEM_PROMPT = """你是离散数学智能辅学系统中的教学助手。
 3. 如果学生只是询问概念、定义、定理含义，可以正常直接解释，不必强制使用提示模式。
 4. 如果学生要求“出题”“生成练习题”，只给题目，不附答案和解析；除非学生之后明确要求答案。
 5. 如果学生答案有错误，先指出错误类型和思路问题，不要立刻把整道题答案全部给出。
+6. 图片识题可能同时包含“【题干与公式识别】”和“【图形结构识别】”：
+   - 必须综合两部分理解题目。
+   - 图形结构中标记为“可能/不确定”的内容不能当作确定事实。
+   - 如果 OCR 题干与图形结构明显冲突，先指出冲突并请学生确认，不要擅自补全。
 
 【数学格式要求】
 - 所有数学公式使用标准 LaTeX。
@@ -44,6 +49,39 @@ SYSTEM_PROMPT = """你是离散数学智能辅学系统中的教学助手。
 - 表达清楚、简洁。
 - 不堆砌无关内容。
 - 需要分步时按自然逻辑分步，不要制造过多层级。
+"""
+
+
+
+# 图像理解模型：只负责补充 OCR 无法提取的图形/结构信息，不直接解题。
+VISION_MODEL = os.environ.get(
+    "DEEPSEEK_VISION_MODEL",
+    "deepseek-v4-flash-vision-exp"
+)
+VISION_MAX_OUTPUT_TOKENS = 1200
+VISION_ENABLED = os.environ.get(
+    "VISION_ANALYSIS_ENABLED",
+    "1"
+).strip().lower() not in {"0", "false", "off", "no"}
+
+VISION_PROMPT = """你是离散数学题目的视觉结构解析器。
+
+任务：结合图片和已提取的 OCR 题干，只补充 OCR 难以表达的“图形结构信息”。不要解题，不要给答案，不要展开教学。
+
+重点识别：
+1. 图论图形：有向/无向、顶点标签、边、箭头方向、权值、自环、重边。
+2. 树与生成树：根节点、父子关系、层次、边权。
+3. 哈斯图：元素以及覆盖关系。
+4. 状态图/自动机：状态、转移方向、转移标记。
+5. 真值表、关系矩阵、邻接矩阵等依赖二维排版的信息：明确行列与单元格内容。
+6. 集合图、维恩图、欧拉图等：集合包含、相交、区域标记。
+
+要求：
+- 只描述图片中能够确认的信息，不猜测被遮挡或模糊的边。
+- 看不清的地方标记“可能/不确定”。
+- 不要重复整段 OCR 题干。
+- 如果图片没有需要额外补充的图形结构，只返回：未发现需要补充的图形结构。
+- 使用简洁中文；图结构尽量按“顶点 / 边或关系 / 权值或方向”的结构列出。
 """
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -262,3 +300,183 @@ $$
             return _failure("系统暂时出现异常，请稍后重试。")
 
     return _failure("AI 服务暂时不可用，请稍后重试。")
+
+def _guess_image_mime(raw):
+    """根据文件头判断 DeepSeek Vision 支持的图片 MIME。"""
+    if not isinstance(raw, (bytes, bytearray)) or not raw:
+        return None
+
+    data = bytes(raw[:16])
+
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+
+    return None
+
+
+def analyze_image_structure(image_bytes, ocr_text="", retries=1):
+    """
+    使用 DeepSeek Vision 补充离散数学图片中的图形结构。
+
+    这是 OCR 的增强层：
+    - OCR 失败不依赖这里；
+    - Vision 失败也不会让已经成功的 OCR 整体失败。
+    """
+    if not VISION_ENABLED:
+        return _failure("图形理解功能当前已关闭。")
+
+    if not API_KEY:
+        print("DeepSeek Vision 配置错误：未设置 DEEPSEEK_API_KEY")
+        return _failure("图形理解服务尚未完成配置。")
+
+    if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
+        return _failure("没有检测到有效图片内容。")
+
+    mime = _guess_image_mime(image_bytes)
+    if not mime:
+        return _failure("该图片格式暂不支持图形理解，请使用 JPG、PNG、GIF 或 WebP。")
+
+    ocr_context = str(ocr_text or "").strip()
+    if len(ocr_context) > 3500:
+        ocr_context = ocr_context[:3500] + "\n[OCR 题干过长，已截断]"
+
+    text_prompt = VISION_PROMPT
+    if ocr_context:
+        text_prompt += f"\n\n已提取的 OCR 题干（仅供校对和定位）：\n{ocr_context}"
+
+    encoded = base64.b64encode(bytes(image_bytes)).decode("ascii")
+    data_url = f"data:{mime};base64,{encoded}"
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": VISION_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text_prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": data_url,
+                            "detail": "high"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": VISION_MAX_OUTPUT_TOKENS,
+        "stream": False
+    }
+
+    total_attempts = max(1, retries + 1)
+
+    for attempt in range(total_attempts):
+        try:
+            print(
+                f"正在调用 DeepSeek Vision（第 {attempt + 1}/{total_attempts} 次）"
+            )
+
+            response = requests.post(
+                API_URL,
+                headers=headers,
+                json=payload,
+                timeout=(10, 90)
+            )
+
+            if response.status_code in RETRYABLE_STATUS:
+                if attempt < total_attempts - 1:
+                    wait_seconds = (2 ** attempt) + random.uniform(0, 0.4)
+                    print(
+                        f"DeepSeek Vision 暂时不可用，HTTP {response.status_code}，"
+                        f"{wait_seconds:.1f} 秒后重试"
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+
+                return _failure(
+                    "图形结构理解暂时不可用，已保留文字识别结果。"
+                )
+
+            if not response.ok:
+                print(
+                    f"DeepSeek Vision 请求失败：HTTP {response.status_code}；"
+                    f"响应内容：{response.text[:500]}"
+                )
+                return _failure(
+                    "图形结构理解暂时不可用，已保留文字识别结果。"
+                )
+
+            try:
+                result = response.json()
+            except ValueError as exc:
+                print(f"DeepSeek Vision 返回解析失败：{repr(exc)}")
+                return _failure(
+                    "图形结构理解暂时不可用，已保留文字识别结果。"
+                )
+
+            choices = result.get("choices")
+            if not choices:
+                print(f"DeepSeek Vision 返回缺少 choices：{result}")
+                return _failure(
+                    "图形结构理解暂时不可用，已保留文字识别结果。"
+                )
+
+            content = choices[0].get("message", {}).get("content")
+            if not isinstance(content, str) or not content.strip():
+                return _failure(
+                    "图形结构理解没有返回有效结果，已保留文字识别结果。"
+                )
+
+            text = content.strip()
+            if len(text) > 3000:
+                text = text[:3000] + "\n[图形结构描述过长，已截断]"
+
+            print("DeepSeek Vision 调用成功")
+            return _success(text)
+
+        except requests.exceptions.Timeout as exc:
+            print(f"DeepSeek Vision 请求超时：{repr(exc)}")
+            if attempt < total_attempts - 1:
+                time.sleep((2 ** attempt) + random.uniform(0, 0.4))
+                continue
+            return _failure(
+                "图形结构理解响应较慢，已保留文字识别结果。"
+            )
+
+        except requests.exceptions.ConnectionError as exc:
+            print(f"DeepSeek Vision 网络连接异常：{repr(exc)}")
+            if attempt < total_attempts - 1:
+                time.sleep((2 ** attempt) + random.uniform(0, 0.4))
+                continue
+            return _failure(
+                "图形结构理解暂时无法连接，已保留文字识别结果。"
+            )
+
+        except requests.exceptions.RequestException as exc:
+            print(f"DeepSeek Vision 请求异常：{repr(exc)}")
+            return _failure(
+                "图形结构理解请求失败，已保留文字识别结果。"
+            )
+
+        except Exception as exc:
+            print(f"DeepSeek Vision 未知异常：{repr(exc)}")
+            return _failure(
+                "图形结构理解暂时出现异常，已保留文字识别结果。"
+            )
+
+    return _failure(
+        "图形结构理解暂时不可用，已保留文字识别结果。"
+    )
+
+
