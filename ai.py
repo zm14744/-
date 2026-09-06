@@ -3,6 +3,8 @@ import os
 import time
 import random
 import base64
+import json
+import re
 
 from teaching import teaching_prompt
 
@@ -31,10 +33,14 @@ SYSTEM_PROMPT = """你是离散数学智能辅学系统中的教学助手。
 3. 如果学生只是询问概念、定义、定理含义，可以正常直接解释，不必强制使用提示模式。
 4. 如果学生要求“出题”“生成练习题”，只给题目，不附答案和解析；除非学生之后明确要求答案。
 5. 如果学生答案有错误，先指出错误类型和思路问题，不要立刻把整道题答案全部给出。
-6. 图片识题可能同时包含“【题干与公式识别】”和“【图形结构识别】”：
-   - 必须综合两部分理解题目。
-   - 图形结构中标记为“可能/不确定”的内容不能当作确定事实。
-   - 如果 OCR 题干与图形结构明显冲突，先指出冲突并请学生确认，不要擅自补全。
+6. 图片识题会把内容整理成“【题目文字】”和“【图形信息】”（也兼容旧标签“【题干与公式识别】”“【图形结构识别】”），两部分职责不同：
+   - 题目的文字要求、编号、问法，以“题目文字”为主。
+   - 图中的顶点、边、箭头、邻接关系、层次和二维结构，以“图形信息”为主。
+   - 图形区域附近的 OCR 乱码、边名、顶点名重复内容已尽量清理；不要把残留的局部噪声当成关键冲突。
+   - e1、e2、e3 这类写在边旁的符号默认是边的名称，不是权值；只有题目明确是带权图或图中存在清楚、独立的数值权重时，才按权值处理。
+   - 图形信息中标记为“可能/不确定”的内容不能当作确定事实；如果不影响当前问题，就先忽略，不要因此中断教学。
+   - 只有当两部分对“会直接改变答案的关键信息”给出相互矛盾、且都较可信的结果时，才请学生确认。
+   - 能依据高置信度信息继续讲解时，就继续讲解，不要仅因为少量识别瑕疵要求学生重新确认原图。
 
 【数学格式要求】
 - 所有数学公式使用标准 LaTeX。
@@ -60,30 +66,42 @@ VISION_MODEL = os.environ.get(
     "DEEPSEEK_VISION_MODEL",
     "deepseek-v4-flash-vision-exp"
 )
-VISION_MAX_OUTPUT_TOKENS = 1200
+VISION_MAX_OUTPUT_TOKENS = 1800
 VISION_ENABLED = os.environ.get(
     "VISION_ANALYSIS_ENABLED",
     "1"
 ).strip().lower() not in {"0", "false", "off", "no"}
 
-VISION_PROMPT = """你是离散数学题目的视觉结构解析器。
+VISION_PROMPT = """你是离散数学题目的“图片文字校对 + 图形结构解析器”。
 
-任务：结合图片和已提取的 OCR 题干，只补充 OCR 难以表达的“图形结构信息”。不要解题，不要给答案，不要展开教学。
+你会同时看到原始题目图片和普通 OCR 结果。你的任务不是解题，而是把图片整理成两部分：
+1. corrected_text：干净、可读的题目文字；
+2. visual_text：OCR 难以表达的图形结构信息。
 
-重点识别：
-1. 图论图形：有向/无向、顶点标签、边、箭头方向、权值、自环、重边。
-2. 树与生成树：根节点、父子关系、层次、边权。
-3. 哈斯图：元素以及覆盖关系。
-4. 状态图/自动机：状态、转移方向、转移标记。
-5. 真值表、关系矩阵、邻接矩阵等依赖二维排版的信息：明确行列与单元格内容。
-6. 集合图、维恩图、欧拉图等：集合包含、相交、区域标记。
+【corrected_text 要求】
+- 直接根据原图校对 OCR，不要机械照抄 OCR。
+- 保留题目标题、题干、(1)(2)(3)…等小问及数学符号。
+- 重点修正 v1、v2、v3、v4、v5 等下标/编号被 OCR 拆坏的问题。
+- 删除“夹在题干和小问之间”的图形 OCR 噪声，例如图中的 v1、e1、e2、线段附近乱码等。
+- 不要把图中边名、顶点名的散落标签重复塞进题目正文。
+- 看不清的正文不要编造；必要时保留最接近原图的写法并在该处标“[不清楚]”。
 
-要求：
-- 只描述图片中能够确认的信息，不猜测被遮挡或模糊的边。
-- 看不清的地方标记“可能/不确定”。
-- 不要重复整段 OCR 题干。
-- 如果图片没有需要额外补充的图形结构，只返回：未发现需要补充的图形结构。
-- 使用简洁中文；图结构尽量按“顶点 / 边或关系 / 权值或方向”的结构列出。
+【visual_text 要求】
+- 图论优先确认：有向/无向、是否带权、顶点、边连接关系、箭头、自环、重边。
+- e1、e2、e3 这类写在边旁的符号默认是“边的名称”，绝不能自动解释成权值 1、2、3。
+- 只有题目明确说明是带权图，或图片中存在与边名分离且清晰可确认的数值时，才输出边权。
+- 不要根据 OCR 的乱码猜出 22、86 之类的权值。
+- 如果是树、哈斯图、状态图、矩阵、真值表等，也要按结构描述。
+- 只写能从图中确认的信息；不确定的地方标“可能/不确定”。
+- 不要解题，不要给答案。
+
+请只返回一个 JSON 对象，不要 Markdown 代码块，不要额外解释：
+{
+  "corrected_text": "校对后的完整题目文字",
+  "visual_text": "图形结构描述；若没有需要补充的图形结构则为空字符串",
+  "has_visual_structure": true
+}
+其中 has_visual_structure 只能是 true 或 false。
 """
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -324,6 +342,68 @@ def _guess_image_mime(raw):
     return None
 
 
+
+def _extract_vision_json(content):
+    """从视觉模型输出中稳健提取 JSON。"""
+    if not isinstance(content, str):
+        return None
+
+    text = content.strip()
+    if not text:
+        return None
+
+    # 兼容模型偶尔包一层 ```json ... ```
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+
+    first = text.find("{")
+    last = text.rfind("}")
+    if first < 0 or last <= first:
+        return None
+
+    try:
+        data = json.loads(text[first:last + 1])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    corrected_text = data.get("corrected_text", "")
+    visual_text = data.get("visual_text", "")
+    has_visual = data.get("has_visual_structure", bool(visual_text))
+
+    if not isinstance(corrected_text, str):
+        corrected_text = str(corrected_text or "")
+    if not isinstance(visual_text, str):
+        visual_text = str(visual_text or "")
+
+    corrected_text = corrected_text.strip()
+    visual_text = visual_text.strip()
+
+    # 结果长度保险，避免实验模型异常长输出。
+    if len(corrected_text) > 5000:
+        corrected_text = corrected_text[:5000] + "\n[题目文字过长，已截断]"
+    if len(visual_text) > 3000:
+        visual_text = visual_text[:3000] + "\n[图形信息过长，已截断]"
+
+    return {
+        "corrected_text": corrected_text,
+        "visual_text": visual_text if bool(has_visual) else "",
+        "has_visual_structure": bool(has_visual and visual_text),
+    }
+
+
+def _vision_success(corrected_text, visual_text):
+    return {
+        "ok": True,
+        # 保留 reply 字段，兼容已有 app.py / 旧代码。
+        "reply": visual_text,
+        "corrected_text": corrected_text,
+        "visual_text": visual_text,
+    }
+
 def analyze_image_structure(image_bytes, ocr_text="", retries=1):
     """
     使用 DeepSeek Vision 补充离散数学图片中的图形结构。
@@ -474,12 +554,38 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
                     "图形结构理解没有返回有效结果，已保留文字识别结果。"
                 )
 
-            text = content.strip()
-            if len(text) > 3000:
-                text = text[:3000] + "\n[图形结构描述过长，已截断]"
+            parsed = _extract_vision_json(content)
 
-            print("DeepSeek Vision 调用成功")
-            return _success(text)
+            if parsed is None:
+                print(
+                    "DeepSeek Vision 返回内容不是有效 JSON："
+                    f"{content[:500]!r}"
+                )
+
+                # 结构化结果很关键。第一次格式异常时自动再试一次，
+                # 避免把一坨 JSON/自然语言直接显示给学生。
+                if attempt < total_attempts - 1:
+                    time.sleep((2 ** attempt) + random.uniform(0, 0.4))
+                    continue
+
+                return _failure(
+                    "图片内容整理暂时失败，已保留普通文字识别结果。"
+                )
+
+            corrected_text = parsed["corrected_text"]
+            visual_text = parsed["visual_text"]
+
+            # 校对文字为空时不强行覆盖 OCR；app.py 会自动回退原 OCR。
+            print(
+                "DeepSeek Vision 调用成功："
+                f"corrected_text={len(corrected_text)} chars；"
+                f"visual_text={len(visual_text)} chars"
+            )
+
+            return _vision_success(
+                corrected_text,
+                visual_text
+            )
 
         except requests.exceptions.Timeout as exc:
             print(f"DeepSeek Vision 请求超时：{repr(exc)}")
