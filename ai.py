@@ -4,6 +4,8 @@ import time
 import random
 import base64
 
+from teaching import teaching_prompt
+
 API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 API_URL = "https://api.deepseek.com/chat/completions"
 
@@ -150,7 +152,7 @@ def _friendly_http_error(status_code):
     return "AI 服务暂时出现异常，请稍后再试。"
 
 
-def ask_ai(messages, retries=2):
+def ask_ai(messages, retries=2, teaching_context=None):
     """
     调用 DeepSeek。
 
@@ -197,8 +199,10 @@ $$
         "Content-Type": "application/json"
     }
 
+    system_content = SYSTEM_PROMPT + teaching_prompt(teaching_context)
+
     api_messages = [
-        {"role": "system", "content": SYSTEM_PROMPT}
+        {"role": "system", "content": system_content}
     ] + clean_messages
 
     data = {
