@@ -1,0 +1,400 @@
+{
+  "version": 1,
+  "title": "离散数学知识脉络",
+  "description": "用于教学提示、前置知识提醒和后续学习状态记录的轻量知识图谱。当前版本只描述知识结构，不记录学生掌握度。",
+  "nodes": [
+    {
+      "id": "logic_truth",
+      "name": "命题与真值",
+      "category": "命题逻辑",
+      "prerequisites": []
+    },
+    {
+      "id": "logic_connectives",
+      "name": "逻辑联结词",
+      "category": "命题逻辑",
+      "prerequisites": [
+        "命题与真值"
+      ]
+    },
+    {
+      "id": "logic_truth_table",
+      "name": "真值表",
+      "category": "命题逻辑",
+      "prerequisites": [
+        "逻辑联结词"
+      ]
+    },
+    {
+      "id": "logic_equivalence",
+      "name": "逻辑等价",
+      "category": "命题逻辑",
+      "prerequisites": [
+        "真值表"
+      ]
+    },
+    {
+      "id": "logic_normal_form",
+      "name": "范式",
+      "category": "命题逻辑",
+      "prerequisites": [
+        "逻辑等价"
+      ]
+    },
+    {
+      "id": "logic_reasoning",
+      "name": "命题推理",
+      "category": "命题逻辑",
+      "prerequisites": [
+        "逻辑联结词",
+        "逻辑等价"
+      ]
+    },
+    {
+      "id": "predicate_domain",
+      "name": "谓词与个体域",
+      "category": "谓词逻辑",
+      "prerequisites": [
+        "命题与真值"
+      ]
+    },
+    {
+      "id": "predicate_quantifier",
+      "name": "量词",
+      "category": "谓词逻辑",
+      "prerequisites": [
+        "谓词与个体域"
+      ]
+    },
+    {
+      "id": "predicate_variable",
+      "name": "变元与辖域",
+      "category": "谓词逻辑",
+      "prerequisites": [
+        "量词"
+      ]
+    },
+    {
+      "id": "predicate_reasoning",
+      "name": "量词推理与否定",
+      "category": "谓词逻辑",
+      "prerequisites": [
+        "量词",
+        "变元与辖域"
+      ]
+    },
+    {
+      "id": "set_operation",
+      "name": "集合运算",
+      "category": "集合与关系",
+      "prerequisites": []
+    },
+    {
+      "id": "relation_cartesian",
+      "name": "笛卡尔积与关系",
+      "category": "集合与关系",
+      "prerequisites": [
+        "集合运算"
+      ]
+    },
+    {
+      "id": "relation_property",
+      "name": "关系性质",
+      "category": "集合与关系",
+      "prerequisites": [
+        "笛卡尔积与关系"
+      ]
+    },
+    {
+      "id": "relation_equivalence",
+      "name": "等价关系与划分",
+      "category": "集合与关系",
+      "prerequisites": [
+        "关系性质"
+      ]
+    },
+    {
+      "id": "relation_order",
+      "name": "偏序关系",
+      "category": "集合与关系",
+      "prerequisites": [
+        "关系性质"
+      ]
+    },
+    {
+      "id": "relation_closure",
+      "name": "关系闭包",
+      "category": "集合与关系",
+      "prerequisites": [
+        "关系性质"
+      ]
+    },
+    {
+      "id": "function_mapping",
+      "name": "函数与映射",
+      "category": "函数",
+      "prerequisites": [
+        "集合运算"
+      ]
+    },
+    {
+      "id": "function_injection",
+      "name": "单射满射双射",
+      "category": "函数",
+      "prerequisites": [
+        "函数与映射"
+      ]
+    },
+    {
+      "id": "function_composition",
+      "name": "复合函数",
+      "category": "函数",
+      "prerequisites": [
+        "函数与映射"
+      ]
+    },
+    {
+      "id": "function_inverse",
+      "name": "逆函数",
+      "category": "函数",
+      "prerequisites": [
+        "单射满射双射",
+        "复合函数"
+      ]
+    },
+    {
+      "id": "count_basic",
+      "name": "基本计数原理",
+      "category": "计数与组合",
+      "prerequisites": []
+    },
+    {
+      "id": "count_perm_comb",
+      "name": "排列与组合",
+      "category": "计数与组合",
+      "prerequisites": [
+        "基本计数原理"
+      ]
+    },
+    {
+      "id": "count_binomial",
+      "name": "二项式定理",
+      "category": "计数与组合",
+      "prerequisites": [
+        "排列与组合"
+      ]
+    },
+    {
+      "id": "count_pigeonhole",
+      "name": "鸽巢原理",
+      "category": "计数与组合",
+      "prerequisites": [
+        "基本计数原理"
+      ]
+    },
+    {
+      "id": "count_inclusion",
+      "name": "容斥原理",
+      "category": "计数与组合",
+      "prerequisites": [
+        "基本计数原理",
+        "集合运算"
+      ]
+    },
+    {
+      "id": "count_generating",
+      "name": "生成函数",
+      "category": "计数与组合",
+      "prerequisites": [
+        "排列与组合"
+      ]
+    },
+    {
+      "id": "recurrence_model",
+      "name": "递推关系建模",
+      "category": "递推关系",
+      "prerequisites": [
+        "基本计数原理"
+      ]
+    },
+    {
+      "id": "recurrence_homogeneous",
+      "name": "线性齐次递推",
+      "category": "递推关系",
+      "prerequisites": [
+        "递推关系建模"
+      ]
+    },
+    {
+      "id": "recurrence_nonhomogeneous",
+      "name": "非齐次递推",
+      "category": "递推关系",
+      "prerequisites": [
+        "线性齐次递推"
+      ]
+    },
+    {
+      "id": "recurrence_initial",
+      "name": "初始条件",
+      "category": "递推关系",
+      "prerequisites": [
+        "递推关系建模"
+      ]
+    },
+    {
+      "id": "graph_basic",
+      "name": "图的基本概念",
+      "category": "图论",
+      "prerequisites": []
+    },
+    {
+      "id": "graph_adjacency",
+      "name": "邻接矩阵",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念"
+      ]
+    },
+    {
+      "id": "graph_matrix",
+      "name": "图的矩阵表示",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念",
+        "邻接矩阵"
+      ]
+    },
+    {
+      "id": "graph_connectivity",
+      "name": "路径与连通性",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念"
+      ]
+    },
+    {
+      "id": "graph_euler",
+      "name": "欧拉图",
+      "category": "图论",
+      "prerequisites": [
+        "路径与连通性"
+      ]
+    },
+    {
+      "id": "graph_hamilton",
+      "name": "哈密顿图",
+      "category": "图论",
+      "prerequisites": [
+        "路径与连通性"
+      ]
+    },
+    {
+      "id": "graph_shortest",
+      "name": "最短路",
+      "category": "图论",
+      "prerequisites": [
+        "路径与连通性"
+      ]
+    },
+    {
+      "id": "graph_coloring",
+      "name": "图着色",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念"
+      ]
+    },
+    {
+      "id": "graph_planar",
+      "name": "平面图",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念"
+      ]
+    },
+    {
+      "id": "graph_matching",
+      "name": "图匹配",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念"
+      ]
+    },
+    {
+      "id": "tree_basic",
+      "name": "树的基本性质",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念",
+        "路径与连通性"
+      ]
+    },
+    {
+      "id": "tree_spanning",
+      "name": "生成树",
+      "category": "图论",
+      "prerequisites": [
+        "树的基本性质",
+        "路径与连通性"
+      ]
+    },
+    {
+      "id": "tree_mst",
+      "name": "最小生成树",
+      "category": "图论",
+      "prerequisites": [
+        "生成树"
+      ]
+    },
+    {
+      "id": "tree_matrix_tree",
+      "name": "矩阵树定理",
+      "category": "图论",
+      "prerequisites": [
+        "图的矩阵表示",
+        "生成树"
+      ]
+    },
+    {
+      "id": "algebra_system",
+      "name": "代数系统",
+      "category": "代数结构",
+      "prerequisites": [
+        "函数与映射"
+      ]
+    },
+    {
+      "id": "algebra_group",
+      "name": "群与子群",
+      "category": "代数结构",
+      "prerequisites": [
+        "代数系统"
+      ]
+    },
+    {
+      "id": "algebra_homomorphism",
+      "name": "同态与同构",
+      "category": "代数结构",
+      "prerequisites": [
+        "群与子群",
+        "函数与映射"
+      ]
+    },
+    {
+      "id": "algebra_ring_field",
+      "name": "环与域",
+      "category": "代数结构",
+      "prerequisites": [
+        "群与子群"
+      ]
+    },
+    {
+      "id": "algebra_lattice_bool",
+      "name": "格与布尔代数",
+      "category": "代数结构",
+      "prerequisites": [
+        "偏序关系"
+      ]
+    }
+  ]
+}
