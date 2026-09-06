@@ -129,11 +129,14 @@ function loadState() {
             });
         }
 
-        if (!loadedSessions.length) {
-            return false;
-        }
-
         sessions = loadedSessions;
+
+        // 允许“零会话”作为一个合法的持久化状态。
+        // 这样用户删除最后一个对话后，刷新页面也不会自动长回来。
+        if (!sessions.length) {
+            currentId = null;
+            return true;
+        }
 
         const savedIdExists = sessions.some(
             session => session.id === data.currentId
@@ -852,16 +855,11 @@ function renderSessions() {
                     : null;
             }
 
+            // 删除最后一个会话时保持空列表，不自动补一个“新对话”。
+            // 下一次真正发送文字或上传图片时，send()/handleImageSelected()
+            // 会按需调用 newChat() 创建会话。
             if (!sessions.length) {
-                const id = makeSessionId();
-
-                sessions.push({
-                    id,
-                    name: "新对话",
-                    messages: []
-                });
-
-                currentId = id;
+                currentId = null;
             }
 
             saveState();
