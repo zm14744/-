@@ -338,6 +338,7 @@ def ocr():
             ocr_text=ocr_text
         )
 
+        corrected_text = ""
         visual_text = ""
         vision_warning = None
 
@@ -345,8 +346,15 @@ def ocr():
             isinstance(vision_result, dict)
             and vision_result.get("ok") is True
         ):
+            corrected_text = str(
+                vision_result.get("corrected_text", "")
+            ).strip()
+
             visual_text = str(
-                vision_result.get("reply", "")
+                vision_result.get(
+                    "visual_text",
+                    vision_result.get("reply", "")
+                )
             ).strip()
 
             if visual_text == "未发现需要补充的图形结构。":
@@ -365,8 +373,12 @@ def ocr():
         if vision_warning:
             warnings.append(str(vision_warning))
 
+        # Vision 校对成功时优先给前端干净题干；
+        # 若校对失败/为空，则完全回退普通 OCR，不影响基本识题。
+        display_text = corrected_text or ocr_text
+
         return jsonify({
-            "text": ocr_text,
+            "text": display_text,
             "visual_text": visual_text,
             "text_count": result.get(
                 "text_count",
