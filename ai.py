@@ -55,6 +55,8 @@ SYSTEM_PROMPT = r"""你是离散数学智能辅学系统中的教学助手。
   0, & \text{否则}.
   \end{cases}
   $$
+- 只要数学定义中出现“若/当……则取某值，否则取另一值”，必须排成多行 `cases`。
+- 严禁把分段定义压成一行，例如 `a_{ij}=\{1, 条件, 0, 否则\}` 这种写法即使能渲染也视为错误格式。
 - 公式中的中文说明必须放入 `\text{...}`，不要把“满足、否则、相邻”等中文裸写在数学公式内部。
 - 矩阵示例：
   $$
@@ -281,6 +283,30 @@ def _looks_like_broken_math(text):
     if not _math_delimiters_balanced(text):
         return True
 
+    # 分段定义被错误压成一行：
+    # 例如 a_{ij}=\{1, 条件, 0, \text{否则}\}
+    pseudo_piecewise = re.search(
+        r"=\s*\\?\{\s*[^$]{0,500}(?:否则|otherwise)[^$]{0,200}",
+        text,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+
+    if pseudo_piecewise and r"\begin{cases}" not in text:
+        return True
+
+    # 更具体地识别邻接矩阵等“1/0/否则”定义被摊成一行的情况。
+    flattened_condition = re.search(
+        r"(?:[A-Za-z]_\{[^}]+\})\s*="
+        r"[^$]{0,300}(?:^|[^0-9])1(?:[^0-9]|$)"
+        r"[^$]{0,300}(?:^|[^0-9])0(?:[^0-9]|$)"
+        r"[^$]{0,300}否则",
+        text,
+        flags=re.DOTALL
+    )
+
+    if flattened_condition and r"\begin{cases}" not in text:
+        return True
+
     # Python 转义事故留下的控制字符也不应出现在模型答案中。
     if "\x08" in text or "\x0c" in text:
         return True
@@ -302,7 +328,8 @@ def _regenerate_broken_math_answer(
         "请完整重写上一条回答，保持原来的数学含义、教学方式和答案内容，"
         "不要提到“格式修复”或这条指令。"
         "严格使用标准 MathJax LaTeX：行内 $...$，独立公式 $$...$$；"
-        "下标只用 _{...}；分段定义使用 cases；"
+        "下标只用 _{...}；所有‘若……否则……’的条件定义必须使用多行 cases；"
+        "禁止把 a_{ij}={1, 条件, 0, 否则} 摊成一行；"
         "禁止使用星号代替下标，禁止出现 a*{ij}、$*、*a*{ij}。"
         "输出前检查所有美元符号、花括号和 begin/end 是否成对。"
     )
@@ -512,7 +539,7 @@ $$
                 )
 
                 regenerated = _regenerate_broken_math_answer(
-                    final_messages,
+                    api_messages,
                     content
                 )
 
