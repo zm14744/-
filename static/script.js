@@ -452,7 +452,11 @@ async function handleImageSelected(event) {
             ? data.text.trim()
             : "";
 
-        if (!text) {
+        const visualText = typeof data.visual_text === "string"
+            ? data.visual_text.trim()
+            : "";
+
+        if (!text && !visualText) {
             showAssistantMessage(
                 session,
                 "没有识别到有效的题目内容，请重新拍摄或裁剪图片。",
@@ -461,9 +465,21 @@ async function handleImageSelected(event) {
             return;
         }
 
+        const parts = [];
+
+        if (text) {
+            parts.push(`【题干与公式识别】\n${text}`);
+        }
+
+        if (visualText) {
+            parts.push(`【图形结构识别】\n${visualText}`);
+        }
+
+        const combinedText = parts.join("\n\n");
+
         session.messages.push({
             role: "user",
-            text,
+            text: combinedText,
             source: "ocr"
         });
 
