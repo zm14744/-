@@ -19,7 +19,7 @@ MAX_HISTORY_MESSAGES = 16
 MAX_MESSAGE_CHARS = 6000
 MAX_OUTPUT_TOKENS = 2000
 
-SYSTEM_PROMPT = """你是离散数学智能辅学系统中的教学助手。
+SYSTEM_PROMPT = r"""你是离散数学智能辅学系统中的教学助手。
 
 你的目标不是单纯替学生做题，而是帮助学生理解离散数学知识、形成解题思路，并能够独立完成问题。
 
@@ -68,6 +68,8 @@ SYSTEM_PROMPT = """你是离散数学智能辅学系统中的教学助手。
 - 输出前自行检查：美元符号是否配对、上下标花括号是否闭合、`\begin{...}` 与 `\end{...}` 是否成对。
 - 禁止输出 `INLINE`、`BLOCK` 等内部占位词。
 - 禁止使用非标准伪 LaTeX 标记。
+- 数学下标绝不能用 Markdown 星号代替；禁止出现 `a*{ij}`、`*a*{ij}`、`)*{5\\times5}`、`$*` 这类写法。
+- 不要用 `*...*` 或 `**...**` 包裹数学公式；公式只用成对的 `$...$` 或 `$$...$$`。
 
 【回答风格】
 - 使用中文回答。
@@ -175,36 +177,199 @@ def _trim_messages(messages):
 
 def _repair_common_latex_typos(text):
     """
-    只修复非常明确、低风险的 LaTeX 笔误。
-    不尝试猜测缺失的公式内容，避免“自动修公式”反而改错数学含义。
+    修复非常明确、低风险的 LaTeX / Markdown 笔误。
+    不猜数学结论，只修格式字符。
     """
     if not isinstance(text, str) or not text:
         return text
 
     repaired = text
 
-    # 模型偶尔把数学下标写成 \_{ij}；这里改回标准 _{ij}。
+    # 下标：a\_{ij} -> a_{ij}
     repaired = re.sub(
         r"\\_\{([A-Za-z0-9,]+)\}",
         r"_{\1}",
         repaired
     )
 
-    # 常见错误：a*{ij} -> a_{ij}
+    # a*{ij} -> a_{ij}
     repaired = re.sub(
-        r"(?<![A-Za-z0-9])([A-Za-z])\*\{([A-Za-z0-9]{1,4})\}",
+        r"(?<![A-Za-z0-9])([A-Za-z])\*\{([A-Za-z0-9]{1,8})\}",
         r"\1_{\2}",
         repaired
     )
 
-    # 常见错误：(a_{ij})*{5\\times5} -> (a_{ij})_{5\\times5}
+    # (a_{ij})*{5\times5} -> (a_{ij})_{5\times5}
     repaired = re.sub(
         r"(\))\*\{(\d+\s*\\times\s*\d+)\}",
         r"\1_{\2}",
         repaired
     )
 
+    # 模型偶尔会在公式边界旁插入 Markdown 强调星号：
+    # "$*" / "*$" -> "$"
+    repaired = repaired.replace("$*", "$").replace("*$", "$")
+
+    # 行首 "*a_{ij}" 这种不是正常列表，而是公式强调符残留。
+    repaired = re.sub(
+        r"(?m)^[ \t]*\*([A-Za-z](?:_\{[^}\n]+\})?)",
+        r"\1",
+        repaired
+    )
+
     return repaired
+
+
+def _math_delimiters_balanced(text):
+    """
+    检查 $...$ 与 $$...$$ 是否成对。
+    这里只做格式体检，不尝试解释数学内容。
+    """
+    if not isinstance(text, str):
+        return False
+
+    mode = None
+    index = 0
+    length = len(text)
+
+    while index < length:
+        char = text[index]
+
+        # 跳过转义美元符号
+        if char == "\\":
+            index += 2
+            continue
+
+        if char != "$":
+            index += 1
+            continue
+
+        is_double = (
+            index + 1 < length
+            and text[index + 1] == "$"
+        )
+
+        token = "$$" if is_double else "$"
+
+        if mode is None:
+            mode = token
+        elif mode == token:
+            mode = None
+        else:
+            # 在 $...$ 内遇到 $$，或反过来，都视为可疑。
+            return False
+
+        index += 2 if is_double else 1
+
+    return mode is None
+
+
+def _looks_like_broken_math(text):
+    if not isinstance(text, str) or not text.strip():
+        return True
+
+    suspicious_patterns = (
+        r"\\_\{",          # a\_{ij}
+        r"\*\{[^}\n]+\}",  # a*{ij} / )*{5\times5}
+        r"\$\*",
+        r"\*\$",
+    )
+
+    if any(re.search(pattern, text) for pattern in suspicious_patterns):
+        return True
+
+    if not _math_delimiters_balanced(text):
+        return True
+
+    # Python 转义事故留下的控制字符也不应出现在模型答案中。
+    if "\x08" in text or "\x0c" in text:
+        return True
+
+    return False
+
+
+def _regenerate_broken_math_answer(
+    final_messages,
+    broken_content,
+    timeout=(10, 60)
+):
+    """
+    仅在答案数学格式损坏时额外重生成一次。
+    这是异常兜底，正常回答不会多一次 API 调用。
+    """
+    repair_instruction = (
+        "你上一条回答中的 Markdown/LaTeX 格式损坏了。"
+        "请完整重写上一条回答，保持原来的数学含义、教学方式和答案内容，"
+        "不要提到“格式修复”或这条指令。"
+        "严格使用标准 MathJax LaTeX：行内 $...$，独立公式 $$...$$；"
+        "下标只用 _{...}；分段定义使用 cases；"
+        "禁止使用星号代替下标，禁止出现 a*{ij}、$*、*a*{ij}。"
+        "输出前检查所有美元符号、花括号和 begin/end 是否成对。"
+    )
+
+    retry_messages = list(final_messages)
+    retry_messages.append({
+        "role": "assistant",
+        "content": broken_content
+    })
+    retry_messages.append({
+        "role": "user",
+        "content": repair_instruction
+    })
+
+    payload = {
+        "model": "deepseek-v4-flash",
+        "messages": retry_messages,
+        "thinking": {"type": "disabled"},
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        "stream": False
+    }
+
+    try:
+        response = requests.post(
+            API_URL,
+            headers={
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=timeout
+        )
+
+        if response.status_code != 200:
+            print(
+                "数学格式重生成失败："
+                f"HTTP {response.status_code}；"
+                f"{response.text[:500]}"
+            )
+            return None
+
+        result = response.json()
+        choices = result.get("choices")
+
+        if not choices:
+            print("数学格式重生成失败：缺少 choices")
+            return None
+
+        content = choices[0].get("message", {}).get("content")
+
+        if not isinstance(content, str) or not content.strip():
+            print("数学格式重生成失败：返回内容为空")
+            return None
+
+        repaired = _repair_common_latex_typos(content.strip())
+
+        if _looks_like_broken_math(repaired):
+            print("数学格式重生成后仍检测到异常")
+            return None
+
+        print("数学格式异常已自动重生成")
+        return repaired
+
+    except Exception as exc:
+        print(f"数学格式重生成异常：{repr(exc)}")
+        return None
+
 
 
 def _friendly_http_error(status_code):
@@ -340,6 +505,24 @@ $$
                 return _failure("AI 服务没有生成有效回答，请重新发送。")
 
             content = _repair_common_latex_typos(content)
+
+            if _looks_like_broken_math(content):
+                print(
+                    "检测到 AI 数学格式异常，尝试自动重生成。"
+                )
+
+                regenerated = _regenerate_broken_math_answer(
+                    final_messages,
+                    content
+                )
+
+                if regenerated:
+                    content = regenerated
+                else:
+                    print(
+                        "数学格式自动重生成未成功，"
+                        "保留低风险修复后的原回答。"
+                    )
 
             print("DeepSeek API 调用成功")
             return _success(content)
