@@ -507,6 +507,69 @@ function send() {
 
 
 // -----------------------------
+// 图片题文字清理
+// -----------------------------
+function cleanOcrTextForVisual(rawText, hasVisualStructure) {
+    const source = String(rawText ?? "").trim();
+
+    // 没有图形结构识别结果时，保留 OCR 原文，避免误删。
+    if (!source || !hasVisualStructure) {
+        return source;
+    }
+
+    // 找第一道小题的编号，例如 (1)、（1）、1.、1、
+    const questionMatch = source.match(
+        /(?:\(\s*1\s*\)|（\s*1\s*）|(?:^|\s)1\s*[.．、])/m
+    );
+
+    if (!questionMatch || typeof questionMatch.index !== "number") {
+        return source;
+    }
+
+    const questionIndex = questionMatch.index;
+    const beforeQuestions = source.slice(0, questionIndex);
+    const questions = source.slice(questionIndex).trim();
+
+    // 这类提示语后面通常紧跟题图。OCR 会把图中的 v1、e1、e2……
+    // 当成普通文字塞进题干。既然视觉模型已经单独识别了图形结构，
+    // 就把“提示语 → 第(1)问”之间的图形 OCR 噪声去掉。
+    const cues = [
+        "回答下列问题",
+        "回答以下问题",
+        "完成下列问题",
+        "解答下列问题",
+        "求解下列问题",
+        "回答问题"
+    ];
+
+    let bestEnd = -1;
+
+    for (const cue of cues) {
+        const index = beforeQuestions.lastIndexOf(cue);
+
+        if (index >= 0) {
+            bestEnd = Math.max(bestEnd, index + cue.length);
+        }
+    }
+
+    if (bestEnd < 0) {
+        return source;
+    }
+
+    const heading = beforeQuestions
+        .slice(0, bestEnd)
+        .trim()
+        .replace(/[：:]\s*$/, "");
+
+    if (!heading || !questions) {
+        return source;
+    }
+
+    return `${heading}\n${questions}`;
+}
+
+
+// -----------------------------
 // OCR 图片识题
 // -----------------------------
 function openImagePicker() {
@@ -582,13 +645,18 @@ async function handleImageSelected(event) {
             return;
         }
 
-        const text = typeof data.text === "string"
+        const rawText = typeof data.text === "string"
             ? data.text.trim()
             : "";
 
         const visualText = typeof data.visual_text === "string"
             ? data.visual_text.trim()
             : "";
+
+        const text = cleanOcrTextForVisual(
+            rawText,
+            Boolean(visualText)
+        );
 
         if (!text && !visualText) {
             showAssistantMessage(
@@ -602,11 +670,11 @@ async function handleImageSelected(event) {
         const parts = [];
 
         if (text) {
-            parts.push(`【题干与公式识别】\n${text}`);
+            parts.push(`【题目文字】\n${text}`);
         }
 
         if (visualText) {
-            parts.push(`【图形结构识别】\n${visualText}`);
+            parts.push(`【图形信息】\n${visualText}`);
         }
 
         const combinedText = parts.join("\n\n");
