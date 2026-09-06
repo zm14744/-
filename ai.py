@@ -379,6 +379,11 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
                 ]
             }
         ],
+        # 图形结构提取是短输出任务，不需要思考模式。
+        # DeepSeek Chat Completions 默认会开启 thinking；
+        # 显式关闭可避免输出预算被 reasoning_content 占用，
+        # 最终 content 为空的情况。
+        "thinking": {"type": "disabled"},
         "max_tokens": VISION_MAX_OUTPUT_TOKENS,
         "stream": False
     }
@@ -436,8 +441,35 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
                     "图形结构理解暂时不可用，已保留文字识别结果。"
                 )
 
-            content = choices[0].get("message", {}).get("content")
+            choice = choices[0] if isinstance(choices[0], dict) else {}
+            message = choice.get("message", {})
+            if not isinstance(message, dict):
+                message = {}
+
+            content = message.get("content")
             if not isinstance(content, str) or not content.strip():
+                reasoning_content = message.get("reasoning_content")
+                reasoning_len = (
+                    len(reasoning_content)
+                    if isinstance(reasoning_content, str)
+                    else 0
+                )
+                finish_reason = choice.get("finish_reason")
+                usage = result.get("usage")
+
+                print(
+                    "DeepSeek Vision 返回空内容："
+                    f"finish_reason={finish_reason!r}；"
+                    f"reasoning_len={reasoning_len}；"
+                    f"usage={usage!r}"
+                )
+
+                # 实验模型偶发空内容时自动再试一次，
+                # 不让一次空响应直接把图形理解判定为失败。
+                if attempt < total_attempts - 1:
+                    time.sleep((2 ** attempt) + random.uniform(0, 0.4))
+                    continue
+
                 return _failure(
                     "图形结构理解没有返回有效结果，已保留文字识别结果。"
                 )
@@ -482,5 +514,3 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
     return _failure(
         "图形结构理解暂时不可用，已保留文字识别结果。"
     )
-
-
