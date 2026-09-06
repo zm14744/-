@@ -5,7 +5,7 @@ from collections import defaultdict, deque
 
 from flask import Flask, jsonify, render_template, request
 
-from ai import ask_ai
+from ai import ask_ai, analyze_image_structure
 
 
 # -----------------------------
@@ -321,8 +321,45 @@ def ocr():
             else "已就绪"
         )
 
+        ocr_text = result.get("text", "")
+
+        # OCR 负责题干与公式；Vision 只补充图、树、哈斯图、箭头、
+        # 二维表格等 OCR 难以表达的结构。Vision 失败时 OCR 仍可继续使用。
+        vision_result = analyze_image_structure(
+            raw,
+            ocr_text=ocr_text
+        )
+
+        visual_text = ""
+        vision_warning = None
+
+        if (
+            isinstance(vision_result, dict)
+            and vision_result.get("ok") is True
+        ):
+            visual_text = str(
+                vision_result.get("reply", "")
+            ).strip()
+
+            if visual_text == "未发现需要补充的图形结构。":
+                visual_text = ""
+        else:
+            if isinstance(vision_result, dict):
+                vision_warning = vision_result.get("error")
+            if not vision_warning:
+                vision_warning = (
+                    "图形结构理解暂时不可用，已保留文字识别结果。"
+                )
+
+        warnings = []
+        if result.get("warning"):
+            warnings.append(str(result.get("warning")))
+        if vision_warning:
+            warnings.append(str(vision_warning))
+
         return jsonify({
-            "text": result.get("text", ""),
+            "text": ocr_text,
+            "visual_text": visual_text,
             "text_count": result.get(
                 "text_count",
                 0
@@ -331,7 +368,8 @@ def ocr():
                 "formula_count",
                 0
             ),
-            "warning": result.get("warning"),
+            "vision_used": bool(visual_text),
+            "warning": "；".join(warnings) if warnings else None,
         })
 
     except OCRError as exc:
@@ -375,3 +413,4 @@ if __name__ == "__main__":
         port=port,
         debug=False
     )
+
