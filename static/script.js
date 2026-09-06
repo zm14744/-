@@ -55,6 +55,36 @@ function setBusy(busy) {
     }
 }
 
+function normalizeTeaching(value) {
+    if (!value || typeof value !== "object") {
+        return null;
+    }
+
+    const asText = input => (
+        typeof input === "string" ? input.trim() : ""
+    );
+
+    const asTextList = input => (
+        Array.isArray(input)
+            ? input
+                .filter(item => typeof item === "string" && item.trim())
+                .map(item => item.trim())
+                .slice(0, 4)
+            : []
+    );
+
+    return {
+        category: asText(value.category) || "待识别",
+        related_categories: asTextList(value.related_categories),
+        knowledge_points: asTextList(value.knowledge_points),
+        question_type: asText(value.question_type) || "综合题",
+        mode: asText(value.mode) || "hint",
+        mode_label: asText(value.mode_label) || "提示引导",
+        confidence: asText(value.confidence) || "低",
+        input_source: asText(value.input_source) || "文本输入"
+    };
+}
+
 
 // -----------------------------
 // 本地持久化
@@ -125,7 +155,8 @@ function loadState() {
                 name: typeof session.name === "string" && session.name.trim()
                     ? session.name
                     : "新对话",
-                messages
+                messages,
+                teaching: normalizeTeaching(session.teaching)
             });
         }
 
@@ -210,7 +241,8 @@ function newChat() {
     sessions.push({
         id,
         name: "新对话",
-        messages: []
+        messages: [],
+        teaching: null
     });
 
     currentId = id;
@@ -226,6 +258,7 @@ function newChat() {
 function buildApiMessages(session) {
     return session.messages
         .filter(message => !message.isError && !message.isNotice)
+        .slice(-16)
         .map(message => {
             let content = message.text;
 
@@ -287,6 +320,12 @@ async function requestAiReply(session) {
         });
 
         const data = await parseResponseJson(response);
+
+        if (data.teaching) {
+            session.teaching = normalizeTeaching(data.teaching);
+            saveState();
+            renderInfo();
+        }
 
         if (!response.ok || data.error) {
             const message = data.error
@@ -882,9 +921,42 @@ function renderInfo() {
 
     const session = getCurrent();
 
-    info.innerText = session
-        ? `名称: ${session.name}\n消息数: ${session.messages.length}`
-        : "无会话";
+    if (!session) {
+        info.innerText = "无会话";
+        return;
+    }
+
+    const lines = [
+        `名称: ${session.name}`,
+        `消息数: ${session.messages.length}`
+    ];
+
+    const teaching = normalizeTeaching(session.teaching);
+
+    if (teaching) {
+        lines.push(
+            "",
+            `输入来源: ${teaching.input_source}`,
+            `所属模块: ${teaching.category}`,
+            `问题类型: ${teaching.question_type}`,
+            `教学模式: ${teaching.mode_label}`,
+            `分类置信度: ${teaching.confidence}`
+        );
+
+        if (teaching.knowledge_points.length) {
+            lines.push(
+                `知识点: ${teaching.knowledge_points.join("、")}`
+            );
+        }
+
+        if (teaching.related_categories.length) {
+            lines.push(
+                `相关模块: ${teaching.related_categories.join("、")}`
+            );
+        }
+    }
+
+    info.innerText = lines.join("\n");
 }
 
 
@@ -945,7 +1017,8 @@ document.addEventListener(
             sessions.push({
                 id,
                 name: "新对话",
-                messages: []
+                messages: [],
+                teaching: null
             });
 
             currentId = id;
