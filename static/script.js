@@ -85,6 +85,96 @@ function normalizeTeaching(value) {
     };
 }
 
+function getFriendlyCategory(value) {
+    const text = String(value || "").trim();
+
+    if (!text || text === "待识别") {
+        return "暂时没判断出来";
+    }
+
+    return text;
+}
+
+function getFriendlyQuestionType(value) {
+    const text = String(value || "").trim();
+
+    if (!text) {
+        return "综合问题";
+    }
+
+    if (text === "综合题") {
+        return "综合问题";
+    }
+
+    if (text === "出题请求") {
+        return "练习题需求";
+    }
+
+    if (text === "答案检查") {
+        return "答案检查";
+    }
+
+    return text;
+}
+
+function getFriendlyMode(value) {
+    const text = String(value || "").trim();
+
+    if (!text || text === "提示引导") {
+        return "先给思路和提示";
+    }
+
+    if (text === "完整解析") {
+        return "直接讲完整解法";
+    }
+
+    if (text === "概念讲解") {
+        return "先解释概念";
+    }
+
+    if (text === "练习出题") {
+        return "给你出练习题";
+    }
+
+    if (text === "答案诊断") {
+        return "帮你检查答案";
+    }
+
+    return text;
+}
+
+function getFriendlyConfidence(value) {
+    const text = String(value || "").trim();
+
+    if (!text || text === "低") {
+        return "不太确定";
+    }
+
+    if (text === "中") {
+        return "比较确定";
+    }
+
+    if (text === "高") {
+        return "较确定";
+    }
+
+    return text;
+}
+
+function getFriendlyInputSource(value) {
+    const text = String(value || "").trim();
+
+    if (!text || text === "文本输入") {
+        return "手动输入";
+    }
+
+    if (text === "图片识题") {
+        return "图片识题";
+    }
+
+    return text;
+}
+
 
 // -----------------------------
 // 本地持久化
@@ -922,13 +1012,13 @@ function renderInfo() {
     const session = getCurrent();
 
     if (!session) {
-        info.innerText = "无会话";
+        info.innerText = "暂无对话";
         return;
     }
 
     const lines = [
-        `名称: ${session.name}`,
-        `消息数: ${session.messages.length}`
+        `当前对话：${session.name}`,
+        `消息数：${session.messages.length}`
     ];
 
     const teaching = normalizeTeaching(session.teaching);
@@ -936,24 +1026,30 @@ function renderInfo() {
     if (teaching) {
         lines.push(
             "",
-            `输入来源: ${teaching.input_source}`,
-            `所属模块: ${teaching.category}`,
-            `问题类型: ${teaching.question_type}`,
-            `教学模式: ${teaching.mode_label}`,
-            `分类置信度: ${teaching.confidence}`
+            `这道题主要讲：${getFriendlyCategory(teaching.category)}`,
+            `这是什么题：${getFriendlyQuestionType(teaching.question_type)}`
         );
 
         if (teaching.knowledge_points.length) {
             lines.push(
-                `知识点: ${teaching.knowledge_points.join("、")}`
+                `涉及哪些知识：${teaching.knowledge_points.join("、")}`
             );
         }
 
+        lines.push(
+            `我会怎么帮你：${getFriendlyMode(teaching.mode_label)}`,
+            `判断把握：${getFriendlyConfidence(teaching.confidence)}`
+        );
+
         if (teaching.related_categories.length) {
             lines.push(
-                `相关模块: ${teaching.related_categories.join("、")}`
+                `相关内容：${teaching.related_categories.join("、")}`
             );
         }
+
+        lines.push(
+            `提问方式：${getFriendlyInputSource(teaching.input_source)}`
+        );
     }
 
     info.innerText = lines.join("\n");
