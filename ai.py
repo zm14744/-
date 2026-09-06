@@ -185,22 +185,22 @@ def _repair_common_latex_typos(text):
 
     # 模型偶尔把数学下标写成 \_{ij}；这里改回标准 _{ij}。
     repaired = re.sub(
-        r"\\_\\{([A-Za-z0-9,]+)\\}",
-        r"_{\\1}",
+        r"\\_\{([A-Za-z0-9,]+)\}",
+        r"_{\1}",
         repaired
     )
 
     # 常见错误：a*{ij} -> a_{ij}
     repaired = re.sub(
-        r"(?<![A-Za-z0-9])([A-Za-z])\\*\\{([A-Za-z0-9]{1,4})\\}",
-        r"\\1_{\\2}",
+        r"(?<![A-Za-z0-9])([A-Za-z])\*\{([A-Za-z0-9]{1,4})\}",
+        r"\1_{\2}",
         repaired
     )
 
     # 常见错误：(a_{ij})*{5\\times5} -> (a_{ij})_{5\\times5}
     repaired = re.sub(
-        r"(\\))\\*\\{(\\d+\\s*\\\\times\\s*\\d+)\\}",
-        r"\\1_{\\2}",
+        r"(\))\*\{(\d+\s*\\times\s*\d+)\}",
+        r"\1_{\2}",
         repaired
     )
 
