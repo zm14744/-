@@ -8,6 +8,8 @@ const LEARNING_STORAGE_KEY = "discrete_math_ai_learning_v1";
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_WRONG_QUESTIONS = 80;
 
+let wrongBookFilter = "all";
+
 let sessions = [];
 let currentId = null;
 let learningState = createEmptyLearningState();
@@ -94,7 +96,7 @@ function normalizeTeaching(value) {
 
 function createEmptyLearningState() {
     return {
-        version: 1,
+        version: 2,
         knowledge: {},
         wrongQuestions: []
     };
@@ -135,6 +137,12 @@ function normalizeLearningQuestion(value) {
             ? value.category.trim()
             : "",
         source: value.source === "ocr" ? "ocr" : "text",
+        sessionId: (
+            typeof value.sessionId === "number"
+            || typeof value.sessionId === "string"
+        )
+            ? value.sessionId
+            : null,
         updatedAt: Number.isFinite(value.updatedAt)
             ? value.updatedAt
             : Date.now()
@@ -173,7 +181,7 @@ function normalizeLearningState(value) {
     }
 
     if (Array.isArray(value.wrongQuestions)) {
-        state.wrongQuestions = value.wrongQuestions
+        const normalizedWrong = value.wrongQuestions
             .filter(item => item && typeof item === "object")
             .map(item => {
                 const question = typeof item.question === "string"
@@ -208,15 +216,103 @@ function normalizeLearningState(value) {
                     source: item.source === "auto" ? "auto" : "manual",
                     corrected: Boolean(item.corrected),
                     mistakeCount: Math.max(1, Number(item.mistakeCount) || 1),
+                    sessionId: (
+                        typeof item.sessionId === "number"
+                        || typeof item.sessionId === "string"
+                    )
+                        ? item.sessionId
+                        : null,
                     createdAt: Number.isFinite(item.createdAt)
                         ? item.createdAt
                         : Date.now(),
                     updatedAt: Number.isFinite(item.updatedAt)
                         ? item.updatedAt
-                        : Date.now()
+                        : Date.now(),
+                    lastWrongAt: Number.isFinite(item.lastWrongAt)
+                        ? item.lastWrongAt
+                        : (
+                            Number.isFinite(item.updatedAt)
+                                ? item.updatedAt
+                                : Date.now()
+                        ),
+                    correctedAt: Number.isFinite(item.correctedAt)
+                        ? item.correctedAt
+                        : null
                 };
             })
-            .filter(Boolean)
+            .filter(Boolean);
+
+        // 老版本可能因为知识点识别略有不同，把同一道题存了多份。
+        // 升级时按“题目本身”合并，避免用户看到重复卡片。
+        const mergedMap = new Map();
+
+        for (const item of normalizedWrong) {
+            const key = wrongQuestionFingerprint(item.question);
+            const existing = mergedMap.get(key);
+
+            if (!existing) {
+                mergedMap.set(key, item);
+                continue;
+            }
+
+            const newer = item.updatedAt >= existing.updatedAt
+                ? item
+                : existing;
+            const older = newer === item
+                ? existing
+                : item;
+
+            newer.knowledgePoints = [
+                ...new Set([
+                    ...older.knowledgePoints,
+                    ...newer.knowledgePoints
+                ])
+            ].slice(0, 4);
+
+            newer.focusPoints = [
+                ...new Set([
+                    ...newer.focusPoints,
+                    ...older.focusPoints
+                ])
+            ].slice(0, 2);
+
+            newer.mistakeCount = (
+                Math.max(1, Number(older.mistakeCount) || 1)
+                + Math.max(1, Number(newer.mistakeCount) || 1)
+            );
+
+            // 只要其中还有一份“待订正”，合并后仍应是待订正。
+            newer.corrected = Boolean(
+                older.corrected
+                && newer.corrected
+            );
+
+            newer.correctedAt = newer.corrected
+                ? Math.max(
+                    Number(older.correctedAt) || 0,
+                    Number(newer.correctedAt) || 0
+                ) || null
+                : null;
+
+            newer.createdAt = Math.min(
+                older.createdAt,
+                newer.createdAt
+            );
+
+            newer.lastWrongAt = Math.max(
+                older.lastWrongAt,
+                newer.lastWrongAt
+            );
+
+            if (!newer.sessionId && older.sessionId) {
+                newer.sessionId = older.sessionId;
+            }
+
+            mergedMap.set(key, newer);
+        }
+
+        state.wrongQuestions = [...mergedMap.values()]
+            .sort((a, b) => a.updatedAt - b.updatedAt)
             .slice(-MAX_WRONG_QUESTIONS);
     }
 
@@ -505,6 +601,7 @@ function buildLearningQuestionFromSession(session, teaching, excludeLatest = fal
                 ? teaching.category
                 : "",
             source: message.source === "ocr" ? "ocr" : "text",
+            sessionId: session.id,
             updatedAt: Date.now()
         };
     }
@@ -572,33 +669,36 @@ function compactFeedback(text) {
         .slice(0, 1000);
 }
 
-function wrongQuestionFingerprint(question, points) {
-    const normalized = String(question || "")
+function wrongQuestionFingerprint(question) {
+    return String(question || "")
         .toLowerCase()
+        .replace(/[【】\[\]（）()，,。.!！?？:：;；"'“”‘’`]/g, "")
         .replace(/\s+/g, "")
-        .slice(0, 800);
+        .slice(0, 1600);
+}
 
-    const pointKey = [...(points || [])]
-        .sort()
-        .join("|");
+function wrongBookLearningPoints(entryOrQuestion) {
+    const focus = Array.isArray(entryOrQuestion?.focusPoints)
+        ? entryOrQuestion.focusPoints.filter(Boolean)
+        : [];
 
-    return `${normalized}::${pointKey}`;
+    if (focus.length) {
+        return focus.slice(0, 2);
+    }
+
+    return Array.isArray(entryOrQuestion?.knowledgePoints)
+        ? entryOrQuestion.knowledgePoints.filter(Boolean).slice(0, 4)
+        : [];
 }
 
 function addWrongQuestion(questionInfo, feedback, source = "auto") {
     const info = normalizeLearningQuestion(questionInfo);
     if (!info) return { entry: null, countAsMistake: false };
 
-    const fingerprint = wrongQuestionFingerprint(
-        info.text,
-        info.knowledgePoints
-    );
+    const fingerprint = wrongQuestionFingerprint(info.text);
 
     const existing = learningState.wrongQuestions.find(
-        item => wrongQuestionFingerprint(
-            item.question,
-            item.knowledgePoints
-        ) === fingerprint
+        item => wrongQuestionFingerprint(item.question) === fingerprint
     );
 
     const now = Date.now();
@@ -607,12 +707,37 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         const wasCorrected = Boolean(existing.corrected);
 
         existing.feedback = compactFeedback(feedback) || existing.feedback;
+
+        existing.knowledgePoints = [
+            ...new Set([
+                ...existing.knowledgePoints,
+                ...info.knowledgePoints
+            ])
+        ].slice(0, 4);
+
         if (info.focusPoints.length) {
             existing.focusPoints = info.focusPoints.slice(0, 2);
         }
-        existing.corrected = false;
-        existing.updatedAt = now;
 
+        if (info.category) {
+            existing.category = info.category;
+        }
+
+        if (info.sessionId !== null) {
+            existing.sessionId = info.sessionId;
+        }
+
+        if (source === "auto") {
+            existing.source = "auto";
+        }
+
+        existing.corrected = false;
+        existing.correctedAt = null;
+        existing.updatedAt = now;
+        existing.lastWrongAt = now;
+
+        // 手动重复点“记为错题”不重复累计；
+        // 真正再次答错，或订正后重新加入，才算一次新的错误记录。
         const countAsMistake = (
             source === "auto"
             || wasCorrected
@@ -640,8 +765,11 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         source: source === "auto" ? "auto" : "manual",
         corrected: false,
         mistakeCount: 1,
+        sessionId: info.sessionId,
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        lastWrongAt: now,
+        correctedAt: null
     };
 
     learningState.wrongQuestions.push(entry);
@@ -704,6 +832,7 @@ function processLearningFromReply(session, teaching, reply) {
             focusPoints: normalized.focus_points.slice(0, 2),
             category: normalized.category,
             source: latest.source === "ocr" ? "ocr" : "text",
+            sessionId: session.id,
             updatedAt: Date.now()
         };
 
@@ -745,12 +874,22 @@ function processLearningFromReply(session, teaching, reply) {
 
             if (added.countAsMistake) {
                 updateKnowledge(
-                    questionInfo?.knowledgePoints || points,
+                    wrongBookLearningPoints(
+                        questionInfo || {
+                            knowledgePoints: points,
+                            focusPoints: normalized.focus_points
+                        }
+                    ),
                     "wrong"
                 );
             }
         } else if (assessment === "correct") {
-            updateKnowledge(points, "correct");
+            updateKnowledge(
+                normalized.focus_points.length
+                    ? normalized.focus_points
+                    : points,
+                "correct"
+            );
         }
     }
 
@@ -780,7 +919,7 @@ function manualMarkCurrentWrong() {
 
     if (result.countAsMistake) {
         updateKnowledge(
-            questionInfo.knowledgePoints,
+            wrongBookLearningPoints(questionInfo),
             "wrong"
         );
     }
@@ -808,11 +947,14 @@ function markWrongQuestionCorrected(id) {
 
     if (!entry || entry.corrected) return;
 
+    const now = Date.now();
+
     entry.corrected = true;
-    entry.updatedAt = Date.now();
+    entry.correctedAt = now;
+    entry.updatedAt = now;
 
     updateKnowledge(
-        entry.knowledgePoints,
+        wrongBookLearningPoints(entry),
         "reviewed"
     );
 
@@ -822,6 +964,18 @@ function markWrongQuestionCorrected(id) {
 }
 
 function removeWrongQuestion(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry) return;
+
+    const confirmed = window.confirm(
+        "确定要把这道题移出错题本吗？这不会删除原聊天。"
+    );
+
+    if (!confirmed) return;
+
     learningState.wrongQuestions = learningState.wrongQuestions.filter(
         item => item.id !== id
     );
@@ -829,6 +983,29 @@ function removeWrongQuestion(id) {
     saveLearningState();
     renderLearningSummary();
     renderWrongBook();
+}
+
+function openWrongQuestionSession(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry || entry.sessionId === null) return;
+
+    const session = sessions.find(
+        item => String(item.id) === String(entry.sessionId)
+    );
+
+    if (!session) return;
+
+    if (typingTimer) {
+        forceCompleteTyping();
+    }
+
+    currentId = session.id;
+    saveState();
+    closeWrongBook();
+    renderAll();
 }
 
 function formatLearningDate(timestamp) {
@@ -938,6 +1115,40 @@ function renderLearningSummary() {
     }
 }
 
+
+function setWrongBookFilter(filter) {
+    if (!["all", "pending", "corrected"].includes(filter)) {
+        return;
+    }
+
+    wrongBookFilter = filter;
+    renderWrongBook();
+}
+
+function updateWrongBookToolbar(items) {
+    const stats = document.getElementById("wrongBookStats");
+    const filterButtons = document.querySelectorAll(
+        "[data-wrong-filter]"
+    );
+
+    const total = items.length;
+    const pending = items.filter(item => !item.corrected).length;
+    const corrected = total - pending;
+
+    if (stats) {
+        stats.textContent =
+            `共 ${total} 道 · 待订正 ${pending} 道 · 已完成订正 ${corrected} 道`;
+    }
+
+    for (const button of filterButtons) {
+        const value = button.getAttribute("data-wrong-filter");
+        button.classList.toggle(
+            "active",
+            value === wrongBookFilter
+        );
+    }
+}
+
 function openWrongBook() {
     const modal = document.getElementById("wrongBookModal");
     if (!modal) return;
@@ -959,13 +1170,35 @@ function renderWrongBook() {
 
     list.innerHTML = "";
 
-    const items = [...learningState.wrongQuestions]
+    const allItems = [...learningState.wrongQuestions]
         .sort((a, b) => b.updatedAt - a.updatedAt);
+
+    updateWrongBookToolbar(allItems);
+
+    const items = allItems.filter(item => {
+        if (wrongBookFilter === "pending") {
+            return !item.corrected;
+        }
+
+        if (wrongBookFilter === "corrected") {
+            return item.corrected;
+        }
+
+        return true;
+    });
 
     if (!items.length) {
         const empty = document.createElement("div");
         empty.className = "wrong-empty";
-        empty.textContent = "错题本还是空的。";
+
+        if (!allItems.length) {
+            empty.textContent = "错题本还是空的。";
+        } else if (wrongBookFilter === "pending") {
+            empty.textContent = "目前没有待订正的错题。";
+        } else {
+            empty.textContent = "目前还没有已完成订正的错题。";
+        }
+
         list.appendChild(empty);
         return;
     }
@@ -982,7 +1215,7 @@ function renderWrongBook() {
             ? "wrong-status corrected"
             : "wrong-status";
         status.textContent = item.corrected
-            ? "已订正"
+            ? "已完成订正"
             : "待订正";
 
         const date = document.createElement("span");
@@ -994,7 +1227,7 @@ function renderWrongBook() {
 
         const question = document.createElement("div");
         question.className = "wrong-question";
-        question.textContent = item.question;
+        question.innerHTML = markdownToHtml(item.question);
 
         const meta = document.createElement("div");
         meta.className = "wrong-meta";
@@ -1015,7 +1248,7 @@ function renderWrongBook() {
 
         if (item.mistakeCount > 1) {
             metaParts.push(
-                `累计出错 ${item.mistakeCount} 次`
+                `累计记录错误 ${item.mistakeCount} 次`
             );
         }
 
@@ -1023,10 +1256,21 @@ function renderWrongBook() {
 
         const feedback = document.createElement("div");
         feedback.className = "wrong-feedback";
+
         if (item.feedback) {
-            feedback.textContent = item.source === "manual"
-                ? `记录说明：${item.feedback}`
-                : `最近反馈：${item.feedback}`;
+            const prefix = item.source === "manual"
+                ? "记录说明："
+                : "最近反馈：";
+
+            const prefixNode = document.createElement("strong");
+            prefixNode.textContent = prefix;
+
+            const feedbackBody = document.createElement("div");
+            feedbackBody.className = "wrong-feedback-body";
+            feedbackBody.innerHTML = markdownToHtml(item.feedback);
+
+            feedback.appendChild(prefixNode);
+            feedback.appendChild(feedbackBody);
         } else {
             feedback.textContent = "还没有记录订正提示。";
         }
@@ -1037,16 +1281,34 @@ function renderWrongBook() {
         if (!item.corrected) {
             const correctedButton = document.createElement("button");
             correctedButton.type = "button";
-            correctedButton.textContent = "标记已订正";
+            correctedButton.textContent = "完成订正";
             correctedButton.onclick = () => (
                 markWrongQuestionCorrected(item.id)
             );
             actions.appendChild(correctedButton);
         }
 
+        const hasOriginalSession = (
+            item.sessionId !== null
+            && sessions.some(
+                session => String(session.id) === String(item.sessionId)
+            )
+        );
+
+        if (hasOriginalSession) {
+            const backButton = document.createElement("button");
+            backButton.type = "button";
+            backButton.className = "secondary";
+            backButton.textContent = "回到原题";
+            backButton.onclick = () => (
+                openWrongQuestionSession(item.id)
+            );
+            actions.appendChild(backButton);
+        }
+
         const removeButton = document.createElement("button");
         removeButton.type = "button";
-        removeButton.className = "secondary";
+        removeButton.className = "secondary danger";
         removeButton.textContent = "移出错题本";
         removeButton.onclick = () => (
             removeWrongQuestion(item.id)
@@ -1064,6 +1326,9 @@ function renderWrongBook() {
         card.appendChild(actions);
 
         list.appendChild(card);
+
+        renderMath(question);
+        renderMath(feedback);
     }
 }
 
@@ -2221,6 +2486,9 @@ document.addEventListener(
         const wrongBookBtn = document.getElementById("wrongBookBtn");
         const wrongBookClose = document.getElementById("wrongBookClose");
         const wrongBookModal = document.getElementById("wrongBookModal");
+        const wrongFilterButtons = document.querySelectorAll(
+            "[data-wrong-filter]"
+        );
 
         if (input) {
             input.addEventListener(
@@ -2279,6 +2547,17 @@ document.addEventListener(
                     if (event.target === wrongBookModal) {
                         closeWrongBook();
                     }
+                }
+            );
+        }
+
+        for (const button of wrongFilterButtons) {
+            button.addEventListener(
+                "click",
+                () => {
+                    setWrongBookFilter(
+                        button.getAttribute("data-wrong-filter")
+                    );
                 }
             );
         }
