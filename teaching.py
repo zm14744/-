@@ -270,6 +270,155 @@ _INTERNAL_IMAGE_MARKERS = (
 )
 
 
+FOCUS_POINT_ALIASES = {
+    "邻接矩阵": ["aij", "a_{ij}", "a_ij", "邻接矩阵", "矩阵a", "矩阵 a", "大括号"],
+    "图的矩阵表示": ["拉普拉斯", "laplacian", "关联矩阵", "度矩阵", "矩阵表示"],
+    "路径与连通性": ["通路", "路径", "回路", "长度为", "连通", "连通分量"],
+    "欧拉图": ["欧拉", "欧拉通路", "欧拉回路", "奇度", "偶度", "度数"],
+    "哈密顿图": ["哈密顿", "哈密顿通路", "哈密顿回路"],
+    "生成树": ["生成树", "树的数量", "生成森林"],
+    "最小生成树": ["最小生成树", "kruskal", "prim", "最小权"],
+    "矩阵树定理": ["矩阵树", "matrix-tree", "kirchhoff", "基尔霍夫", "余子式"],
+    "最短路": ["最短路", "最短路径", "dijkstra"],
+    "关系性质": ["自反", "反自反", "对称", "反对称", "传递"],
+    "等价关系与划分": ["等价关系", "等价类", "划分"],
+    "偏序关系": ["偏序", "全序", "哈斯图", "极大元", "极小元"],
+    "关系闭包": ["闭包", "自反闭包", "对称闭包", "传递闭包"],
+    "真值表": ["真值表", "真值"],
+    "逻辑等价": ["逻辑等价", "等值", "等价式"],
+    "范式": ["范式", "主析取", "主合取", "析取范式", "合取范式"],
+    "量词": ["量词", "全称", "存在", "∀", "∃"],
+    "排列与组合": ["排列", "组合", "排列数", "组合数", "c(n", "a(n"],
+    "鸽巢原理": ["鸽巢", "抽屉"],
+    "容斥原理": ["容斥"],
+    "线性齐次递推": ["齐次递推", "特征方程"],
+    "非齐次递推": ["非齐次递推", "特解"],
+    "群与子群": ["子群", "循环群", "陪集", "拉格朗日"],
+    "同态与同构": ["同态", "同构", "核", "像"],
+}
+
+
+def _focus_normalize(text):
+    value = str(text or "").lower()
+    value = value.replace("（", "(").replace("）", ")")
+    value = value.replace("²", "^2")
+    value = value.replace("\\_", "_")
+    value = re.sub(r"\\text\{([^{}]*)\}", r"\1", value)
+    value = re.sub(r"[\s`$*\\]+", "", value)
+    return value
+
+
+def _point_keywords(category, point):
+    keywords = [point]
+    rule = CATEGORY_RULES.get(category) or {}
+    point_rules = rule.get("points") or {}
+    keywords.extend(point_rules.get(point) or [])
+    keywords.extend(FOCUS_POINT_ALIASES.get(point) or [])
+
+    result = []
+    for keyword in keywords:
+        if not isinstance(keyword, str) or not keyword.strip():
+            continue
+        normalized = _focus_normalize(keyword)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def _score_focus_text(text, category, points, weight=1):
+    normalized = _focus_normalize(text)
+    scores = {point: 0 for point in points or []}
+
+    if not normalized:
+        return scores
+
+    for point in scores:
+        for keyword in _point_keywords(category, point):
+            if keyword and keyword in normalized:
+                # 越具体的词权重越高；短符号如 aij 也至少给到有效分。
+                keyword_score = 3 if len(keyword) >= 4 else 2
+                if keyword == _focus_normalize(point):
+                    keyword_score += 2
+                scores[point] += keyword_score * weight
+
+    return scores
+
+
+def _infer_focus_points(messages, category, points, latest_text, mode, latest_score):
+    """定位“这一次主要卡在哪”。只在有足够信号时返回，宁缺毋滥。"""
+    candidates = [point for point in (points or []) if isinstance(point, str) and point]
+    if not candidates:
+        return []
+
+    if len(candidates) == 1:
+        return candidates[:1]
+
+    # 先看本轮学生自己的话。这里的命中最可信。
+    latest_scores = _score_focus_text(
+        latest_text,
+        category,
+        candidates,
+        weight=4
+    )
+
+    # 若学生这一轮本身明确点名某个知识点，直接采用。
+    ordered_latest = sorted(
+        latest_scores.items(),
+        key=lambda item: (-item[1], item[0])
+    )
+    if ordered_latest and ordered_latest[0][1] >= 8:
+        top_score = ordered_latest[0][1]
+        second_score = ordered_latest[1][1] if len(ordered_latest) > 1 else 0
+        if top_score >= second_score + 2:
+            return [ordered_latest[0][0]]
+
+    # 对“我这样对不对 / 再讲一下”这类跟进，结合最近几条上下文。
+    # 最新学生消息权重最高，最近助手回复次之；整道原题只给很低权重，防止四个知识点全打平。
+    combined = {point: latest_scores.get(point, 0) for point in candidates}
+
+    recent = []
+    if isinstance(messages, list):
+        for item in messages[-6:]:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content", "")
+            if not isinstance(content, str):
+                content = str(content)
+            if not content.strip() or content.strip() == str(latest_text or "").strip():
+                continue
+            recent.append((item.get("role"), content.strip()))
+
+    for offset, (role, content) in enumerate(reversed(recent)):
+        # 最近助手回复通常正围绕当前小问，是定位卡点的重要信号。
+        base_weight = 3 if role == "assistant" else 2
+        weight = max(1, base_weight - offset // 2)
+
+        # 很长的图片原题包含多个小问，只当弱背景，不让它主导卡点。
+        if _is_image_input(content) or len(content) > 500:
+            weight = 1
+
+        scores = _score_focus_text(content, category, candidates, weight=weight)
+        for point, score in scores.items():
+            combined[point] += score
+
+    ordered = sorted(combined.items(), key=lambda item: (-item[1], item[0]))
+    if not ordered or ordered[0][1] < 6:
+        return []
+
+    top_point, top_score = ordered[0]
+    second_score = ordered[1][1] if len(ordered) > 1 else 0
+
+    # 原始综合题本身不要强行推一个卡点；但答案检查/短跟进允许结合上下文定位。
+    if mode not in ("check_answer",) and latest_score >= 3:
+        if top_score < second_score + 4:
+            return []
+
+    if top_score < second_score + 2:
+        return []
+
+    return [top_point]
+
+
 def _normalize(text):
     value = str(text or "").strip().lower()
     value = value.replace("（", "(").replace("）", ")")
@@ -416,10 +565,20 @@ def analyze_question(text):
     mode = _detect_mode(text)
     classified = _classify_content(text)
 
+    focus_points = _infer_focus_points(
+        [{"role": "user", "content": text}],
+        classified["category"],
+        classified["knowledge_points"],
+        text,
+        mode,
+        classified["score"],
+    )
+
     result = {
         "category": classified["category"],
         "related_categories": classified["related_categories"],
         "knowledge_points": classified["knowledge_points"],
+        "focus_points": focus_points,
         "question_type": _detect_question_type(text, mode),
         "mode": mode,
         "mode_label": MODE_LABELS[mode],
@@ -478,10 +637,20 @@ def analyze_messages(messages):
         else "文本输入"
     )
 
+    focus_points = _infer_focus_points(
+        messages,
+        classified["category"],
+        classified["knowledge_points"],
+        latest,
+        mode,
+        latest_classified["score"],
+    )
+
     return _enrich_with_graph({
         "category": classified["category"],
         "related_categories": classified["related_categories"],
         "knowledge_points": classified["knowledge_points"],
+        "focus_points": focus_points,
         "question_type": _detect_question_type(classification_text, mode),
         "mode": mode,
         "mode_label": MODE_LABELS[mode],
@@ -496,6 +665,7 @@ def teaching_prompt(context):
     category = context.get("category") or "待识别"
     related = context.get("related_categories") or []
     points = context.get("knowledge_points") or []
+    focus_points = context.get("focus_points") or []
     question_type = context.get("question_type") or "综合题"
     mode = context.get("mode") or "hint"
     mode_label = context.get("mode_label") or MODE_LABELS["hint"]
@@ -505,6 +675,7 @@ def teaching_prompt(context):
     knowledge_path = context.get("knowledge_path") or []
 
     points_text = "、".join(points) if points else "暂未可靠识别"
+    focus_text = "、".join(focus_points) if focus_points else "暂未定位到具体卡点"
     related_text = "、".join(related) if related else "无"
     prerequisites_text = "、".join(prerequisite_points) if prerequisite_points else "无明确前置知识"
     path_text = " → ".join(knowledge_path) if knowledge_path else "暂无"
@@ -538,11 +709,13 @@ def teaching_prompt(context):
         f"相关模块：{related_text}\n"
         f"问题类型：{question_type}\n"
         f"知识点：{points_text}\n"
+        f"本轮重点/卡点：{focus_text}\n"
         f"前置知识：{prerequisites_text}\n"
         f"知识脉络：{path_text}\n"
         f"教学模式：{mode_label}\n"
         f"分类置信度：{confidence}\n"
         f"执行要求：{mode_instruction}\n"
+        "若已定位到‘本轮重点/卡点’，优先围绕该点回应；不要把整道综合题的全部知识点一次性铺开。\n"
         "如果学生明显卡在当前知识点，可以优先检查前置知识；不要机械地逐条讲完整知识脉络。\n"
         "分类结果只是教学辅助信号，不是事实来源。若分类与题目实际内容冲突，"
         "必须以题目内容为准，不得为了迎合标签而编造知识点。"
