@@ -360,6 +360,122 @@ body {
     overflow:auto;
 }
 
+
+.wrong-tools {
+    display:grid;
+    grid-template-columns:minmax(180px, 1fr) auto auto auto auto;
+    gap:8px;
+    padding:10px 14px;
+    border-bottom:1px solid #1f2937;
+    background:#0b1220;
+}
+
+.wrong-tools input,
+.wrong-tools select,
+.wrong-tools button,
+.wrong-edit-body input,
+.wrong-edit-body textarea {
+    border:1px solid #334155;
+    border-radius:7px;
+    background:#111827;
+    color:#e2e8f0;
+    padding:7px 9px;
+    font:inherit;
+}
+
+.wrong-tools button {
+    cursor:pointer;
+    white-space:nowrap;
+}
+
+.wrong-tools .danger-tool {
+    color:#fecaca;
+}
+
+.wrong-status.passed {
+    color:#93c5fd;
+}
+
+.wrong-status.failed {
+    color:#fbbf24;
+}
+
+.wrong-actions button:disabled {
+    opacity:.45;
+    cursor:not-allowed;
+}
+
+.wrong-note,
+.wrong-retest {
+    margin-top:8px;
+    padding:8px 10px;
+    border-radius:8px;
+    background:#0b1220;
+    color:#cbd5e1;
+    font-size:12px;
+    line-height:1.55;
+}
+
+.wrong-note-body {
+    margin-top:4px;
+    white-space:pre-wrap;
+}
+
+.wrong-edit-card {
+    width:min(720px, 92vw);
+}
+
+.wrong-edit-body {
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    padding:16px;
+    overflow:auto;
+}
+
+.wrong-edit-body label {
+    font-size:12px;
+    color:#94a3b8;
+    margin-top:4px;
+}
+
+.wrong-edit-body textarea {
+    resize:vertical;
+    min-height:90px;
+}
+
+.wrong-edit-actions {
+    display:flex;
+    justify-content:flex-end;
+    gap:8px;
+    padding:12px 16px 16px;
+    border-top:1px solid #1f2937;
+}
+
+.wrong-edit-actions button {
+    padding:8px 14px;
+    border:none;
+    border-radius:7px;
+    background:#2563eb;
+    color:white;
+    cursor:pointer;
+}
+
+.wrong-edit-actions button.secondary {
+    background:#1f2937;
+    color:#cbd5e1;
+}
+
+@media (max-width:900px) {
+    .wrong-tools {
+        grid-template-columns:1fr 1fr;
+    }
+
+    .wrong-tools input {
+        grid-column:1 / -1;
+    }
+}
+
 @media (max-width:700px) {
     .wrong-toolbar {
         align-items:flex-start;
@@ -438,11 +554,50 @@ window.MathJax = {
             <div id="wrongBookStats" class="wrong-stats"></div>
             <div class="wrong-filters">
                 <button type="button" data-wrong-filter="all">全部</button>
-                <button type="button" data-wrong-filter="pending">待订正</button>
-                <button type="button" data-wrong-filter="corrected">已完成</button>
+                <button type="button" data-wrong-filter="pending">待处理</button>
+                <button type="button" data-wrong-filter="corrected">已订正</button>
+                <button type="button" data-wrong-filter="passed">已通过复测</button>
             </div>
         </div>
+
+        <div class="wrong-tools">
+            <input id="wrongBookSearch" type="search" placeholder="搜索题目、知识点、卡点或笔记">
+            <select id="wrongBookSort" aria-label="错题排序">
+                <option value="recent">最近更新</option>
+                <option value="mistakes">错误次数最多</option>
+                <option value="oldest">最早更新</option>
+            </select>
+            <button id="wrongExportBtn" type="button">导出 Markdown</button>
+            <button id="wrongPrintBtn" type="button">打印 / 保存 PDF</button>
+            <button id="wrongClearCompletedBtn" type="button" class="danger-tool">清理已完成</button>
+        </div>
+
         <div id="wrongBookList"></div>
+    </div>
+</div>
+
+<div id="wrongEditModal" class="modal hidden">
+    <div class="modal-card wrong-edit-card">
+        <div class="modal-head">
+            <div>编辑错题 / 学习笔记</div>
+            <button id="wrongEditClose" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="wrong-edit-body">
+            <label for="wrongEditQuestion">题目内容</label>
+            <textarea id="wrongEditQuestion" rows="8"></textarea>
+
+            <label for="wrongEditFocus">本次主要卡点（最多 2 个，用顿号或逗号分隔）</label>
+            <input id="wrongEditFocus" type="text">
+
+            <label for="wrongEditNote">我的笔记</label>
+            <textarea id="wrongEditNote" rows="5" placeholder="可以记录错误原因、订正思路或容易混淆的地方"></textarea>
+        </div>
+
+        <div class="wrong-edit-actions">
+            <button id="wrongEditCancel" type="button" class="secondary">取消</button>
+            <button id="wrongEditSave" type="button">保存</button>
+        </div>
     </div>
 </div>
 
