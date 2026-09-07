@@ -265,7 +265,7 @@ body {
     margin-top:12px;
     display:flex;
     flex-direction:column;
-    gap:6px;
+    gap:5px;
     font-size:12px;
     color:#94a3b8;
 }
@@ -518,8 +518,8 @@ body {
 }
 
 .graph-modal-card {
-    width:min(1180px, 96vw);
-    max-height:88vh;
+    width:min(1120px, 95vw);
+    max-height:86vh;
 }
 
 .graph-toolbar {
@@ -589,11 +589,10 @@ body {
 .legend-item.current::before { background:#7c3aed; }
 .legend-item.prerequisite::before { background:#0ea5e9; }
 .legend-item.review::before { background:#ef4444; }
-.legend-item.familiar::before { background:#10b981; }
 
 .knowledge-graph-layout {
     display:grid;
-    grid-template-columns:minmax(0, 1fr) 300px;
+    grid-template-columns:minmax(0, 1fr) 280px;
     min-height:0;
     flex:1;
 }
@@ -606,24 +605,59 @@ body {
 }
 
 .graph-summary {
-    padding:12px 14px;
+    display:flex;
+    align-items:center;
+    flex-wrap:wrap;
+    gap:8px;
+    padding:10px 14px;
     border-bottom:1px solid #1f2937;
-    color:#cbd5e1;
-    font-size:13px;
-    line-height:1.6;
-    white-space:pre-wrap;
     background:#111827;
+}
+
+.graph-summary-item {
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    min-width:0;
+    padding:5px 9px;
+    border:1px solid #263449;
+    border-radius:999px;
+    background:#0f172a;
+    font-size:12px;
+}
+
+.graph-summary-label {
+    color:#64748b;
+    white-space:nowrap;
+}
+
+.graph-summary-value {
+    color:#cbd5e1;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    max-width:360px;
+}
+
+.graph-summary-item.focus {
+    border-color:#3b82f6;
+    background:#0b1f45;
+}
+
+.graph-summary-item.focus .graph-summary-label,
+.graph-summary-item.focus .graph-summary-value {
+    color:#bfdbfe;
 }
 
 .knowledge-graph-canvas {
     flex:1;
     overflow:auto;
-    padding:14px;
+    padding:12px;
     background:#0f172a;
 }
 
 .kg-section {
-    margin-bottom:18px;
+    margin-bottom:0;
     padding:12px;
     border:1px solid #1f2937;
     border-radius:12px;
@@ -673,16 +707,70 @@ body {
     overflow:auto;
     color:#cbd5e1;
     font-size:13px;
-    line-height:1.7;
-    white-space:pre-wrap;
+    line-height:1.6;
 }
 
-.graph-detail-body .detail-label {
-    display:block;
-    margin-top:10px;
-    margin-bottom:4px;
+.graph-detail-subline {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+    margin-bottom:12px;
     color:#94a3b8;
     font-size:12px;
+}
+
+.graph-detail-field {
+    padding:10px 0;
+    border-top:1px solid #1f2937;
+}
+
+.graph-detail-field-label {
+    margin-bottom:4px;
+    color:#64748b;
+    font-size:12px;
+}
+
+.graph-detail-field-value {
+    color:#cbd5e1;
+    word-break:break-word;
+}
+
+.graph-metrics {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:8px;
+    margin-top:12px;
+}
+
+.graph-metric {
+    padding:8px 10px;
+    border:1px solid #1f2937;
+    border-radius:8px;
+    background:#0f172a;
+}
+
+.graph-metric-number {
+    color:#f8fafc;
+    font-size:16px;
+    font-weight:600;
+}
+
+.graph-metric-label {
+    margin-top:2px;
+    color:#64748b;
+    font-size:11px;
+}
+
+.graph-detail-tip,
+.graph-detail-empty {
+    margin-top:12px;
+    padding:10px;
+    border-radius:8px;
+    background:#0f172a;
+    color:#64748b;
+    font-size:12px;
+    line-height:1.6;
 }
 
 .graph-status-pill {
@@ -701,7 +789,8 @@ body {
 .graph-status-pill.learning { background:#f59e0b; color:#111827; }
 .graph-status-pill.familiar { background:#10b981; }
 .graph-status-pill.stable { background:#059669; }
-.graph-status-pill.none { background:#334155; }
+.graph-status-pill.none,
+.graph-status-pill.neutral { background:#334155; }
 
 .kg-node-group { cursor:pointer; }
 .kg-node-label {
@@ -760,6 +849,19 @@ body {
     .graph-toolbar {
         align-items:flex-start;
         flex-direction:column;
+    }
+
+    .graph-summary {
+        align-items:flex-start;
+        flex-direction:column;
+    }
+
+    .graph-summary-item {
+        max-width:100%;
+    }
+
+    .graph-summary-value {
+        max-width:220px;
     }
 
     .knowledge-graph-layout {
@@ -903,17 +1005,16 @@ window.MathJax = {
 
         <div class="graph-toolbar">
             <div class="graph-toolbar-left">
-                <label for="knowledgeGraphCategory">查看范围</label>
+                <label for="knowledgeGraphCategory">模块</label>
                 <select id="knowledgeGraphCategory" aria-label="知识图谱分类"></select>
-                <button id="knowledgeGraphFocusBtn" type="button">定位当前题目</button>
+                <button id="knowledgeGraphFocusBtn" type="button">查看完整模块</button>
             </div>
 
             <div class="graph-legend">
                 <span class="legend-item focus">当前卡点</span>
-                <span class="legend-item current">当前题目</span>
+                <span class="legend-item current">本题相关</span>
                 <span class="legend-item prerequisite">前置知识</span>
                 <span class="legend-item review">需要巩固</span>
-                <span class="legend-item familiar">比较熟悉 / 掌握较稳</span>
             </div>
         </div>
 
