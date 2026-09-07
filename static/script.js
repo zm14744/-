@@ -13,6 +13,11 @@ let wrongBookSearch = "";
 let wrongBookSort = "recent";
 let currentWrongEditId = null;
 
+let knowledgeGraphData = null;
+let knowledgeGraphFilter = "全部";
+let knowledgeGraphSelectedNodeId = "";
+let knowledgeGraphLoading = false;
+
 let sessions = [];
 let currentId = null;
 let learningState = createEmptyLearningState();
@@ -1184,11 +1189,19 @@ function renderLearningSummary() {
 
 
 function setWrongBookFilter(filter) {
-    if (!["all", "pending", "corrected", "passed"].includes(filter)) {
+    if (!["pending", "corrected", "passed"].includes(filter)) {
         return;
     }
 
-    wrongBookFilter = filter;
+    // 不再单独放“全部”按钮：
+    // 未选择任何状态时就是“全部”；
+    // 再点一次当前筛选即可取消筛选。
+    wrongBookFilter = (
+        wrongBookFilter === filter
+            ? "all"
+            : filter
+    );
+
     renderWrongBook();
 }
 
@@ -1744,183 +1757,401 @@ function rollbackRetestAfterRequestFailure(session) {
     saveState();
 }
 
-function exportWrongBookMarkdown() {
-    const items = [...learningState.wrongQuestions]
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+function buildWrongBookPdfExportElement(items) {
+    const container = document.createElement("div");
+    container.className = "wrong-pdf-export";
+    container.style.position = "fixed";
+    container.style.left = "-100000px";
+    container.style.top = "0";
+    container.style.width = "794px";
+    container.style.padding = "34px 40px";
+    container.style.background = "#ffffff";
+    container.style.color = "#111827";
+    container.style.fontFamily = 'Arial, "Microsoft YaHei", "PingFang SC", sans-serif';
+    container.style.lineHeight = "1.65";
+    container.style.zIndex = "-1";
 
-    if (!items.length) {
-        window.alert("错题本还是空的，没有内容可以导出。");
-        return;
-    }
+    const title = document.createElement("div");
+    title.style.fontSize = "28px";
+    title.style.fontWeight = "700";
+    title.style.marginBottom = "6px";
+    title.textContent = "离散数学错题本";
+    container.appendChild(title);
 
-    const lines = [
-        "# 离散数学错题本",
-        "",
-        `导出时间：${new Date().toLocaleString("zh-CN")}`,
-        ""
-    ];
+    const subtitle = document.createElement("div");
+    subtitle.style.fontSize = "13px";
+    subtitle.style.color = "#64748b";
+    subtitle.style.marginBottom = "22px";
+    subtitle.textContent = (
+        `共 ${items.length} 道 · 导出时间：${new Date().toLocaleString("zh-CN")}`
+    );
+    container.appendChild(subtitle);
 
     items.forEach((item, index) => {
         const status = wrongBookStatus(item);
-
-        lines.push(
-            `## ${index + 1}. ${status.text}`,
-            "",
-            item.question,
-            ""
+        const card = document.createElement("section");
+        card.className = "wrong-pdf-card";
+        card.style.padding = "18px 0 20px";
+        card.style.borderTop = (
+            index === 0
+                ? "0"
+                : "1px solid #e2e8f0"
         );
 
-        if (item.focusPoints.length) {
-            lines.push(
-                `- 本次主要卡在：${item.focusPoints.join("、")}`
+        const statusLine = document.createElement("div");
+        statusLine.style.fontSize = "15px";
+        statusLine.style.fontWeight = "700";
+        statusLine.style.marginBottom = "10px";
+        statusLine.textContent = `${index + 1}. ${status.text}`;
+        card.appendChild(statusLine);
+
+        const question = document.createElement("div");
+        question.className = "wrong-pdf-question";
+        question.style.fontSize = "15px";
+        question.style.whiteSpace = "pre-wrap";
+        question.style.wordBreak = "break-word";
+        question.innerHTML = markdownToHtml(item.question);
+        card.appendChild(question);
+
+        const metaParts = [];
+
+        if (item.focusPoints?.length) {
+            metaParts.push(
+                `本次主要卡在：${item.focusPoints.join("、")}`
             );
         }
 
-        if (item.knowledgePoints.length) {
-            lines.push(
-                `- 整题涉及：${item.knowledgePoints.join("、")}`
+        if (item.knowledgePoints?.length) {
+            metaParts.push(
+                `整题涉及：${item.knowledgePoints.join("、")}`
             );
         }
 
-        lines.push(
-            `- 累计记录错误：${item.mistakeCount} 次`
+        metaParts.push(
+            `累计记录错误：${item.mistakeCount || 1} 次`
         );
 
         if (item.retestCount) {
-            lines.push(
-                `- 复测：${item.retestCount} 次，通过 ${item.retestPassCount} 次，未通过 ${item.retestFailCount} 次`
+            metaParts.push(
+                `复测 ${item.retestCount} 次，通过 ${item.retestPassCount || 0} 次`
             );
         }
 
+        const meta = document.createElement("div");
+        meta.style.marginTop = "10px";
+        meta.style.fontSize = "12px";
+        meta.style.color = "#64748b";
+        meta.textContent = metaParts.join(" · ");
+        card.appendChild(meta);
+
         if (item.feedback) {
-            lines.push("", "### 最近反馈", "", item.feedback);
+            const block = document.createElement("div");
+            block.style.marginTop = "12px";
+            block.style.padding = "10px 12px";
+            block.style.borderRadius = "8px";
+            block.style.background = "#f8fafc";
+            block.style.fontSize = "13px";
+
+            const label = document.createElement("div");
+            label.style.fontWeight = "700";
+            label.style.marginBottom = "4px";
+            label.textContent = "最近反馈";
+            block.appendChild(label);
+
+            const body = document.createElement("div");
+            body.innerHTML = markdownToHtml(item.feedback);
+            block.appendChild(body);
+
+            card.appendChild(block);
         }
 
         if (item.note) {
-            lines.push("", "### 我的笔记", "", item.note);
+            const block = document.createElement("div");
+            block.style.marginTop = "10px";
+            block.style.padding = "10px 12px";
+            block.style.borderRadius = "8px";
+            block.style.background = "#f8fafc";
+            block.style.fontSize = "13px";
+
+            const label = document.createElement("div");
+            label.style.fontWeight = "700";
+            label.style.marginBottom = "4px";
+            label.textContent = "我的笔记";
+            block.appendChild(label);
+
+            const body = document.createElement("div");
+            body.innerHTML = markdownToHtml(item.note);
+            block.appendChild(body);
+
+            card.appendChild(block);
         }
 
         if (item.lastRetestQuestion) {
-            lines.push(
-                "",
-                "### 最近复测题",
-                "",
-                item.lastRetestQuestion
-            );
+            const block = document.createElement("div");
+            block.style.marginTop = "10px";
+            block.style.padding = "10px 12px";
+            block.style.borderRadius = "8px";
+            block.style.border = "1px solid #e2e8f0";
+            block.style.fontSize = "13px";
+
+            const label = document.createElement("div");
+            label.style.fontWeight = "700";
+            label.style.marginBottom = "4px";
+            label.textContent = "最近复测题";
+            block.appendChild(label);
+
+            const body = document.createElement("div");
+            body.innerHTML = markdownToHtml(item.lastRetestQuestion);
+            block.appendChild(body);
+
+            card.appendChild(block);
         }
 
-        lines.push("", "---", "");
+        container.appendChild(card);
     });
 
-    const blob = new Blob(
-        [lines.join("\n")],
-        { type: "text/markdown;charset=utf-8" }
-    );
-
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `离散数学错题本-${new Date().toISOString().slice(0, 10)}.md`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-
-    setTimeout(
-        () => URL.revokeObjectURL(url),
-        1000
-    );
+    document.body.appendChild(container);
+    return container;
 }
 
-function printWrongBook() {
-    const items = [...learningState.wrongQuestions]
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+async function typesetWrongBookPdfElement(container) {
+    if (
+        window.MathJax
+        && MathJax.typesetPromise
+    ) {
+        try {
+            await MathJax.typesetPromise([container]);
+        } catch (error) {
+            console.warn("导出 PDF 时公式渲染失败：", error);
+        }
+    }
+
+    if (document.fonts?.ready) {
+        try {
+            await document.fonts.ready;
+        } catch (_error) {
+            // 字体等待失败不阻止导出。
+        }
+    }
+}
+
+function canvasSlice(sourceCanvas, startY, sliceHeight) {
+    const slice = document.createElement("canvas");
+    slice.width = sourceCanvas.width;
+    slice.height = sliceHeight;
+
+    const context = slice.getContext("2d");
+    context.drawImage(
+        sourceCanvas,
+        0,
+        startY,
+        sourceCanvas.width,
+        sliceHeight,
+        0,
+        0,
+        sourceCanvas.width,
+        sliceHeight
+    );
+
+    return slice;
+}
+
+async function exportWrongBookPdf() {
+    const items = getFilteredWrongBookItems();
 
     if (!items.length) {
-        window.alert("错题本还是空的，没有内容可以打印。");
+        window.alert("当前没有可以导出的错题。");
         return;
     }
 
-    const popup = window.open("", "_blank");
-
-    if (!popup) {
-        window.alert("浏览器拦截了打印窗口，请允许弹出窗口后重试。");
+    if (
+        typeof window.html2canvas !== "function"
+        || !window.jspdf?.jsPDF
+    ) {
+        window.alert(
+            "PDF 组件加载失败，请刷新页面后重试。"
+        );
         return;
     }
 
-    const cards = items.map((item, index) => {
-        const status = wrongBookStatus(item);
-        const focus = item.focusPoints.length
-            ? `本次主要卡在：${item.focusPoints.join("、")}`
-            : "";
-        const points = item.knowledgePoints.length
-            ? `整题涉及：${item.knowledgePoints.join("、")}`
-            : "";
-        const meta = [focus, points]
-            .filter(Boolean)
-            .join(" · ");
+    const button = document.getElementById(
+        "wrongPdfBtn"
+    );
+    const originalText = button?.textContent || "";
 
-        return `
-            <section class="card">
-                <div class="status">${index + 1}. ${escapeRawHtml(status.text)}</div>
-                <div class="question">${markdownToHtml(item.question)}</div>
-                ${meta ? `<div class="meta">${escapeRawHtml(meta)}</div>` : ""}
-                ${item.feedback ? `
-                    <div class="block">
-                        <strong>最近反馈：</strong>
-                        ${markdownToHtml(item.feedback)}
-                    </div>
-                ` : ""}
-                ${item.note ? `
-                    <div class="block">
-                        <strong>我的笔记：</strong>
-                        ${markdownToHtml(item.note)}
-                    </div>
-                ` : ""}
-            </section>
-        `;
-    }).join("");
+    if (button) {
+        button.disabled = true;
+        button.textContent = "正在生成 PDF…";
+    }
 
-    popup.document.open();
-    popup.document.write(`
-<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<title>离散数学错题本</title>
-<style>
-body{font-family:Arial,"Microsoft YaHei",sans-serif;color:#111;max-width:900px;margin:24px auto;padding:0 16px;line-height:1.6}
-h1{font-size:24px}
-.card{padding:18px 0;border-bottom:1px solid #ddd;break-inside:avoid}
-.status{font-weight:700;margin-bottom:8px}
-.meta{font-size:13px;color:#555;margin-top:8px}
-.block{margin-top:10px;padding:10px;background:#f6f7f9;border-radius:8px}
-.question{white-space:pre-wrap}
-@media print{body{margin:0;max-width:none}.card{break-inside:avoid}}
-</style>
-<script>
-window.MathJax = {
-  tex: {
-    inlineMath: [['\\\\(', '\\\\)'], ['$', '$']],
-    displayMath: [['\\\\[', '\\\\]'], ['$$', '$$']]
-  }
-};
-</script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
-</head>
-<body>
-<h1>离散数学错题本</h1>
-<p>共 ${items.length} 道 · ${escapeRawHtml(new Date().toLocaleString("zh-CN"))}</p>
-${cards}
-<script>
-window.addEventListener('load', function () {
-    setTimeout(function () { window.print(); }, 700);
-});
-</script>
-</body>
-</html>
-    `);
-    popup.document.close();
+    let exportElement = null;
+
+    try {
+        exportElement = buildWrongBookPdfExportElement(
+            items
+        );
+
+        await typesetWrongBookPdfElement(
+            exportElement
+        );
+
+        const {
+            jsPDF
+        } = window.jspdf;
+
+        const pdf = new jsPDF({
+            orientation: "portrait",
+            unit: "mm",
+            format: "a4",
+            compress: true
+        });
+
+        const pageWidth = 210;
+        const pageHeight = 297;
+        const marginX = 12;
+        const marginY = 12;
+        const usableWidth = pageWidth - marginX * 2;
+        const usableHeight = pageHeight - marginY * 2;
+
+        const sections = [
+            ...exportElement.children
+        ];
+
+        let currentY = marginY;
+        let hasContent = false;
+
+        for (const section of sections) {
+            const canvas = await window.html2canvas(
+                section,
+                {
+                    scale: 2,
+                    backgroundColor: "#ffffff",
+                    useCORS: true,
+                    logging: false
+                }
+            );
+
+            if (!canvas.width || !canvas.height) {
+                continue;
+            }
+
+            const renderedHeight = (
+                canvas.height
+                * usableWidth
+                / canvas.width
+            );
+
+            const remaining = (
+                usableHeight
+                - (currentY - marginY)
+            );
+
+            if (
+                hasContent
+                && renderedHeight > remaining
+            ) {
+                pdf.addPage();
+                currentY = marginY;
+            }
+
+            if (renderedHeight <= usableHeight) {
+                const image = canvas.toDataURL(
+                    "image/jpeg",
+                    0.92
+                );
+
+                pdf.addImage(
+                    image,
+                    "JPEG",
+                    marginX,
+                    currentY,
+                    usableWidth,
+                    renderedHeight,
+                    undefined,
+                    "FAST"
+                );
+
+                currentY += renderedHeight + 4;
+                hasContent = true;
+                continue;
+            }
+
+            // 单个内容块超过一页时，按像素切片，避免被截断。
+            const pixelsPerMm = canvas.width / usableWidth;
+            const fullPagePixels = Math.max(
+                1,
+                Math.floor(
+                    usableHeight * pixelsPerMm
+                )
+            );
+
+            let startY = 0;
+
+            while (startY < canvas.height) {
+                if (hasContent) {
+                    pdf.addPage();
+                }
+
+                const sliceHeight = Math.min(
+                    fullPagePixels,
+                    canvas.height - startY
+                );
+
+                const slice = canvasSlice(
+                    canvas,
+                    startY,
+                    sliceHeight
+                );
+
+                const sliceHeightMm = (
+                    sliceHeight
+                    * usableWidth
+                    / canvas.width
+                );
+
+                pdf.addImage(
+                    slice.toDataURL(
+                        "image/jpeg",
+                        0.92
+                    ),
+                    "JPEG",
+                    marginX,
+                    marginY,
+                    usableWidth,
+                    sliceHeightMm,
+                    undefined,
+                    "FAST"
+                );
+
+                hasContent = true;
+                currentY = marginY + sliceHeightMm + 4;
+                startY += sliceHeight;
+            }
+        }
+
+        const date = new Date()
+            .toISOString()
+            .slice(0, 10);
+
+        pdf.save(
+            `离散数学错题本-${date}.pdf`
+        );
+    } catch (error) {
+        console.error("错题本 PDF 导出失败：", error);
+
+        window.alert(
+            "PDF 生成失败，请刷新页面后重试。"
+        );
+    } finally {
+        exportElement?.remove();
+
+        if (button) {
+            button.disabled = false;
+            button.textContent = originalText || "导出 PDF";
+        }
+    }
 }
+
 
 function renderWrongBook() {
     const list = document.getElementById("wrongBookList");
@@ -3274,6 +3505,1021 @@ function renderSessions() {
 }
 
 
+function uniqueTextList(list, limit = 6) {
+    return [
+        ...new Set(
+            (Array.isArray(list) ? list : [])
+                .filter(item => typeof item === "string" && item.trim())
+                .map(item => item.trim())
+        )
+    ].slice(0, limit);
+}
+
+function normalizeKnowledgeGraphData(data) {
+    if (!data || typeof data !== "object") {
+        return null;
+    }
+
+    const nodes = Array.isArray(data.nodes)
+        ? data.nodes
+            .filter(node => node && typeof node === "object")
+            .map(node => ({
+                id: typeof node.id === "string" && node.id.trim()
+                    ? node.id.trim()
+                    : "",
+                name: typeof node.name === "string" && node.name.trim()
+                    ? node.name.trim()
+                    : "",
+                category: typeof node.category === "string" && node.category.trim()
+                    ? node.category.trim()
+                    : "未分类",
+                prerequisites: uniqueTextList(node.prerequisites, 8)
+            }))
+            .filter(node => node.id && node.name)
+        : [];
+
+    return {
+        version: Number.isFinite(data.version)
+            ? data.version
+            : 1,
+        title: typeof data.title === "string" && data.title.trim()
+            ? data.title.trim()
+            : "离散数学知识图谱",
+        description: typeof data.description === "string"
+            ? data.description.trim()
+            : "",
+        nodes
+    };
+}
+
+async function ensureKnowledgeGraphData() {
+    if (knowledgeGraphData || knowledgeGraphLoading) {
+        return knowledgeGraphData;
+    }
+
+    knowledgeGraphLoading = true;
+
+    try {
+        const response = await fetch(
+            "/knowledge-graph-data"
+        );
+
+        if (!response.ok) {
+            throw new Error("知识图谱读取失败。");
+        }
+
+        const data = await response.json();
+        knowledgeGraphData = normalizeKnowledgeGraphData(data);
+
+        if (!knowledgeGraphData) {
+            throw new Error("知识图谱数据格式不正确。");
+        }
+
+        return knowledgeGraphData;
+    } catch (error) {
+        console.warn("知识图谱加载失败：", error);
+        throw error;
+    } finally {
+        knowledgeGraphLoading = false;
+    }
+}
+
+function getKnowledgeGraphCategories() {
+    if (!knowledgeGraphData) return [];
+
+    return [
+        ...new Set(
+            knowledgeGraphData.nodes.map(
+                node => node.category
+            )
+        )
+    ].sort((a, b) => a.localeCompare(
+        b,
+        "zh-Hans-CN"
+    ));
+}
+
+function getCurrentKnowledgeContext() {
+    const session = getCurrent();
+    const teaching = normalizeTeaching(
+        session?.teaching
+    );
+    const learningQuestion = currentLearningQuestion(
+        session,
+        teaching
+    );
+
+    const focusPoints = uniqueTextList([
+        ...(teaching?.focus_points || []),
+        ...(learningQuestion?.focusPoints || [])
+    ], 2);
+
+    const knowledgePoints = uniqueTextList([
+        ...(teaching?.knowledge_points || []),
+        ...(learningQuestion?.knowledgePoints || [])
+    ], 6);
+
+    const prerequisitePoints = uniqueTextList(
+        teaching?.prerequisite_points || [],
+        6
+    );
+
+    const knowledgePath = uniqueTextList(
+        teaching?.knowledge_path || [],
+        10
+    );
+
+    return {
+        category: teaching?.category
+            || learningQuestion?.category
+            || "",
+        focusPoints,
+        knowledgePoints,
+        prerequisitePoints,
+        knowledgePath
+    };
+}
+
+function fillKnowledgeGraphCategoryOptions() {
+    const select = document.getElementById(
+        "knowledgeGraphCategory"
+    );
+
+    if (!select || !knowledgeGraphData) return;
+
+    const categories = getKnowledgeGraphCategories();
+    const values = ["全部", ...categories];
+
+    const currentValue = (
+        values.includes(knowledgeGraphFilter)
+            ? knowledgeGraphFilter
+            : "全部"
+    );
+
+    select.innerHTML = "";
+
+    for (const value of values) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === currentValue;
+        select.appendChild(option);
+    }
+}
+
+function findKnowledgeGraphNodeById(nodeId) {
+    if (
+        !knowledgeGraphData
+        || !Array.isArray(knowledgeGraphData.nodes)
+    ) {
+        return null;
+    }
+
+    return knowledgeGraphData.nodes.find(
+        node => node.id === nodeId
+    ) || null;
+}
+
+function findKnowledgeGraphNodeByName(name) {
+    if (
+        !knowledgeGraphData
+        || !Array.isArray(knowledgeGraphData.nodes)
+    ) {
+        return null;
+    }
+
+    return knowledgeGraphData.nodes.find(
+        node => node.name === name
+    ) || null;
+}
+
+function ensureKnowledgeGraphSelection(visibleNodes, context) {
+    const ids = new Set(
+        (Array.isArray(visibleNodes) ? visibleNodes : [])
+            .map(node => node.id)
+    );
+
+    if (
+        knowledgeGraphSelectedNodeId
+        && ids.has(knowledgeGraphSelectedNodeId)
+    ) {
+        return;
+    }
+
+    const preferredNames = [
+        ...(context?.focusPoints || []),
+        ...(context?.knowledgePath || []),
+        ...(context?.knowledgePoints || []),
+        ...(context?.prerequisitePoints || [])
+    ];
+
+    for (const name of preferredNames) {
+        const node = (visibleNodes || []).find(
+            item => item.name === name
+        );
+
+        if (node) {
+            knowledgeGraphSelectedNodeId = node.id;
+            return;
+        }
+    }
+
+    knowledgeGraphSelectedNodeId = visibleNodes?.[0]?.id || "";
+}
+
+function openKnowledgeGraph() {
+    const modal = document.getElementById(
+        "knowledgeGraphModal"
+    );
+
+    if (!modal) return;
+
+    modal.classList.remove("hidden");
+    renderKnowledgeGraphLoading(
+        "知识图谱加载中…"
+    );
+
+    ensureKnowledgeGraphData()
+        .then(() => {
+            const context = getCurrentKnowledgeContext();
+            const categories = getKnowledgeGraphCategories();
+
+            if (
+                context.category
+                && categories.includes(context.category)
+                && knowledgeGraphFilter === "全部"
+            ) {
+                knowledgeGraphFilter = context.category;
+            }
+
+            fillKnowledgeGraphCategoryOptions();
+            renderKnowledgeGraph();
+        })
+        .catch(() => {
+            renderKnowledgeGraphLoading(
+                "知识图谱暂时加载失败，请稍后重试。"
+            );
+        });
+}
+
+function closeKnowledgeGraph() {
+    const modal = document.getElementById(
+        "knowledgeGraphModal"
+    );
+
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+function renderKnowledgeGraphLoading(message) {
+    const summary = document.getElementById(
+        "knowledgeGraphSummary"
+    );
+    const canvas = document.getElementById(
+        "knowledgeGraphCanvas"
+    );
+    const detailTitle = document.getElementById(
+        "knowledgeGraphDetailTitle"
+    );
+    const detail = document.getElementById(
+        "knowledgeGraphDetail"
+    );
+
+    if (summary) {
+        summary.textContent = (
+            "这里会把当前题目的知识点、前置知识和学习状态画成可视化图谱。"
+        );
+    }
+
+    if (canvas) {
+        canvas.innerHTML = `<div class="kg-empty">${message}</div>`;
+    }
+
+    if (detailTitle) {
+        detailTitle.textContent = "节点详情";
+    }
+
+    if (detail) {
+        detail.textContent = (
+            "点击左侧节点后，这里会显示知识点说明、前置知识、后续知识和当前学习状态。"
+        );
+    }
+}
+
+function setKnowledgeGraphFilter(value) {
+    knowledgeGraphFilter = String(value || "").trim() || "全部";
+    renderKnowledgeGraph();
+}
+
+function focusKnowledgeGraphOnCurrent() {
+    if (!knowledgeGraphData) return;
+
+    const context = getCurrentKnowledgeContext();
+    const categories = getKnowledgeGraphCategories();
+
+    if (
+        context.category
+        && categories.includes(context.category)
+    ) {
+        knowledgeGraphFilter = context.category;
+    } else {
+        const relatedName = (
+            context.focusPoints[0]
+            || context.knowledgePoints[0]
+            || context.prerequisitePoints[0]
+            || ""
+        );
+
+        const relatedNode = relatedName
+            ? findKnowledgeGraphNodeByName(relatedName)
+            : null;
+
+        if (relatedNode) {
+            knowledgeGraphFilter = relatedNode.category;
+        }
+    }
+
+    const currentNode = (
+        context.focusPoints[0]
+        || context.knowledgePoints[0]
+        || context.prerequisitePoints[0]
+        || ""
+    );
+
+    if (currentNode) {
+        const node = findKnowledgeGraphNodeByName(
+            currentNode
+        );
+
+        if (node) {
+            knowledgeGraphSelectedNodeId = node.id;
+        }
+    }
+
+    fillKnowledgeGraphCategoryOptions();
+    renderKnowledgeGraph();
+}
+
+function knowledgeGraphNodeState(nodeName, context) {
+    const record = learningState?.knowledge?.[nodeName];
+    const status = knowledgeStatus(record);
+
+    if (context?.focusPoints?.includes(nodeName)) {
+        return {
+            key: "focus",
+            label: "当前卡点",
+            fill: "#2563eb",
+            stroke: "#93c5fd",
+            text: "#ffffff",
+            badge: "卡点"
+        };
+    }
+
+    if (context?.knowledgePoints?.includes(nodeName)) {
+        return {
+            key: "current",
+            label: "当前题目涉及",
+            fill: "#6d28d9",
+            stroke: "#c4b5fd",
+            text: "#ffffff",
+            badge: "本题"
+        };
+    }
+
+    if (context?.prerequisitePoints?.includes(nodeName)) {
+        return {
+            key: "prerequisite",
+            label: "当前前置知识",
+            fill: "#0369a1",
+            stroke: "#7dd3fc",
+            text: "#ffffff",
+            badge: "前置"
+        };
+    }
+
+    if (status === "需要巩固") {
+        return {
+            key: "review",
+            label: "需要巩固",
+            fill: "#3f1d1d",
+            stroke: "#ef4444",
+            text: "#ffffff",
+            badge: "巩固"
+        };
+    }
+
+    if (status === "学习中") {
+        return {
+            key: "learning",
+            label: "学习中",
+            fill: "#78350f",
+            stroke: "#f59e0b",
+            text: "#ffffff",
+            badge: "学习中"
+        };
+    }
+
+    if (status === "比较熟悉") {
+        return {
+            key: "familiar",
+            label: "比较熟悉",
+            fill: "#064e3b",
+            stroke: "#10b981",
+            text: "#ffffff",
+            badge: "熟悉"
+        };
+    }
+
+    if (status === "掌握较稳") {
+        return {
+            key: "stable",
+            label: "掌握较稳",
+            fill: "#065f46",
+            stroke: "#34d399",
+            text: "#ffffff",
+            badge: "较稳"
+        };
+    }
+
+    return {
+        key: "none",
+        label: "暂无记录",
+        fill: "#111827",
+        stroke: "#475569",
+        text: "#ffffff",
+        badge: "未学"
+    };
+}
+
+function splitKnowledgeGraphLabel(text, maxChars = 7) {
+    const value = String(text || "").trim();
+
+    if (!value) return [""];
+
+    const lines = [];
+
+    for (let index = 0; index < value.length; index += maxChars) {
+        lines.push(
+            value.slice(index, index + maxChars)
+        );
+    }
+
+    return lines.slice(0, 2);
+}
+
+function createSvgElement(tag, attrs = {}) {
+    const element = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        tag
+    );
+
+    for (const [key, value] of Object.entries(attrs)) {
+        if (
+            value !== undefined
+            && value !== null
+        ) {
+            element.setAttribute(
+                key,
+                String(value)
+            );
+        }
+    }
+
+    return element;
+}
+
+function knowledgeGraphVisibleNodes(category) {
+    if (!knowledgeGraphData) return [];
+
+    const allNodes = knowledgeGraphData.nodes;
+
+    if (!category || category === "全部") {
+        return allNodes.slice();
+    }
+
+    return allNodes.filter(
+        node => node.category === category
+    );
+}
+
+function computeKnowledgeGraphLevels(nodes) {
+    const byName = new Map(
+        nodes.map(node => [node.name, node])
+    );
+    const memo = new Map();
+    const visiting = new Set();
+
+    function depth(node) {
+        if (memo.has(node.id)) {
+            return memo.get(node.id);
+        }
+
+        if (visiting.has(node.id)) {
+            return 0;
+        }
+
+        visiting.add(node.id);
+
+        let value = 0;
+
+        for (const prerequisite of node.prerequisites) {
+            const previous = byName.get(prerequisite);
+
+            if (previous) {
+                value = Math.max(
+                    value,
+                    depth(previous) + 1
+                );
+            }
+        }
+
+        visiting.delete(node.id);
+        memo.set(node.id, value);
+
+        return value;
+    }
+
+    for (const node of nodes) {
+        depth(node);
+    }
+
+    return memo;
+}
+
+function renderKnowledgeGraphSection(container, nodes, title, description, context) {
+    const section = document.createElement("div");
+    section.className = "kg-section";
+
+    const heading = document.createElement("div");
+    heading.className = "kg-section-title";
+    heading.textContent = title;
+    section.appendChild(heading);
+
+    if (description) {
+        const desc = document.createElement("div");
+        desc.className = "kg-section-desc";
+        desc.textContent = description;
+        section.appendChild(desc);
+    }
+
+    if (!nodes.length) {
+        const empty = document.createElement("div");
+        empty.className = "kg-empty";
+        empty.textContent = "这个分类下暂时没有可显示的节点。";
+        section.appendChild(empty);
+        container.appendChild(section);
+        return;
+    }
+
+    const levels = computeKnowledgeGraphLevels(nodes);
+    const orderedNodes = nodes.slice();
+    const orderMap = new Map(
+        orderedNodes.map(
+            (node, index) => [node.id, index]
+        )
+    );
+
+    const columns = new Map();
+
+    for (const node of orderedNodes) {
+        const level = levels.get(node.id) || 0;
+        if (!columns.has(level)) {
+            columns.set(level, []);
+        }
+        columns.get(level).push(node);
+    }
+
+    const columnKeys = [...columns.keys()].sort((a, b) => a - b);
+
+    for (const key of columnKeys) {
+        columns.get(key).sort(
+            (a, b) => (
+                orderMap.get(a.id)
+                - orderMap.get(b.id)
+            )
+        );
+    }
+
+    const nodeWidth = 132;
+    const nodeHeight = 58;
+    const horizontalGap = 74;
+    const verticalGap = 26;
+    const margin = 24;
+
+    const maxRows = Math.max(
+        ...columnKeys.map(
+            key => columns.get(key).length
+        ),
+        1
+    );
+
+    const svgWidth = (
+        margin * 2
+        + columnKeys.length * nodeWidth
+        + Math.max(columnKeys.length - 1, 0) * horizontalGap
+    );
+
+    const svgHeight = (
+        margin * 2
+        + maxRows * nodeHeight
+        + Math.max(maxRows - 1, 0) * verticalGap
+    );
+
+    const svg = createSvgElement("svg", {
+        class: "kg-svg",
+        viewBox: `0 0 ${svgWidth} ${svgHeight}`
+    });
+
+    const positions = new Map();
+
+    for (let columnIndex = 0; columnIndex < columnKeys.length; columnIndex += 1) {
+        const level = columnKeys[columnIndex];
+        const group = columns.get(level);
+        const x = margin + columnIndex * (nodeWidth + horizontalGap);
+        const totalHeight = (
+            group.length * nodeHeight
+            + Math.max(group.length - 1, 0) * verticalGap
+        );
+        const startY = margin + (svgHeight - margin * 2 - totalHeight) / 2;
+
+        for (let rowIndex = 0; rowIndex < group.length; rowIndex += 1) {
+            const node = group[rowIndex];
+            const y = startY + rowIndex * (nodeHeight + verticalGap);
+            positions.set(node.id, { x, y });
+        }
+    }
+
+    const byName = new Map(
+        nodes.map(node => [node.name, node])
+    );
+
+    for (const node of orderedNodes) {
+        const current = positions.get(node.id);
+
+        if (!current) continue;
+
+        for (const prerequisiteName of node.prerequisites) {
+            const previousNode = byName.get(prerequisiteName);
+
+            if (!previousNode) continue;
+
+            const previous = positions.get(previousNode.id);
+
+            if (!previous) continue;
+
+            const x1 = previous.x + nodeWidth;
+            const y1 = previous.y + nodeHeight / 2;
+            const x2 = current.x;
+            const y2 = current.y + nodeHeight / 2;
+            const midX = (x1 + x2) / 2;
+
+            const path = createSvgElement("path", {
+                class: "kg-edge",
+                d: `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`
+            });
+
+            svg.appendChild(path);
+        }
+    }
+
+    for (const node of orderedNodes) {
+        const position = positions.get(node.id);
+
+        if (!position) continue;
+
+        const state = knowledgeGraphNodeState(
+            node.name,
+            context
+        );
+        const group = createSvgElement("g", {
+            class: (
+                "kg-node-group"
+                + (node.id === knowledgeGraphSelectedNodeId ? " selected" : "")
+            ),
+            transform: `translate(${position.x}, ${position.y})`
+        });
+
+        group.addEventListener(
+            "click",
+            () => {
+                knowledgeGraphSelectedNodeId = node.id;
+                renderKnowledgeGraphDetail();
+                renderKnowledgeGraph();
+            }
+        );
+
+        const rect = createSvgElement("rect", {
+            x: 0,
+            y: 0,
+            width: nodeWidth,
+            height: nodeHeight,
+            rx: 12,
+            fill: state.fill,
+            stroke: state.stroke,
+            "stroke-width": node.id === knowledgeGraphSelectedNodeId ? 3 : 2
+        });
+
+        group.appendChild(rect);
+
+        const lines = splitKnowledgeGraphLabel(
+            node.name
+        );
+        const text = createSvgElement("text", {
+            class: "kg-node-label",
+            x: nodeWidth / 2,
+            y: 22,
+            "text-anchor": "middle"
+        });
+
+        if (lines.length === 1) {
+            const tspan = createSvgElement("tspan", {
+                x: nodeWidth / 2,
+                dy: 0
+            });
+            tspan.textContent = lines[0];
+            text.appendChild(tspan);
+        } else {
+            lines.forEach((line, index) => {
+                const tspan = createSvgElement("tspan", {
+                    x: nodeWidth / 2,
+                    dy: index === 0 ? 0 : 14
+                });
+                tspan.textContent = line;
+                text.appendChild(tspan);
+            });
+        }
+
+        group.appendChild(text);
+
+        const badge = createSvgElement("text", {
+            class: "kg-node-badge",
+            x: nodeWidth / 2,
+            y: nodeHeight - 10,
+            "text-anchor": "middle"
+        });
+        badge.textContent = state.badge;
+        group.appendChild(badge);
+
+        svg.appendChild(group);
+    }
+
+    section.appendChild(svg);
+    container.appendChild(section);
+}
+
+function renderKnowledgeGraphSummary(context) {
+    const summary = document.getElementById(
+        "knowledgeGraphSummary"
+    );
+
+    if (!summary) return;
+
+    const lines = [];
+
+    lines.push(
+        "说明：点击图中的知识点，可以查看它的前置知识、后续知识和你当前的学习状态。"
+    );
+
+    if (context.category) {
+        lines.push(
+            `当前题目所属模块：${context.category}`
+        );
+    }
+
+    if (context.focusPoints.length) {
+        lines.push(
+            `这次主要卡在：${context.focusPoints.join("、")}`
+        );
+    }
+
+    if (context.knowledgePoints.length) {
+        lines.push(
+            `整题涉及：${context.knowledgePoints.join("、")}`
+        );
+    }
+
+    if (context.prerequisitePoints.length) {
+        lines.push(
+            `做这题前最好会：${context.prerequisitePoints.join("、")}`
+        );
+    }
+
+    if (context.knowledgePath.length >= 2) {
+        lines.push(
+            `知识脉络：${context.knowledgePath.join(" → ")}`
+        );
+    }
+
+    summary.textContent = lines.join("\n");
+}
+
+function renderKnowledgeGraphDetail() {
+    const title = document.getElementById(
+        "knowledgeGraphDetailTitle"
+    );
+    const detail = document.getElementById(
+        "knowledgeGraphDetail"
+    );
+
+    if (!title || !detail || !knowledgeGraphData) return;
+
+    const node = findKnowledgeGraphNodeById(
+        knowledgeGraphSelectedNodeId
+    );
+
+    if (!node) {
+        title.textContent = "节点详情";
+        detail.textContent = (
+            "点击左侧节点后，这里会显示知识点说明、前置知识、后续知识和当前学习状态。"
+        );
+        return;
+    }
+
+    const context = getCurrentKnowledgeContext();
+    const state = knowledgeGraphNodeState(
+        node.name,
+        context
+    );
+    const record = learningState?.knowledge?.[node.name] || null;
+    const nextNodes = knowledgeGraphData.nodes
+        .filter(item => item.prerequisites.includes(node.name))
+        .map(item => item.name);
+
+    title.textContent = node.name;
+    detail.innerHTML = "";
+
+    const categoryLabel = document.createElement("span");
+    categoryLabel.className = "detail-label";
+    categoryLabel.textContent = "所属模块";
+    detail.appendChild(categoryLabel);
+
+    const categoryText = document.createElement("div");
+    categoryText.textContent = node.category;
+    detail.appendChild(categoryText);
+
+    const pill = document.createElement("span");
+    pill.className = `graph-status-pill ${state.key}`;
+    pill.textContent = state.label;
+    detail.appendChild(pill);
+
+    const prerequisiteLabel = document.createElement("span");
+    prerequisiteLabel.className = "detail-label";
+    prerequisiteLabel.textContent = "前置知识";
+    detail.appendChild(prerequisiteLabel);
+
+    const prerequisiteText = document.createElement("div");
+    prerequisiteText.textContent = node.prerequisites.length
+        ? node.prerequisites.join("、")
+        : "这个知识点已经是当前模块里的起点。";
+    detail.appendChild(prerequisiteText);
+
+    const nextLabel = document.createElement("span");
+    nextLabel.className = "detail-label";
+    nextLabel.textContent = "后续知识";
+    detail.appendChild(nextLabel);
+
+    const nextText = document.createElement("div");
+    nextText.textContent = nextNodes.length
+        ? nextNodes.join("、")
+        : "目前没有记录到更靠后的直接知识点。";
+    detail.appendChild(nextText);
+
+    const relationLabel = document.createElement("span");
+    relationLabel.className = "detail-label";
+    relationLabel.textContent = "与当前题目的关系";
+    detail.appendChild(relationLabel);
+
+    const relationText = document.createElement("div");
+    const relations = [];
+
+    if (context.focusPoints.includes(node.name)) {
+        relations.push("这是你这次主要卡住的知识点。");
+    }
+
+    if (context.knowledgePoints.includes(node.name)) {
+        relations.push("它属于当前这道题涉及的核心知识点。");
+    }
+
+    if (context.prerequisitePoints.includes(node.name)) {
+        relations.push("它是当前题目前最好先掌握的前置知识。");
+    }
+
+    if (!relations.length) {
+        relations.push("当前题目没有直接强调这个知识点，但你可以顺着图谱查看它和其它知识点的关系。");
+    }
+
+    relationText.textContent = relations.join(" ");
+    detail.appendChild(relationText);
+
+    const learningLabel = document.createElement("span");
+    learningLabel.className = "detail-label";
+    learningLabel.textContent = "学习记录";
+    detail.appendChild(learningLabel);
+
+    const learningText = document.createElement("div");
+
+    if (!record) {
+        learningText.textContent = "目前还没有这个知识点的学习记录。";
+    } else {
+        learningText.textContent = [
+            `当前状态：${knowledgeStatus(record)}`,
+            `看过 ${record.seen || 0} 次`,
+            `答对 ${record.correct || 0} 次`,
+            `答错 ${record.wrong || 0} 次`,
+            `获得提示 ${record.support || 0} 次`,
+            `完成订正 ${record.reviewed || 0} 次`
+        ].join("，");
+    }
+
+    detail.appendChild(learningText);
+}
+
+function renderKnowledgeGraph() {
+    const modal = document.getElementById(
+        "knowledgeGraphModal"
+    );
+
+    if (!modal || modal.classList.contains("hidden")) {
+        return;
+    }
+
+    if (!knowledgeGraphData) {
+        renderKnowledgeGraphLoading(
+            "知识图谱加载中…"
+        );
+        return;
+    }
+
+    fillKnowledgeGraphCategoryOptions();
+
+    const context = getCurrentKnowledgeContext();
+    const canvas = document.getElementById(
+        "knowledgeGraphCanvas"
+    );
+
+    if (!canvas) return;
+
+    renderKnowledgeGraphSummary(context);
+    canvas.innerHTML = "";
+
+    if (!knowledgeGraphData.nodes.length) {
+        canvas.innerHTML = (
+            '<div class="kg-empty">知识图谱目前还是空的。</div>'
+        );
+        renderKnowledgeGraphDetail();
+        return;
+    }
+
+    if (knowledgeGraphFilter === "全部") {
+        const visibleNodes = knowledgeGraphVisibleNodes(
+            "全部"
+        );
+        ensureKnowledgeGraphSelection(
+            visibleNodes,
+            context
+        );
+
+        const categories = getKnowledgeGraphCategories();
+
+        for (const category of categories) {
+            const categoryNodes = knowledgeGraphVisibleNodes(
+                category
+            );
+
+            renderKnowledgeGraphSection(
+                canvas,
+                categoryNodes,
+                category,
+                category === context.category
+                    ? "这是当前题目所在的模块。"
+                    : "",
+                context
+            );
+        }
+    } else {
+        const visibleNodes = knowledgeGraphVisibleNodes(
+            knowledgeGraphFilter
+        );
+        ensureKnowledgeGraphSelection(
+            visibleNodes,
+            context
+        );
+
+        renderKnowledgeGraphSection(
+            canvas,
+            visibleNodes,
+            knowledgeGraphFilter,
+            knowledgeGraphFilter === context.category
+                ? "这是当前题目所在的模块。"
+                : "",
+            context
+        );
+    }
+
+    renderKnowledgeGraphDetail();
+}
+
 // -----------------------------
 // 右侧会话信息
 // -----------------------------
@@ -3354,6 +4600,7 @@ function renderAll() {
     renderChat();
     renderInfo();
     renderLearningSummary();
+    renderKnowledgeGraph();
 }
 
 
@@ -3372,13 +4619,17 @@ document.addEventListener(
         const wrongBookModal = document.getElementById("wrongBookModal");
         const wrongBookSearchBox = document.getElementById("wrongBookSearch");
         const wrongBookSortBox = document.getElementById("wrongBookSort");
-        const wrongExportBtn = document.getElementById("wrongExportBtn");
-        const wrongPrintBtn = document.getElementById("wrongPrintBtn");
+        const wrongPdfBtn = document.getElementById("wrongPdfBtn");
         const wrongClearCompletedBtn = document.getElementById("wrongClearCompletedBtn");
         const wrongEditClose = document.getElementById("wrongEditClose");
         const wrongEditCancel = document.getElementById("wrongEditCancel");
         const wrongEditSave = document.getElementById("wrongEditSave");
         const wrongEditModal = document.getElementById("wrongEditModal");
+        const knowledgeGraphBtn = document.getElementById("knowledgeGraphBtn");
+        const knowledgeGraphClose = document.getElementById("knowledgeGraphClose");
+        const knowledgeGraphModal = document.getElementById("knowledgeGraphModal");
+        const knowledgeGraphCategory = document.getElementById("knowledgeGraphCategory");
+        const knowledgeGraphFocusBtn = document.getElementById("knowledgeGraphFocusBtn");
         const wrongFilterButtons = document.querySelectorAll(
             "[data-wrong-filter]"
         );
@@ -3458,17 +4709,10 @@ document.addEventListener(
             );
         }
 
-        if (wrongExportBtn) {
-            wrongExportBtn.addEventListener(
+        if (wrongPdfBtn) {
+            wrongPdfBtn.addEventListener(
                 "click",
-                exportWrongBookMarkdown
-            );
-        }
-
-        if (wrongPrintBtn) {
-            wrongPrintBtn.addEventListener(
-                "click",
-                printWrongBook
+                exportWrongBookPdf
             );
         }
 
@@ -3508,6 +4752,45 @@ document.addEventListener(
                         closeWrongEdit();
                     }
                 }
+            );
+        }
+
+        if (knowledgeGraphBtn) {
+            knowledgeGraphBtn.addEventListener(
+                "click",
+                openKnowledgeGraph
+            );
+        }
+
+        if (knowledgeGraphClose) {
+            knowledgeGraphClose.addEventListener(
+                "click",
+                closeKnowledgeGraph
+            );
+        }
+
+        if (knowledgeGraphModal) {
+            knowledgeGraphModal.addEventListener(
+                "click",
+                event => {
+                    if (event.target === knowledgeGraphModal) {
+                        closeKnowledgeGraph();
+                    }
+                }
+            );
+        }
+
+        if (knowledgeGraphCategory) {
+            knowledgeGraphCategory.addEventListener(
+                "change",
+                event => setKnowledgeGraphFilter(event.target.value)
+            );
+        }
+
+        if (knowledgeGraphFocusBtn) {
+            knowledgeGraphFocusBtn.addEventListener(
+                "click",
+                focusKnowledgeGraphOnCurrent
             );
         }
 
