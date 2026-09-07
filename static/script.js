@@ -9,6 +9,9 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_WRONG_QUESTIONS = 80;
 
 let wrongBookFilter = "all";
+let wrongBookSearch = "";
+let wrongBookSort = "recent";
+let currentWrongEditId = null;
 
 let sessions = [];
 let currentId = null;
@@ -94,9 +97,47 @@ function normalizeTeaching(value) {
 }
 
 
+function normalizeRetestSession(value) {
+    if (!value || typeof value !== "object") {
+        return null;
+    }
+
+    const stage = [
+        "generating",
+        "awaiting_answer",
+        "checking",
+        "finished"
+    ].includes(value.stage)
+        ? value.stage
+        : "finished";
+
+    return {
+        wrongQuestionId: typeof value.wrongQuestionId === "string"
+            ? value.wrongQuestionId
+            : "",
+        stage,
+        targetPoints: Array.isArray(value.targetPoints)
+            ? value.targetPoints
+                .filter(item => typeof item === "string" && item.trim())
+                .map(item => item.trim())
+                .slice(0, 2)
+            : [],
+        generatedQuestion: typeof value.generatedQuestion === "string"
+            ? value.generatedQuestion.trim().slice(0, 3000)
+            : "",
+        startedAt: Number.isFinite(value.startedAt)
+            ? value.startedAt
+            : Date.now(),
+        result: ["correct", "wrong", "unknown"].includes(value.result)
+            ? value.result
+            : ""
+    };
+}
+
+
 function createEmptyLearningState() {
     return {
-        version: 2,
+        version: 3,
         knowledge: {},
         wrongQuestions: []
     };
@@ -213,6 +254,9 @@ function normalizeLearningState(value) {
                     feedback: typeof item.feedback === "string"
                         ? item.feedback.trim().slice(0, 1000)
                         : "",
+                    note: typeof item.note === "string"
+                        ? item.note.trim().slice(0, 1500)
+                        : "",
                     source: item.source === "auto" ? "auto" : "manual",
                     corrected: Boolean(item.corrected),
                     mistakeCount: Math.max(1, Number(item.mistakeCount) || 1),
@@ -237,6 +281,33 @@ function normalizeLearningState(value) {
                         ),
                     correctedAt: Number.isFinite(item.correctedAt)
                         ? item.correctedAt
+                        : null,
+                    retestCount: Math.max(0, Number(item.retestCount) || 0),
+                    retestPassCount: Math.max(0, Number(item.retestPassCount) || 0),
+                    retestFailCount: Math.max(0, Number(item.retestFailCount) || 0),
+                    retestPassed: Boolean(item.retestPassed),
+                    retestPassedAt: Number.isFinite(item.retestPassedAt)
+                        ? item.retestPassedAt
+                        : null,
+                    lastRetestAt: Number.isFinite(item.lastRetestAt)
+                        ? item.lastRetestAt
+                        : null,
+                    lastRetestQuestion: typeof item.lastRetestQuestion === "string"
+                        ? item.lastRetestQuestion.trim().slice(0, 3000)
+                        : "",
+                    lastRetestFeedback: typeof item.lastRetestFeedback === "string"
+                        ? item.lastRetestFeedback.trim().slice(0, 1000)
+                        : "",
+                    lastRetestResult: ["correct", "wrong", "unknown"].includes(
+                        item.lastRetestResult
+                    )
+                        ? item.lastRetestResult
+                        : "",
+                    lastRetestSessionId: (
+                        typeof item.lastRetestSessionId === "number"
+                        || typeof item.lastRetestSessionId === "string"
+                    )
+                        ? item.lastRetestSessionId
                         : null
                 };
             })
@@ -281,17 +352,15 @@ function normalizeLearningState(value) {
                 + Math.max(1, Number(newer.mistakeCount) || 1)
             );
 
-            // 只要其中还有一份“待订正”，合并后仍应是待订正。
-            newer.corrected = Boolean(
-                older.corrected
-                && newer.corrected
-            );
-
+            // 同一道题的多个旧记录合并时，以更新时间更晚的状态为准。
+            // 这样“后来已订正”不会被更早的待订正记录重新覆盖。
+            newer.corrected = Boolean(newer.corrected);
             newer.correctedAt = newer.corrected
-                ? Math.max(
-                    Number(older.correctedAt) || 0,
-                    Number(newer.correctedAt) || 0
-                ) || null
+                ? (
+                    Number(newer.correctedAt)
+                    || Number(older.correctedAt)
+                    || null
+                )
                 : null;
 
             newer.createdAt = Math.min(
@@ -306,6 +375,52 @@ function normalizeLearningState(value) {
 
             if (!newer.sessionId && older.sessionId) {
                 newer.sessionId = older.sessionId;
+            }
+
+            if (!newer.note && older.note) {
+                newer.note = older.note;
+            }
+
+            newer.retestCount = (
+                (Number(older.retestCount) || 0)
+                + (Number(newer.retestCount) || 0)
+            );
+            newer.retestPassCount = (
+                (Number(older.retestPassCount) || 0)
+                + (Number(newer.retestPassCount) || 0)
+            );
+            newer.retestFailCount = (
+                (Number(older.retestFailCount) || 0)
+                + (Number(newer.retestFailCount) || 0)
+            );
+
+            const newerRetestTime = Number(newer.lastRetestAt) || 0;
+            const olderRetestTime = Number(older.lastRetestAt) || 0;
+
+            if (olderRetestTime > newerRetestTime) {
+                newer.lastRetestAt = older.lastRetestAt;
+                newer.lastRetestQuestion = older.lastRetestQuestion;
+                newer.lastRetestFeedback = older.lastRetestFeedback;
+                newer.lastRetestResult = older.lastRetestResult;
+            }
+
+            newer.retestPassedAt = Math.max(
+                Number(newer.retestPassedAt) || 0,
+                Number(older.retestPassedAt) || 0
+            ) || null;
+
+            const latestWrongAt = Math.max(
+                Number(newer.lastWrongAt) || 0,
+                Number(older.lastWrongAt) || 0
+            );
+
+            newer.retestPassed = Boolean(
+                newer.retestPassedAt
+                && newer.retestPassedAt >= latestWrongAt
+            );
+
+            if (!newer.lastRetestSessionId && older.lastRetestSessionId) {
+                newer.lastRetestSessionId = older.lastRetestSessionId;
             }
 
             mergedMap.set(key, newer);
@@ -585,6 +700,10 @@ function buildLearningQuestionFromSession(session, teaching, excludeLatest = fal
         const text = message.text.trim();
         if (!text) continue;
 
+        if (message.isRetestPrompt || message.isRetestAnswer) {
+            continue;
+        }
+
         if (!looksLikeActualLearningProblem(message)) {
             continue;
         }
@@ -745,6 +864,8 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
 
         if (countAsMistake) {
             existing.mistakeCount += 1;
+            existing.retestPassed = false;
+            existing.retestPassedAt = null;
         }
 
         saveLearningState();
@@ -762,6 +883,7 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         focusPoints: info.focusPoints,
         category: info.category,
         feedback: compactFeedback(feedback),
+        note: "",
         source: source === "auto" ? "auto" : "manual",
         corrected: false,
         mistakeCount: 1,
@@ -769,7 +891,17 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         createdAt: now,
         updatedAt: now,
         lastWrongAt: now,
-        correctedAt: null
+        correctedAt: null,
+        retestCount: 0,
+        retestPassCount: 0,
+        retestFailCount: 0,
+        retestPassed: false,
+        retestPassedAt: null,
+        lastRetestAt: null,
+        lastRetestQuestion: "",
+        lastRetestFeedback: "",
+        lastRetestResult: "",
+        lastRetestSessionId: null
     };
 
     learningState.wrongQuestions.push(entry);
@@ -940,74 +1072,6 @@ function manualMarkCurrentWrong() {
     }
 }
 
-function markWrongQuestionCorrected(id) {
-    const entry = learningState.wrongQuestions.find(
-        item => item.id === id
-    );
-
-    if (!entry || entry.corrected) return;
-
-    const now = Date.now();
-
-    entry.corrected = true;
-    entry.correctedAt = now;
-    entry.updatedAt = now;
-
-    updateKnowledge(
-        wrongBookLearningPoints(entry),
-        "reviewed"
-    );
-
-    saveLearningState();
-    renderLearningSummary();
-    renderWrongBook();
-}
-
-function removeWrongQuestion(id) {
-    const entry = learningState.wrongQuestions.find(
-        item => item.id === id
-    );
-
-    if (!entry) return;
-
-    const confirmed = window.confirm(
-        "确定要把这道题移出错题本吗？这不会删除原聊天。"
-    );
-
-    if (!confirmed) return;
-
-    learningState.wrongQuestions = learningState.wrongQuestions.filter(
-        item => item.id !== id
-    );
-
-    saveLearningState();
-    renderLearningSummary();
-    renderWrongBook();
-}
-
-function openWrongQuestionSession(id) {
-    const entry = learningState.wrongQuestions.find(
-        item => item.id === id
-    );
-
-    if (!entry || entry.sessionId === null) return;
-
-    const session = sessions.find(
-        item => String(item.id) === String(entry.sessionId)
-    );
-
-    if (!session) return;
-
-    if (typingTimer) {
-        forceCompleteTyping();
-    }
-
-    currentId = session.id;
-    saveState();
-    closeWrongBook();
-    renderAll();
-}
-
 function formatLearningDate(timestamp) {
     const date = new Date(timestamp);
 
@@ -1058,6 +1122,9 @@ function renderLearningSummary() {
         .filter(item => !item.corrected)
         .sort((a, b) => b.updatedAt - a.updatedAt);
     const pendingCount = pendingWrong.length;
+    const passedCount = learningState.wrongQuestions
+        .filter(item => item.retestPassed)
+        .length;
     const recentFocus = pendingWrong.find(
         item => Array.isArray(item.focusPoints) && item.focusPoints.length
     );
@@ -1093,7 +1160,7 @@ function renderLearningSummary() {
         }
 
         lines.push(
-            `错题本：${wrongCount} 道，待订正 ${pendingCount} 道`
+            `错题本：${wrongCount} 道，待订正 ${pendingCount} 道，已通过复测 ${passedCount} 道`
         );
     }
 
@@ -1117,7 +1184,7 @@ function renderLearningSummary() {
 
 
 function setWrongBookFilter(filter) {
-    if (!["all", "pending", "corrected"].includes(filter)) {
+    if (!["all", "pending", "corrected", "passed"].includes(filter)) {
         return;
     }
 
@@ -1125,19 +1192,124 @@ function setWrongBookFilter(filter) {
     renderWrongBook();
 }
 
-function updateWrongBookToolbar(items) {
+function setWrongBookSearch(value) {
+    wrongBookSearch = String(value || "")
+        .trim()
+        .toLowerCase();
+
+    renderWrongBook();
+}
+
+function setWrongBookSort(value) {
+    if (!["recent", "oldest", "mistakes"].includes(value)) {
+        return;
+    }
+
+    wrongBookSort = value;
+    renderWrongBook();
+}
+
+function wrongBookStatus(item) {
+    if (item.retestPassed) {
+        return {
+            key: "passed",
+            text: "已通过复测",
+            className: "passed"
+        };
+    }
+
+    if (item.corrected) {
+        return {
+            key: "corrected",
+            text: "已完成订正",
+            className: "corrected"
+        };
+    }
+
+    if (item.lastRetestResult === "wrong") {
+        return {
+            key: "pending",
+            text: "复测未通过",
+            className: "failed"
+        };
+    }
+
+    return {
+        key: "pending",
+        text: "待订正",
+        className: ""
+    };
+}
+
+function wrongBookSearchText(item) {
+    return [
+        item.question,
+        item.category,
+        ...(item.knowledgePoints || []),
+        ...(item.focusPoints || []),
+        item.feedback,
+        item.note,
+        item.lastRetestQuestion,
+        item.lastRetestFeedback
+    ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+}
+
+function getFilteredWrongBookItems() {
+    let items = [...learningState.wrongQuestions];
+
+    if (wrongBookFilter !== "all") {
+        items = items.filter(
+            item => wrongBookStatus(item).key === wrongBookFilter
+        );
+    }
+
+    if (wrongBookSearch) {
+        items = items.filter(
+            item => wrongBookSearchText(item).includes(wrongBookSearch)
+        );
+    }
+
+    if (wrongBookSort === "oldest") {
+        items.sort((a, b) => a.updatedAt - b.updatedAt);
+    } else if (wrongBookSort === "mistakes") {
+        items.sort((a, b) => (
+            b.mistakeCount - a.mistakeCount
+            || b.updatedAt - a.updatedAt
+        ));
+    } else {
+        items.sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+
+    return items;
+}
+
+function updateWrongBookToolbar(allItems, visibleItems) {
     const stats = document.getElementById("wrongBookStats");
     const filterButtons = document.querySelectorAll(
         "[data-wrong-filter]"
     );
 
-    const total = items.length;
-    const pending = items.filter(item => !item.corrected).length;
-    const corrected = total - pending;
+    const total = allItems.length;
+    const pending = allItems.filter(
+        item => wrongBookStatus(item).key === "pending"
+    ).length;
+    const corrected = allItems.filter(
+        item => wrongBookStatus(item).key === "corrected"
+    ).length;
+    const passed = allItems.filter(
+        item => wrongBookStatus(item).key === "passed"
+    ).length;
 
     if (stats) {
+        const visibleText = visibleItems.length === total
+            ? ""
+            : ` · 当前显示 ${visibleItems.length} 道`;
+
         stats.textContent =
-            `共 ${total} 道 · 待订正 ${pending} 道 · 已完成订正 ${corrected} 道`;
+            `共 ${total} 道 · 待处理 ${pending} · 已订正 ${corrected} · 已通过复测 ${passed}${visibleText}`;
     }
 
     for (const button of filterButtons) {
@@ -1155,6 +1327,11 @@ function openWrongBook() {
 
     renderWrongBook();
     modal.classList.remove("hidden");
+
+    const search = document.getElementById("wrongBookSearch");
+    if (search) {
+        search.value = wrongBookSearch;
+    }
 }
 
 function closeWrongBook() {
@@ -1164,28 +1341,597 @@ function closeWrongBook() {
     modal.classList.add("hidden");
 }
 
+function markWrongQuestionCorrected(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry || entry.corrected) return;
+
+    const now = Date.now();
+
+    entry.corrected = true;
+    entry.correctedAt = now;
+    entry.updatedAt = now;
+
+    updateKnowledge(
+        wrongBookLearningPoints(entry),
+        "reviewed"
+    );
+
+    saveLearningState();
+    renderLearningSummary();
+    renderWrongBook();
+}
+
+function removeWrongQuestion(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry) return;
+
+    const confirmed = window.confirm(
+        "确定要把这道题移出错题本吗？这不会删除原聊天。"
+    );
+
+    if (!confirmed) return;
+
+    learningState.wrongQuestions = learningState.wrongQuestions.filter(
+        item => item.id !== id
+    );
+
+    saveLearningState();
+    renderLearningSummary();
+    renderWrongBook();
+}
+
+function clearCompletedWrongQuestions() {
+    const completed = learningState.wrongQuestions.filter(
+        item => item.corrected || item.retestPassed
+    );
+
+    if (!completed.length) {
+        window.alert("目前没有可以清理的已完成错题。");
+        return;
+    }
+
+    const confirmed = window.confirm(
+        `确定移出 ${completed.length} 道已完成的错题吗？原聊天不会被删除。`
+    );
+
+    if (!confirmed) return;
+
+    const completedIds = new Set(
+        completed.map(item => item.id)
+    );
+
+    learningState.wrongQuestions = learningState.wrongQuestions.filter(
+        item => !completedIds.has(item.id)
+    );
+
+    saveLearningState();
+    renderLearningSummary();
+    renderWrongBook();
+}
+
+function openWrongQuestionSession(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry || entry.sessionId === null) return;
+
+    const session = sessions.find(
+        item => String(item.id) === String(entry.sessionId)
+    );
+
+    if (!session) return;
+
+    if (typingTimer) {
+        forceCompleteTyping();
+    }
+
+    currentId = session.id;
+    saveState();
+    closeWrongBook();
+    renderAll();
+}
+
+function openWrongRetestSession(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry || entry.lastRetestSessionId === null) return;
+
+    const session = sessions.find(
+        item => String(item.id) === String(entry.lastRetestSessionId)
+    );
+
+    if (!session) return;
+
+    if (typingTimer) {
+        forceCompleteTyping();
+    }
+
+    currentId = session.id;
+    saveState();
+    closeWrongBook();
+    renderAll();
+}
+
+function openWrongEdit(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry) return;
+
+    currentWrongEditId = id;
+
+    const modal = document.getElementById("wrongEditModal");
+    const question = document.getElementById("wrongEditQuestion");
+    const focus = document.getElementById("wrongEditFocus");
+    const note = document.getElementById("wrongEditNote");
+
+    if (!modal || !question || !focus || !note) return;
+
+    question.value = entry.question;
+    focus.value = (entry.focusPoints || []).join("、");
+    note.value = entry.note || "";
+
+    modal.classList.remove("hidden");
+}
+
+function closeWrongEdit() {
+    const modal = document.getElementById("wrongEditModal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+
+    currentWrongEditId = null;
+}
+
+function saveWrongEdit() {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === currentWrongEditId
+    );
+
+    if (!entry) {
+        closeWrongEdit();
+        return;
+    }
+
+    const questionBox = document.getElementById("wrongEditQuestion");
+    const focusBox = document.getElementById("wrongEditFocus");
+    const noteBox = document.getElementById("wrongEditNote");
+
+    if (!questionBox || !focusBox || !noteBox) return;
+
+    const question = questionBox.value.trim();
+
+    if (!question) {
+        window.alert("题目内容不能为空。");
+        return;
+    }
+
+    const duplicate = learningState.wrongQuestions.find(
+        item => (
+            item.id !== entry.id
+            && wrongQuestionFingerprint(item.question)
+                === wrongQuestionFingerprint(question)
+        )
+    );
+
+    if (duplicate) {
+        window.alert("错题本里已经有这道题了，请不要重复保存。");
+        return;
+    }
+
+    const focusPoints = focusBox.value
+        .split(/[、,，;；]/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 2);
+
+    entry.question = question.slice(0, 3000);
+    entry.focusPoints = focusPoints;
+    entry.note = noteBox.value.trim().slice(0, 1500);
+
+    if (focusPoints.length) {
+        entry.knowledgePoints = [
+            ...new Set([
+                ...focusPoints,
+                ...(entry.knowledgePoints || [])
+            ])
+        ].slice(0, 4);
+    }
+
+    entry.updatedAt = Date.now();
+
+    saveLearningState();
+    closeWrongEdit();
+    renderLearningSummary();
+    renderWrongBook();
+}
+
+function buildRetestPrompt(entry) {
+    const target = wrongBookLearningPoints(entry);
+    const targetText = target.length
+        ? target.join("、")
+        : (
+            entry.category
+            || "这道题涉及的核心知识点"
+        );
+
+    return [
+        "【错题复测】",
+        `请围绕知识点“${targetText}”生成 1 道新的离散数学复测题。`,
+        "要求：",
+        "1. 与下面原错题考查同一核心能力，但题面、数字或结构必须明显不同；",
+        "2. 难度与原题大致相当，不要故意变难；",
+        "3. 只给复测题目，不给答案、提示、解析或解题步骤；",
+        "4. 题目必须信息完整、可独立作答；",
+        "",
+        "原错题：",
+        entry.question
+    ].join("\n");
+}
+
+function startWrongQuestionRetest(id) {
+    if (typingTimer || requestBusy) {
+        return;
+    }
+
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry) return;
+
+    if (!entry.corrected && !entry.retestPassed) {
+        window.alert("请先完成这道错题的订正，再进行复测。");
+        return;
+    }
+
+    const targetPoints = wrongBookLearningPoints(entry);
+    const idValue = makeSessionId();
+    const targetName = targetPoints.length
+        ? targetPoints[0]
+        : "错题";
+
+    const visiblePrompt =
+        `给我一道“${targetName}”的同知识点复测题。`;
+
+    const session = {
+        id: idValue,
+        name: `复测：${targetName}`.slice(0, 22),
+        messages: [{
+            role: "user",
+            text: visiblePrompt,
+            apiText: buildRetestPrompt(entry),
+            isRetestPrompt: true
+        }],
+        teaching: null,
+        learningQuestion: null,
+        retest: {
+            wrongQuestionId: entry.id,
+            stage: "generating",
+            targetPoints,
+            generatedQuestion: "",
+            startedAt: Date.now(),
+            result: ""
+        }
+    };
+
+    sessions.push(session);
+    currentId = session.id;
+
+    entry.lastRetestSessionId = session.id;
+    entry.updatedAt = Date.now();
+
+    saveLearningState();
+    saveState();
+    closeWrongBook();
+    renderAll();
+
+    requestAiReply(session);
+}
+
+function processWrongQuestionRetestReply(session, reply) {
+    const retest = normalizeRetestSession(session?.retest);
+
+    if (!session || !retest || !retest.wrongQuestionId) {
+        return false;
+    }
+
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === retest.wrongQuestionId
+    );
+
+    if (!entry) {
+        session.retest = null;
+        saveState();
+        return false;
+    }
+
+    if (retest.stage === "generating") {
+        retest.generatedQuestion = String(reply || "")
+            .trim()
+            .slice(0, 3000);
+        retest.stage = "awaiting_answer";
+        session.retest = retest;
+
+        saveState();
+        return true;
+    }
+
+    if (retest.stage !== "checking") {
+        return false;
+    }
+
+    const assessment = inferAnswerAssessment(reply);
+    const now = Date.now();
+
+    entry.lastRetestAt = now;
+    entry.lastRetestSessionId = session.id;
+    entry.lastRetestQuestion = (
+        retest.generatedQuestion
+        || entry.lastRetestQuestion
+        || ""
+    ).slice(0, 3000);
+    entry.lastRetestFeedback = compactFeedback(reply);
+    entry.lastRetestResult = assessment;
+
+    if (assessment === "correct") {
+        entry.retestCount += 1;
+        entry.retestPassCount += 1;
+        entry.retestPassed = true;
+        entry.retestPassedAt = now;
+        entry.corrected = true;
+        entry.correctedAt = entry.correctedAt || now;
+
+        updateKnowledge(
+            retest.targetPoints.length
+                ? retest.targetPoints
+                : wrongBookLearningPoints(entry),
+            "correct"
+        );
+    } else if (assessment === "wrong") {
+        entry.retestCount += 1;
+        entry.retestFailCount += 1;
+        entry.retestPassed = false;
+        entry.retestPassedAt = null;
+        entry.corrected = false;
+        entry.correctedAt = null;
+
+        updateKnowledge(
+            retest.targetPoints.length
+                ? retest.targetPoints
+                : wrongBookLearningPoints(entry),
+            "wrong"
+        );
+    }
+
+    entry.updatedAt = now;
+
+    retest.result = assessment;
+    retest.stage = assessment === "unknown"
+        ? "awaiting_answer"
+        : "finished";
+    session.retest = retest;
+
+    saveState();
+    saveLearningState();
+    renderLearningSummary();
+    renderWrongBook();
+
+    return true;
+}
+
+function rollbackRetestAfterRequestFailure(session) {
+    const retest = normalizeRetestSession(session?.retest);
+    if (!retest) return;
+
+    if (retest.stage === "checking") {
+        retest.stage = "awaiting_answer";
+        session.retest = retest;
+    } else if (retest.stage === "generating") {
+        session.retest = null;
+    }
+
+    saveState();
+}
+
+function exportWrongBookMarkdown() {
+    const items = [...learningState.wrongQuestions]
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+
+    if (!items.length) {
+        window.alert("错题本还是空的，没有内容可以导出。");
+        return;
+    }
+
+    const lines = [
+        "# 离散数学错题本",
+        "",
+        `导出时间：${new Date().toLocaleString("zh-CN")}`,
+        ""
+    ];
+
+    items.forEach((item, index) => {
+        const status = wrongBookStatus(item);
+
+        lines.push(
+            `## ${index + 1}. ${status.text}`,
+            "",
+            item.question,
+            ""
+        );
+
+        if (item.focusPoints.length) {
+            lines.push(
+                `- 本次主要卡在：${item.focusPoints.join("、")}`
+            );
+        }
+
+        if (item.knowledgePoints.length) {
+            lines.push(
+                `- 整题涉及：${item.knowledgePoints.join("、")}`
+            );
+        }
+
+        lines.push(
+            `- 累计记录错误：${item.mistakeCount} 次`
+        );
+
+        if (item.retestCount) {
+            lines.push(
+                `- 复测：${item.retestCount} 次，通过 ${item.retestPassCount} 次，未通过 ${item.retestFailCount} 次`
+            );
+        }
+
+        if (item.feedback) {
+            lines.push("", "### 最近反馈", "", item.feedback);
+        }
+
+        if (item.note) {
+            lines.push("", "### 我的笔记", "", item.note);
+        }
+
+        if (item.lastRetestQuestion) {
+            lines.push(
+                "",
+                "### 最近复测题",
+                "",
+                item.lastRetestQuestion
+            );
+        }
+
+        lines.push("", "---", "");
+    });
+
+    const blob = new Blob(
+        [lines.join("\n")],
+        { type: "text/markdown;charset=utf-8" }
+    );
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `离散数学错题本-${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+
+    setTimeout(
+        () => URL.revokeObjectURL(url),
+        1000
+    );
+}
+
+function printWrongBook() {
+    const items = [...learningState.wrongQuestions]
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+
+    if (!items.length) {
+        window.alert("错题本还是空的，没有内容可以打印。");
+        return;
+    }
+
+    const popup = window.open("", "_blank");
+
+    if (!popup) {
+        window.alert("浏览器拦截了打印窗口，请允许弹出窗口后重试。");
+        return;
+    }
+
+    const cards = items.map((item, index) => {
+        const status = wrongBookStatus(item);
+        const focus = item.focusPoints.length
+            ? `本次主要卡在：${item.focusPoints.join("、")}`
+            : "";
+        const points = item.knowledgePoints.length
+            ? `整题涉及：${item.knowledgePoints.join("、")}`
+            : "";
+        const meta = [focus, points]
+            .filter(Boolean)
+            .join(" · ");
+
+        return `
+            <section class="card">
+                <div class="status">${index + 1}. ${escapeRawHtml(status.text)}</div>
+                <div class="question">${markdownToHtml(item.question)}</div>
+                ${meta ? `<div class="meta">${escapeRawHtml(meta)}</div>` : ""}
+                ${item.feedback ? `
+                    <div class="block">
+                        <strong>最近反馈：</strong>
+                        ${markdownToHtml(item.feedback)}
+                    </div>
+                ` : ""}
+                ${item.note ? `
+                    <div class="block">
+                        <strong>我的笔记：</strong>
+                        ${markdownToHtml(item.note)}
+                    </div>
+                ` : ""}
+            </section>
+        `;
+    }).join("");
+
+    popup.document.open();
+    popup.document.write(`
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>离散数学错题本</title>
+<style>
+body{font-family:Arial,"Microsoft YaHei",sans-serif;color:#111;max-width:900px;margin:24px auto;padding:0 16px;line-height:1.6}
+h1{font-size:24px}
+.card{padding:18px 0;border-bottom:1px solid #ddd;break-inside:avoid}
+.status{font-weight:700;margin-bottom:8px}
+.meta{font-size:13px;color:#555;margin-top:8px}
+.block{margin-top:10px;padding:10px;background:#f6f7f9;border-radius:8px}
+.question{white-space:pre-wrap}
+@media print{body{margin:0;max-width:none}.card{break-inside:avoid}}
+</style>
+<script>
+window.MathJax = {
+  tex: {
+    inlineMath: [['\\\\(', '\\\\)'], ['$', '$']],
+    displayMath: [['\\\\[', '\\\\]'], ['$$', '$$']]
+  }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+</head>
+<body>
+<h1>离散数学错题本</h1>
+<p>共 ${items.length} 道 · ${escapeRawHtml(new Date().toLocaleString("zh-CN"))}</p>
+${cards}
+<script>
+window.addEventListener('load', function () {
+    setTimeout(function () { window.print(); }, 700);
+});
+</script>
+</body>
+</html>
+    `);
+    popup.document.close();
+}
+
 function renderWrongBook() {
     const list = document.getElementById("wrongBookList");
     if (!list) return;
 
     list.innerHTML = "";
 
-    const allItems = [...learningState.wrongQuestions]
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+    const allItems = [...learningState.wrongQuestions];
+    const items = getFilteredWrongBookItems();
 
-    updateWrongBookToolbar(allItems);
-
-    const items = allItems.filter(item => {
-        if (wrongBookFilter === "pending") {
-            return !item.corrected;
-        }
-
-        if (wrongBookFilter === "corrected") {
-            return item.corrected;
-        }
-
-        return true;
-    });
+    updateWrongBookToolbar(allItems, items);
 
     if (!items.length) {
         const empty = document.createElement("div");
@@ -1193,10 +1939,14 @@ function renderWrongBook() {
 
         if (!allItems.length) {
             empty.textContent = "错题本还是空的。";
+        } else if (wrongBookSearch) {
+            empty.textContent = "没有找到匹配的错题。";
         } else if (wrongBookFilter === "pending") {
-            empty.textContent = "目前没有待订正的错题。";
+            empty.textContent = "目前没有待处理的错题。";
+        } else if (wrongBookFilter === "corrected") {
+            empty.textContent = "目前没有已完成订正但未通过复测的错题。";
         } else {
-            empty.textContent = "目前还没有已完成订正的错题。";
+            empty.textContent = "目前还没有已通过复测的错题。";
         }
 
         list.appendChild(empty);
@@ -1210,13 +1960,15 @@ function renderWrongBook() {
         const top = document.createElement("div");
         top.className = "wrong-card-top";
 
+        const statusInfo = wrongBookStatus(item);
         const status = document.createElement("span");
-        status.className = item.corrected
-            ? "wrong-status corrected"
-            : "wrong-status";
-        status.textContent = item.corrected
-            ? "已完成订正"
-            : "待订正";
+        status.className = [
+            "wrong-status",
+            statusInfo.className
+        ]
+            .filter(Boolean)
+            .join(" ");
+        status.textContent = statusInfo.text;
 
         const date = document.createElement("span");
         date.className = "wrong-date";
@@ -1252,6 +2004,12 @@ function renderWrongBook() {
             );
         }
 
+        if (item.retestCount) {
+            metaParts.push(
+                `复测 ${item.retestCount} 次，通过 ${item.retestPassCount} 次`
+            );
+        }
+
         meta.textContent = metaParts.join(" · ");
 
         const feedback = document.createElement("div");
@@ -1275,6 +2033,36 @@ function renderWrongBook() {
             feedback.textContent = "还没有记录订正提示。";
         }
 
+        const note = document.createElement("div");
+        note.className = "wrong-note";
+
+        if (item.note) {
+            const noteTitle = document.createElement("strong");
+            noteTitle.textContent = "我的笔记：";
+
+            const noteBody = document.createElement("div");
+            noteBody.className = "wrong-note-body";
+            noteBody.innerHTML = markdownToHtml(item.note);
+
+            note.appendChild(noteTitle);
+            note.appendChild(noteBody);
+        }
+
+        const retest = document.createElement("div");
+        retest.className = "wrong-retest";
+
+        if (item.lastRetestAt) {
+            const resultText = item.lastRetestResult === "correct"
+                ? "最近复测：通过"
+                : (
+                    item.lastRetestResult === "wrong"
+                        ? "最近复测：未通过"
+                        : "最近复测：尚未确认"
+                );
+
+            retest.textContent = resultText;
+        }
+
         const actions = document.createElement("div");
         actions.className = "wrong-actions";
 
@@ -1287,6 +2075,23 @@ function renderWrongBook() {
             );
             actions.appendChild(correctedButton);
         }
+
+        const retestButton = document.createElement("button");
+        retestButton.type = "button";
+        retestButton.className = item.corrected || item.retestPassed
+            ? ""
+            : "secondary";
+        retestButton.textContent = item.retestPassed
+            ? "再测一次"
+            : "再测一道";
+        retestButton.disabled = !item.corrected && !item.retestPassed;
+        retestButton.title = retestButton.disabled
+            ? "先完成订正，再进行同知识点复测"
+            : "生成一道同知识点、难度相近的新题进行验证";
+        retestButton.onclick = () => (
+            startWrongQuestionRetest(item.id)
+        );
+        actions.appendChild(retestButton);
 
         const hasOriginalSession = (
             item.sessionId !== null
@@ -1306,6 +2111,31 @@ function renderWrongBook() {
             actions.appendChild(backButton);
         }
 
+        const hasRetestSession = (
+            item.lastRetestSessionId !== null
+            && sessions.some(
+                session => String(session.id) === String(item.lastRetestSessionId)
+            )
+        );
+
+        if (hasRetestSession) {
+            const retestHistoryButton = document.createElement("button");
+            retestHistoryButton.type = "button";
+            retestHistoryButton.className = "secondary";
+            retestHistoryButton.textContent = "查看最近复测";
+            retestHistoryButton.onclick = () => (
+                openWrongRetestSession(item.id)
+            );
+            actions.appendChild(retestHistoryButton);
+        }
+
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = "secondary";
+        editButton.textContent = "编辑/笔记";
+        editButton.onclick = () => openWrongEdit(item.id);
+        actions.appendChild(editButton);
+
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.className = "secondary danger";
@@ -1323,12 +2153,21 @@ function renderWrongBook() {
         }
 
         card.appendChild(feedback);
-        card.appendChild(actions);
 
+        if (item.note) {
+            card.appendChild(note);
+        }
+
+        if (retest.textContent) {
+            card.appendChild(retest);
+        }
+
+        card.appendChild(actions);
         list.appendChild(card);
 
         renderMath(question);
         renderMath(feedback);
+        renderMath(note);
     }
 }
 
@@ -1483,6 +2322,11 @@ function loadState() {
                     role: message.role,
                     text,
                     source: message.source === "ocr" ? "ocr" : undefined,
+                    apiText: typeof message.apiText === "string"
+                        ? message.apiText
+                        : undefined,
+                    isRetestPrompt: Boolean(message.isRetestPrompt),
+                    isRetestAnswer: Boolean(message.isRetestAnswer),
                     isError: Boolean(message.isError),
                     isNotice: Boolean(message.isNotice)
                 });
@@ -1497,7 +2341,8 @@ function loadState() {
                 teaching: normalizeTeaching(session.teaching),
                 learningQuestion: normalizeLearningQuestion(
                     session.learningQuestion
-                )
+                ),
+                retest: normalizeRetestSession(session.retest)
             });
         }
 
@@ -1646,7 +2491,8 @@ function newChat() {
         name: "新对话",
         messages: [],
         teaching: null,
-        learningQuestion: null
+        learningQuestion: null,
+        retest: null
     });
 
     currentId = id;
@@ -1664,7 +2510,13 @@ function buildApiMessages(session) {
         .filter(message => !message.isError && !message.isNotice)
         .slice(-16)
         .map(message => {
-            let content = message.text;
+            let content = (
+                message.role === "user"
+                && typeof message.apiText === "string"
+                && message.apiText.trim()
+            )
+                ? message.apiText
+                : message.text;
 
             if (
                 message.role === "user"
@@ -1735,6 +2587,8 @@ async function requestAiReply(session) {
             const message = data.error
                 || fallbackHttpError(response.status);
 
+            rollbackRetestAfterRequestFailure(session);
+
             showAssistantMessage(
                 session,
                 message,
@@ -1747,6 +2601,8 @@ async function requestAiReply(session) {
             typeof data.reply !== "string"
             || !data.reply.trim()
         ) {
+            rollbackRetestAfterRequestFailure(session);
+
             showAssistantMessage(
                 session,
                 "AI 服务没有返回有效内容，请重新发送。",
@@ -1755,11 +2611,18 @@ async function requestAiReply(session) {
             return;
         }
 
-        processLearningFromReply(
+        const retestHandled = processWrongQuestionRetestReply(
             session,
-            session.teaching,
             data.reply
         );
+
+        if (!retestHandled) {
+            processLearningFromReply(
+                session,
+                session.teaching,
+                data.reply
+            );
+        }
 
         if (currentId === session.id) {
             startTyping(
@@ -1778,6 +2641,8 @@ async function requestAiReply(session) {
 
     } catch (error) {
         console.error("聊天请求失败：", error);
+
+        rollbackRetestAfterRequestFailure(session);
 
         showAssistantMessage(
             session,
@@ -1808,10 +2673,29 @@ function send() {
     const session = getCurrent();
     if (!session) return;
 
-    session.messages.push({
+    const message = {
         role: "user",
         text
-    });
+    };
+
+    const retest = normalizeRetestSession(session.retest);
+
+    if (retest && retest.stage === "awaiting_answer") {
+        message.apiText = [
+            "【错题复测回答】",
+            "这是我的答案，请严格检查是否正确。",
+            "如果全部正确，请明确说“这次作答正确”；",
+            "如果存在任何实质错误，请明确说“这次作答有错误”。",
+            "",
+            text
+        ].join("\n");
+        message.isRetestAnswer = true;
+
+        retest.stage = "checking";
+        session.retest = retest;
+    }
+
+    session.messages.push(message);
 
     input.value = "";
 
@@ -2486,6 +3370,15 @@ document.addEventListener(
         const wrongBookBtn = document.getElementById("wrongBookBtn");
         const wrongBookClose = document.getElementById("wrongBookClose");
         const wrongBookModal = document.getElementById("wrongBookModal");
+        const wrongBookSearchBox = document.getElementById("wrongBookSearch");
+        const wrongBookSortBox = document.getElementById("wrongBookSort");
+        const wrongExportBtn = document.getElementById("wrongExportBtn");
+        const wrongPrintBtn = document.getElementById("wrongPrintBtn");
+        const wrongClearCompletedBtn = document.getElementById("wrongClearCompletedBtn");
+        const wrongEditClose = document.getElementById("wrongEditClose");
+        const wrongEditCancel = document.getElementById("wrongEditCancel");
+        const wrongEditSave = document.getElementById("wrongEditSave");
+        const wrongEditModal = document.getElementById("wrongEditModal");
         const wrongFilterButtons = document.querySelectorAll(
             "[data-wrong-filter]"
         );
@@ -2551,6 +3444,73 @@ document.addEventListener(
             );
         }
 
+        if (wrongBookSearchBox) {
+            wrongBookSearchBox.addEventListener(
+                "input",
+                event => setWrongBookSearch(event.target.value)
+            );
+        }
+
+        if (wrongBookSortBox) {
+            wrongBookSortBox.addEventListener(
+                "change",
+                event => setWrongBookSort(event.target.value)
+            );
+        }
+
+        if (wrongExportBtn) {
+            wrongExportBtn.addEventListener(
+                "click",
+                exportWrongBookMarkdown
+            );
+        }
+
+        if (wrongPrintBtn) {
+            wrongPrintBtn.addEventListener(
+                "click",
+                printWrongBook
+            );
+        }
+
+        if (wrongClearCompletedBtn) {
+            wrongClearCompletedBtn.addEventListener(
+                "click",
+                clearCompletedWrongQuestions
+            );
+        }
+
+        if (wrongEditClose) {
+            wrongEditClose.addEventListener(
+                "click",
+                closeWrongEdit
+            );
+        }
+
+        if (wrongEditCancel) {
+            wrongEditCancel.addEventListener(
+                "click",
+                closeWrongEdit
+            );
+        }
+
+        if (wrongEditSave) {
+            wrongEditSave.addEventListener(
+                "click",
+                saveWrongEdit
+            );
+        }
+
+        if (wrongEditModal) {
+            wrongEditModal.addEventListener(
+                "click",
+                event => {
+                    if (event.target === wrongEditModal) {
+                        closeWrongEdit();
+                    }
+                }
+            );
+        }
+
         for (const button of wrongFilterButtons) {
             button.addEventListener(
                 "click",
@@ -2574,7 +3534,8 @@ document.addEventListener(
                 name: "新对话",
                 messages: [],
                 teaching: null,
-                learningQuestion: null
+                learningQuestion: null,
+                retest: null
             });
 
             currentId = id;
