@@ -57,6 +57,8 @@ SYSTEM_PROMPT = r"""你是离散数学智能辅学系统中的教学助手。
   $$
 - 只要数学定义中出现“若/当……则取某值，否则取另一值”，必须排成多行 `cases`。
 - 严禁把分段定义压成一行，例如 `a_{ij}=\{1, 条件, 0, 否则\}` 这种写法即使能渲染也视为错误格式。
+- 分段定义的左侧也必须放在同一个数学块里；禁止先在普通文本中写 `a_{ij}=`，再另起 `$$...$$`。
+- 数学公式与中文说明要分开。例如应写 `$A=(a_{ij})_{5\times5}$ 满足：`，不要把“满足、其中”等中文直接塞进 `$...$`。
 - 公式中的中文说明必须放入 `\text{...}`，不要把“满足、否则、相邻”等中文裸写在数学公式内部。
 - 矩阵示例：
   $$
@@ -208,8 +210,21 @@ def _repair_common_latex_typos(text):
         repaired
     )
 
+    # a{ij} -> a_{ij}（只修邻接矩阵常见变量 a）
+    repaired = re.sub(
+        r"(?<![A-Za-z0-9_])a\{([A-Za-z0-9,]{1,8})\}",
+        r"a_{\1}",
+        repaired
+    )
+
+    # (a_{ij}){5\times5} -> (a_{ij})_{5\times5}
+    repaired = re.sub(
+        r"(\(a_\{ij\}\))\{(\d+\s*\\times\s*\d+)\}",
+        r"\1_{\2}",
+        repaired
+    )
+
     # 模型偶尔会在公式边界旁插入 Markdown 强调星号：
-    # "$*" / "*$" -> "$"
     repaired = repaired.replace("$*", "$").replace("*$", "$")
 
     # 行首 "*a_{ij}" 这种不是正常列表，而是公式强调符残留。
@@ -266,6 +281,73 @@ def _math_delimiters_balanced(text):
     return mode is None
 
 
+
+def _iter_math_segments(text):
+    if not isinstance(text, str):
+        return []
+
+    segments = []
+    index = 0
+    length = len(text)
+
+    while index < length:
+        if text[index] == "\\":
+            index += 2
+            continue
+
+        if text[index] != "$":
+            index += 1
+            continue
+
+        is_double = index + 1 < length and text[index + 1] == "$"
+        token = "$$" if is_double else "$"
+        start = index + len(token)
+        cursor = start
+
+        while cursor < length:
+            if text[cursor] == "\\":
+                cursor += 2
+                continue
+
+            if text.startswith(token, cursor):
+                segments.append((token, text[start:cursor]))
+                index = cursor + len(token)
+                break
+
+            cursor += 1
+        else:
+            break
+
+    return segments
+
+
+def _has_naked_chinese_in_math(content):
+    if not isinstance(content, str) or not content:
+        return False
+
+    scrubbed = re.sub(
+        r"\\text\{[^{}]*\}",
+        "",
+        content
+    )
+
+    return bool(re.search(r"[\u4e00-\u9fff]", scrubbed))
+
+
+def _remove_math_for_plaintext_checks(text):
+    plain = re.sub(
+        r"\$\$[\s\S]*?\$\$",
+        "",
+        text
+    )
+    plain = re.sub(
+        r"\$(?!\$)(?:\\.|[^$\n])+\$",
+        "",
+        plain
+    )
+    return plain
+
+
 def _looks_like_broken_math(text):
     if not isinstance(text, str) or not text.strip():
         return True
@@ -307,7 +389,26 @@ def _looks_like_broken_math(text):
     if flattened_condition and r"\begin{cases}" not in text:
         return True
 
-    # Python 转义事故留下的控制字符也不应出现在模型答案中。
+    for _delimiter, math_content in _iter_math_segments(text):
+        if _has_naked_chinese_in_math(math_content):
+            return True
+
+    plain_text = _remove_math_for_plaintext_checks(text)
+
+    # a_{ij}= 被放在普通文本中，后面才另起数学块。
+    if re.search(
+        r"(?m)^[ \t]*a_\{ij\}\s*=\s*$",
+        plain_text
+    ):
+        return True
+
+    # 邻接矩阵维数漏掉下标符号。
+    if re.search(
+        r"A\s*=\s*\(a_\{ij\}\)\s*\{\d+\s*\\times\s*\d+\}",
+        text
+    ):
+        return True
+
     if "\x08" in text or "\x0c" in text:
         return True
 
@@ -329,6 +430,8 @@ def _regenerate_broken_math_answer(
         "不要提到“格式修复”或这条指令。"
         "严格使用标准 MathJax LaTeX：行内 $...$，独立公式 $$...$$；"
         "下标只用 _{...}；所有‘若……否则……’的条件定义必须使用多行 cases；"
+        "整个 a_{ij}=\\begin{cases}...\\end{cases} 必须放在同一对 $$ 中；"
+        "矩阵维数写成 $A=(a_{ij})_{5\\times5}$，中文“满足/其中”放在公式外；"
         "禁止把 a_{ij}={1, 条件, 0, 否则} 摊成一行；"
         "禁止使用星号代替下标，禁止出现 a*{ij}、$*、*a*{ij}。"
         "输出前检查所有美元符号、花括号和 begin/end 是否成对。"
