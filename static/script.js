@@ -184,7 +184,13 @@ function normalizeLearningQuestion(value) {
         category: typeof value.category === "string"
             ? value.category.trim()
             : "",
-        source: value.source === "ocr" ? "ocr" : "text",
+        source: value.source === "ocr"
+            ? "ocr"
+            : (
+                value.source === "ai"
+                    ? "ai"
+                    : "text"
+            ),
         sessionId: (
             typeof value.sessionId === "number"
             || typeof value.sessionId === "string"
@@ -1083,6 +1089,32 @@ function processLearningFromReply(session, teaching, reply) {
     const latest = getLatestUserMessage(session);
     const latestText = latest?.text || "";
 
+    // 用户明确让 AI 出练习题时，AI 返回的题目本身就是当前学习题。
+    // “记为错题”应保存模型生成的题目，而不是“给我一道题”这句请求。
+    if (
+        normalized.mode === "exercise"
+        && typeof reply === "string"
+        && reply.trim()
+    ) {
+        session.learningQuestion = {
+            text: reply.trim().slice(0, 3000),
+            knowledgePoints: points.slice(0, 4),
+            focusPoints: normalized.focus_points.slice(0, 2),
+            category: normalized.category,
+            source: "ai",
+            sessionId: session.id,
+            updatedAt: Date.now()
+        };
+
+        if (points.length) {
+            updateKnowledge(
+                points,
+                "seen",
+                session.id
+            );
+        }
+    }
+
     const isSubstantiveQuestion = Boolean(
         latest
         && looksLikeActualLearningProblem(latest)
@@ -1234,37 +1266,6 @@ function renderLearningSummary() {
 
     if (!box) return;
 
-    const entries = Object.entries(
-        learningState.knowledge || {}
-    );
-
-    const errorPoints = entries
-        .filter(([_name, record]) => (
-            (record?.wrong || 0) > 0
-        ))
-        .sort(
-            (a, b) => (
-                (b[1].wrong || 0)
-                - (a[1].wrong || 0)
-            )
-        )
-        .slice(0, 3)
-        .map(([name]) => name);
-
-    const correctPoints = entries
-        .filter(([_name, record]) => (
-            (record?.correct || 0) > 0
-            && !(record?.wrong || 0)
-        ))
-        .sort(
-            (a, b) => (
-                (b[1].correct || 0)
-                - (a[1].correct || 0)
-            )
-        )
-        .slice(0, 3)
-        .map(([name]) => name);
-
     const wrongCount = learningState.wrongQuestions.length;
     const pendingWrong = learningState.wrongQuestions
         .filter(item => !item.corrected)
@@ -1273,44 +1274,22 @@ function renderLearningSummary() {
     const passedCount = learningState.wrongQuestions
         .filter(item => item.retestPassed)
         .length;
+
     const recentFocus = pendingWrong.find(
         item => Array.isArray(item.focusPoints) && item.focusPoints.length
     );
 
     const lines = [];
 
-    if (!entries.length && !wrongCount) {
+    if (recentFocus) {
         lines.push(
-            "还没有足够的学习记录。",
-            "做题、检查答案或加入错题后，这里会慢慢形成你的学习情况。"
-        );
-    } else {
-        if (recentFocus) {
-            lines.push(
-                `当前主要卡点：${recentFocus.focusPoints.join("、")}`
-            );
-        }
-
-        if (errorPoints.length) {
-            lines.push(
-                `有错误记录：${errorPoints.join("、")}`
-            );
-        }
-
-        if (correctPoints.length) {
-            lines.push(
-                `已有正确记录：${correctPoints.join("、")}`
-            );
-        }
-
-        if (!errorPoints.length && !correctPoints.length && entries.length) {
-            lines.push("目前正在积累学习记录。");
-        }
-
-        lines.push(
-            `错题本：${wrongCount} 道，待订正 ${pendingCount} 道，已通过复测 ${passedCount} 道`
+            `当前主要卡点：${recentFocus.focusPoints.join("、")}`
         );
     }
+
+    lines.push(
+        `错题本：${wrongCount} 道，待订正 ${pendingCount} 道，已通过复测 ${passedCount} 道`
+    );
 
     box.innerText = lines.join("\n");
 
@@ -4137,9 +4116,6 @@ function focusKnowledgeGraphOnCurrent() {
 
 
 function knowledgeGraphNodeState(nodeName, context) {
-    const record = learningState?.knowledge?.[nodeName];
-    const status = knowledgeStatus(record);
-
     if (context?.focusPoints?.includes(nodeName)) {
         return {
             key: "focus",
@@ -4154,7 +4130,7 @@ function knowledgeGraphNodeState(nodeName, context) {
     if (context?.knowledgePoints?.includes(nodeName)) {
         return {
             key: "current",
-            label: "当前题目相关",
+            label: "本题相关",
             fill: "#5b21b6",
             stroke: "#c4b5fd",
             text: "#ffffff",
@@ -4162,33 +4138,16 @@ function knowledgeGraphNodeState(nodeName, context) {
         };
     }
 
-    if (status === "有错误记录") {
-        return {
-            key: "review",
-            label: "有错误记录",
-            fill: "#3f1d1d",
-            stroke: "#ef4444",
-            text: "#ffffff",
-            badge: "巩固"
-        };
-    }
-
-    const badgeMap = {
-        "学习中": "学习中",
-        "比较熟悉": "熟悉",
-        "掌握较稳": "较稳",
-        "暂无记录": "未学"
-    };
-
     return {
         key: "neutral",
-        label: status,
+        label: "",
         fill: "#111827",
         stroke: "#475569",
         text: "#ffffff",
-        badge: badgeMap[status] || "未学"
+        badge: ""
     };
 }
+
 
 function splitKnowledgeGraphLabel(text, maxChars = 7) {
     const value = String(text || "").trim();
@@ -4550,14 +4509,16 @@ function renderKnowledgeGraphSection(container, nodes, title, description, conte
 
         group.appendChild(text);
 
-        const badge = createSvgElement("text", {
-            class: "kg-node-badge",
-            x: nodeWidth / 2,
-            y: nodeHeight - 10,
-            "text-anchor": "middle"
-        });
-        badge.textContent = state.badge;
-        group.appendChild(badge);
+        if (state.badge) {
+            const badge = createSvgElement("text", {
+                class: "kg-node-badge",
+                x: nodeWidth / 2,
+                y: nodeHeight - 10,
+                "text-anchor": "middle"
+            });
+            badge.textContent = state.badge;
+            group.appendChild(badge);
+        }
 
         svg.appendChild(group);
     }
@@ -4660,20 +4621,27 @@ function renderKnowledgeGraphDetail() {
     if (!node) {
         title.textContent = "节点详情";
         detail.innerHTML = (
-            '<div class="graph-detail-empty">点击左侧知识点查看详情。</div>'
+            '<div class="graph-detail-empty">点击左侧知识点查看关系。</div>'
         );
         return;
     }
 
     const context = getCurrentKnowledgeContext();
-    const relationState = knowledgeGraphNodeState(
+    const state = knowledgeGraphNodeState(
         node.name,
         context
     );
-    const record = learningState?.knowledge?.[node.name] || null;
+
     const nextNodes = knowledgeGraphData.nodes
         .filter(item => item.prerequisites.includes(node.name))
         .map(item => item.name);
+
+    const relatedNodes = [
+        ...new Set([
+            ...node.prerequisites,
+            ...nextNodes
+        ])
+    ];
 
     title.textContent = node.name;
     detail.innerHTML = "";
@@ -4685,95 +4653,33 @@ function renderKnowledgeGraphDetail() {
     category.textContent = node.category;
     subline.appendChild(category);
 
-    if (relationState.key !== "neutral") {
+    if (state.label) {
         const pill = document.createElement("span");
-        pill.className = `graph-status-pill ${relationState.key}`;
-        pill.textContent = relationState.label;
+        pill.className = `graph-status-pill ${state.key}`;
+        pill.textContent = state.label;
         subline.appendChild(pill);
     }
 
     detail.appendChild(subline);
 
-    const addField = (label, value) => {
-        const field = document.createElement("div");
-        field.className = "graph-detail-field";
+    const field = document.createElement("div");
+    field.className = "graph-detail-field";
 
-        const labelNode = document.createElement("div");
-        labelNode.className = "graph-detail-field-label";
-        labelNode.textContent = label;
+    const label = document.createElement("div");
+    label.className = "graph-detail-field-label";
+    label.textContent = "直接相关知识";
 
-        const valueNode = document.createElement("div");
-        valueNode.className = "graph-detail-field-value";
-        valueNode.textContent = value;
+    const value = document.createElement("div");
+    value.className = "graph-detail-field-value";
+    value.textContent = relatedNodes.length
+        ? relatedNodes.join("、")
+        : "暂无直接关联";
 
-        field.appendChild(labelNode);
-        field.appendChild(valueNode);
-        detail.appendChild(field);
-    };
-
-    const relatedNodes = [
-        ...new Set([
-            ...node.prerequisites,
-            ...nextNodes
-        ])
-    ];
-
-    addField(
-        "相关知识",
-        relatedNodes.length
-            ? relatedNodes.join("、")
-            : "暂无直接关联"
-    );
-
-    addField(
-        "学习记录",
-        record
-            ? knowledgeStatus(record)
-            : "暂无记录"
-    );
-
-    if (record) {
-        const metrics = document.createElement("div");
-        metrics.className = "graph-metrics";
-
-        const values = [
-            ["看过", record.seen || 0],
-            ["答对", record.correct || 0],
-            ["错误作答", record.wrong || 0],
-            ["获得帮助", record.support || 0],
-            ["订正", record.reviewed || 0]
-        ];
-
-        for (const [label, value] of values) {
-            const cell = document.createElement("div");
-            cell.className = "graph-metric";
-
-            const number = document.createElement("div");
-            number.className = "graph-metric-number";
-            number.textContent = String(value);
-
-            const caption = document.createElement("div");
-            caption.className = "graph-metric-label";
-            caption.textContent = label;
-
-            cell.appendChild(number);
-            cell.appendChild(caption);
-            metrics.appendChild(cell);
-        }
-
-        detail.appendChild(metrics);
-    }
-
-    if (
-        !context.focusPoints.includes(node.name)
-        && !context.knowledgePoints.includes(node.name)
-    ) {
-        const tip = document.createElement("div");
-        tip.className = "graph-detail-tip";
-        tip.textContent = "这个节点不是当前题目的直接重点，可以顺着连线查看它与其它知识点的关系。";
-        detail.appendChild(tip);
-    }
+    field.appendChild(label);
+    field.appendChild(value);
+    detail.appendChild(field);
 }
+
 
 
 function renderKnowledgeGraph() {
@@ -4877,19 +4783,12 @@ function renderInfo() {
     if (teaching) {
         lines.push(
             "",
-            `这道题主要讲：${getFriendlyCategory(teaching.category)}`,
-            `这是什么题：${getFriendlyQuestionType(teaching.question_type)}`
+            `学习内容：${getFriendlyCategory(teaching.category)}`
         );
 
         if (teaching.focus_points.length) {
             lines.push(
-                `这次主要在看：${teaching.focus_points.join("、")}`
-            );
-        }
-
-        if (teaching.knowledge_points.length) {
-            lines.push(
-                `整道题涉及：${teaching.knowledge_points.join("、")}`
+                `本次重点：${teaching.focus_points.join("、")}`
             );
         }
 
@@ -4898,21 +4797,6 @@ function renderInfo() {
                 `知识脉络：${teaching.knowledge_path.join(" → ")}`
             );
         }
-
-        lines.push(
-            `我会怎么帮你：${getFriendlyMode(teaching.mode_label)}`,
-            `判断把握：${getFriendlyConfidence(teaching.confidence)}`
-        );
-
-        if (teaching.related_categories.length) {
-            lines.push(
-                `相关内容：${teaching.related_categories.join("、")}`
-            );
-        }
-
-        lines.push(
-            `提问方式：${getFriendlyInputSource(teaching.input_source)}`
-        );
     }
 
     info.innerText = lines.join("\n");
