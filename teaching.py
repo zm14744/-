@@ -244,11 +244,13 @@ FULL_SOLUTION_PATTERNS = [
 
 EXERCISE_PATTERNS = [
     "出题", "生成练习题", "给我一道题", "给几道题", "练习题", "随机出题",
+    "复测题", "再测一道", "同知识点复测", "错题复测",
 ]
 
 CHECK_PATTERNS = [
     "我的答案", "我算", "我做", "我写", "我觉得", "我认为", "对不对", "正确吗",
     "有没有错", "哪里错", "帮我检查", "检查一下", "为什么错", "我这样做", "我这样算",
+    "错题复测回答", "复测回答",
 ]
 
 CONCEPT_PATTERNS = [
@@ -440,10 +442,12 @@ def _detect_mode(latest_text):
         return "hint"
     if _contains_any(text, FULL_SOLUTION_PATTERNS):
         return "full_solution"
-    if _contains_any(text, EXERCISE_PATTERNS):
-        return "exercise"
+    # “检查我这道练习题的答案”同时含有“练习题”和“检查”，
+    # 答案诊断应优先于出题请求；错题复测回答也依赖这个优先级。
     if _contains_any(text, CHECK_PATTERNS):
         return "check_answer"
+    if _contains_any(text, EXERCISE_PATTERNS):
+        return "exercise"
     if any(marker.lower() in text for marker in _INTERNAL_IMAGE_MARKERS):
         return "hint"
     if _contains_any(text, CONCEPT_PATTERNS) and not _contains_any(text, PROBLEM_PATTERNS):
