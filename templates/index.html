@@ -136,6 +136,171 @@ body {
     margin-top:60px;
     color:#6b7280;
 }
+
+.learning-panel {
+    margin-top:16px;
+    padding-top:14px;
+    border-top:1px solid #1f2937;
+}
+
+.learning-title { margin-bottom:8px; }
+
+.learning-summary {
+    font-size:13px;
+    color:#cbd5e1;
+    white-space:pre-wrap;
+    line-height:1.6;
+}
+
+.learning-actions {
+    display:flex;
+    gap:6px;
+    margin-top:10px;
+}
+
+.learning-actions button {
+    flex:1;
+    padding:7px 6px;
+    border:none;
+    border-radius:7px;
+    background:#1f2937;
+    color:white;
+    cursor:pointer;
+    font-size:12px;
+}
+
+.learning-actions button:disabled {
+    opacity:.45;
+    cursor:not-allowed;
+}
+
+.learning-note {
+    margin-top:8px;
+    font-size:11px;
+    line-height:1.5;
+    color:#64748b;
+}
+
+.modal {
+    position:fixed;
+    inset:0;
+    background:rgba(2,6,23,.72);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    z-index:1000;
+}
+
+.modal.hidden { display:none; }
+
+.modal-card {
+    width:min(760px, 92vw);
+    max-height:82vh;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+    background:#111827;
+    border:1px solid #334155;
+    border-radius:14px;
+    box-shadow:0 20px 60px rgba(0,0,0,.4);
+}
+
+.modal-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 16px;
+    border-bottom:1px solid #1f2937;
+}
+
+.modal-head button {
+    border:none;
+    background:transparent;
+    color:#94a3b8;
+    cursor:pointer;
+    font-size:22px;
+}
+
+#wrongBookList {
+    overflow-y:auto;
+    padding:14px;
+}
+
+.wrong-empty {
+    padding:28px 8px;
+    text-align:center;
+    color:#64748b;
+}
+
+.wrong-card {
+    padding:14px;
+    margin-bottom:12px;
+    border-radius:10px;
+    background:#0f172a;
+    border:1px solid #1f2937;
+}
+
+.wrong-card-top {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:8px;
+}
+
+.wrong-status {
+    font-size:12px;
+    color:#fca5a5;
+}
+
+.wrong-status.corrected { color:#86efac; }
+
+.wrong-date,
+.wrong-meta {
+    font-size:12px;
+    color:#64748b;
+}
+
+.wrong-question {
+    white-space:pre-wrap;
+    line-height:1.55;
+    max-height:170px;
+    overflow:auto;
+    color:#e2e8f0;
+}
+
+.wrong-meta { margin-top:8px; }
+
+.wrong-feedback {
+    margin-top:8px;
+    padding:8px 10px;
+    border-radius:8px;
+    background:#111827;
+    color:#94a3b8;
+    font-size:12px;
+    line-height:1.55;
+    white-space:pre-wrap;
+}
+
+.wrong-actions {
+    display:flex;
+    gap:8px;
+    margin-top:10px;
+}
+
+.wrong-actions button {
+    padding:7px 10px;
+    border:none;
+    border-radius:7px;
+    background:#2563eb;
+    color:white;
+    cursor:pointer;
+}
+
+.wrong-actions button.secondary {
+    background:#1f2937;
+    color:#cbd5e1;
+}
 </style>
 
 <script>
@@ -176,8 +341,32 @@ window.MathJax = {
 <div class="right">
     <div style="margin-bottom:8px;">会话信息</div>
     <div id="info" class="small"></div>
+
+    <div class="learning-panel">
+        <div class="learning-title">学习记录</div>
+        <div id="learningSummary" class="learning-summary"></div>
+
+        <div class="learning-actions">
+            <button id="markWrongBtn" type="button">记为错题</button>
+            <button id="wrongBookBtn" type="button">查看错题本 (0)</button>
+        </div>
+
+        <div class="learning-note">
+            学习记录只保存在当前浏览器，不会上传到服务器。
+        </div>
+    </div>
 </div>
 
+</div>
+
+<div id="wrongBookModal" class="modal hidden">
+    <div class="modal-card">
+        <div class="modal-head">
+            <div>错题本</div>
+            <button id="wrongBookClose" type="button" aria-label="关闭">×</button>
+        </div>
+        <div id="wrongBookList"></div>
+    </div>
 </div>
 
 <script src="/static/script.js"></script>
