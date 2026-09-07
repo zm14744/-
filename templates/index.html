@@ -321,6 +321,18 @@ body {
     color:#94a3b8;
 }
 
+.wrong-filter-group {
+    display:flex;
+    align-items:center;
+    gap:8px;
+}
+
+.wrong-filter-label {
+    color:#64748b;
+    font-size:12px;
+    white-space:nowrap;
+}
+
 .wrong-filters {
     display:flex;
     gap:6px;
@@ -363,7 +375,7 @@ body {
 
 .wrong-tools {
     display:grid;
-    grid-template-columns:minmax(180px, 1fr) auto auto auto auto;
+    grid-template-columns:minmax(220px, 1fr) auto auto auto;
     gap:8px;
     padding:10px 14px;
     border-bottom:1px solid #1f2937;
@@ -466,6 +478,226 @@ body {
     color:#cbd5e1;
 }
 
+
+.learning-actions-single {
+    margin-top:8px;
+}
+
+.learning-actions-single button {
+    width:100%;
+}
+
+.graph-modal-card {
+    width:min(1180px, 96vw);
+    max-height:88vh;
+}
+
+.graph-toolbar {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+    padding:10px 14px;
+    border-bottom:1px solid #1f2937;
+    background:#0b1220;
+}
+
+.graph-toolbar-left {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+}
+
+.graph-toolbar-left label {
+    color:#94a3b8;
+    font-size:12px;
+}
+
+.graph-toolbar-left select,
+.graph-toolbar-left button {
+    border:1px solid #334155;
+    border-radius:7px;
+    background:#111827;
+    color:#e2e8f0;
+    padding:7px 10px;
+    font:inherit;
+}
+
+.graph-toolbar-left button {
+    cursor:pointer;
+}
+
+.graph-legend {
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    font-size:12px;
+    color:#94a3b8;
+    justify-content:flex-end;
+}
+
+.legend-item {
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:4px 8px;
+    border-radius:999px;
+    background:#111827;
+    border:1px solid #1f2937;
+}
+
+.legend-item::before {
+    content:"";
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    display:inline-block;
+}
+
+.legend-item.focus::before { background:#2563eb; }
+.legend-item.current::before { background:#7c3aed; }
+.legend-item.prerequisite::before { background:#0ea5e9; }
+.legend-item.review::before { background:#ef4444; }
+.legend-item.familiar::before { background:#10b981; }
+
+.knowledge-graph-layout {
+    display:grid;
+    grid-template-columns:minmax(0, 1fr) 300px;
+    min-height:0;
+    flex:1;
+}
+
+.knowledge-graph-main {
+    display:flex;
+    flex-direction:column;
+    min-width:0;
+    border-right:1px solid #1f2937;
+}
+
+.graph-summary {
+    padding:12px 14px;
+    border-bottom:1px solid #1f2937;
+    color:#cbd5e1;
+    font-size:13px;
+    line-height:1.6;
+    white-space:pre-wrap;
+    background:#111827;
+}
+
+.knowledge-graph-canvas {
+    flex:1;
+    overflow:auto;
+    padding:14px;
+    background:#0f172a;
+}
+
+.kg-section {
+    margin-bottom:18px;
+    padding:12px;
+    border:1px solid #1f2937;
+    border-radius:12px;
+    background:#111827;
+}
+
+.kg-section-title {
+    margin-bottom:10px;
+    color:#e2e8f0;
+    font-weight:600;
+}
+
+.kg-section-desc {
+    margin-bottom:10px;
+    color:#64748b;
+    font-size:12px;
+}
+
+.kg-svg {
+    display:block;
+    width:100%;
+    overflow:visible;
+}
+
+.kg-empty {
+    padding:30px 8px;
+    text-align:center;
+    color:#64748b;
+}
+
+.knowledge-graph-side {
+    display:flex;
+    flex-direction:column;
+    min-height:0;
+    background:#111827;
+}
+
+.graph-detail-title {
+    padding:14px 16px 8px;
+    font-size:16px;
+    font-weight:600;
+    color:#f8fafc;
+}
+
+.graph-detail-body {
+    padding:0 16px 16px;
+    overflow:auto;
+    color:#cbd5e1;
+    font-size:13px;
+    line-height:1.7;
+    white-space:pre-wrap;
+}
+
+.graph-detail-body .detail-label {
+    display:block;
+    margin-top:10px;
+    margin-bottom:4px;
+    color:#94a3b8;
+    font-size:12px;
+}
+
+.graph-status-pill {
+    display:inline-block;
+    margin-top:4px;
+    padding:4px 10px;
+    border-radius:999px;
+    font-size:12px;
+    color:white;
+}
+
+.graph-status-pill.focus { background:#2563eb; }
+.graph-status-pill.current { background:#7c3aed; }
+.graph-status-pill.prerequisite { background:#0ea5e9; }
+.graph-status-pill.review { background:#ef4444; }
+.graph-status-pill.learning { background:#f59e0b; color:#111827; }
+.graph-status-pill.familiar { background:#10b981; }
+.graph-status-pill.stable { background:#059669; }
+.graph-status-pill.none { background:#334155; }
+
+.kg-node-group { cursor:pointer; }
+.kg-node-label {
+    font-size:12px;
+    fill:#f8fafc;
+    pointer-events:none;
+}
+
+.kg-node-badge {
+    font-size:10px;
+    fill:#cbd5e1;
+    pointer-events:none;
+}
+
+.kg-edge {
+    fill:none;
+    stroke:#334155;
+    stroke-width:1.4;
+    opacity:.95;
+}
+
+.kg-node-group.selected rect {
+    stroke-width:3.2 !important;
+}
+
+
 @media (max-width:900px) {
     .wrong-tools {
         grid-template-columns:1fr 1fr;
@@ -473,6 +705,10 @@ body {
 
     .wrong-tools input {
         grid-column:1 / -1;
+    }
+
+    .graph-legend {
+        justify-content:flex-start;
     }
 }
 
@@ -482,8 +718,27 @@ body {
         flex-direction:column;
     }
 
+    .wrong-filter-group {
+        align-items:flex-start;
+        flex-direction:column;
+    }
+
     .wrong-actions {
         flex-wrap:wrap;
+    }
+
+    .graph-toolbar {
+        align-items:flex-start;
+        flex-direction:column;
+    }
+
+    .knowledge-graph-layout {
+        grid-template-columns:1fr;
+    }
+
+    .knowledge-graph-main {
+        border-right:none;
+        border-bottom:1px solid #1f2937;
     }
 }
 </style>
@@ -500,6 +755,8 @@ window.MathJax = {
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 
 </head>
 
@@ -536,6 +793,10 @@ window.MathJax = {
             <button id="wrongBookBtn" type="button">查看错题本 (0)</button>
         </div>
 
+        <div class="learning-actions learning-actions-single">
+            <button id="knowledgeGraphBtn" type="button">可视化知识图谱</button>
+        </div>
+
         <div class="learning-note">
             学习记录只保存在当前浏览器，不会上传到服务器。
         </div>
@@ -552,11 +813,13 @@ window.MathJax = {
         </div>
         <div class="wrong-toolbar">
             <div id="wrongBookStats" class="wrong-stats"></div>
-            <div class="wrong-filters">
-                <button type="button" data-wrong-filter="all">全部</button>
-                <button type="button" data-wrong-filter="pending">待处理</button>
-                <button type="button" data-wrong-filter="corrected">已订正</button>
-                <button type="button" data-wrong-filter="passed">已通过复测</button>
+            <div class="wrong-filter-group">
+                <span class="wrong-filter-label">状态筛选：</span>
+                <div class="wrong-filters">
+                    <button type="button" data-wrong-filter="pending">待处理</button>
+                    <button type="button" data-wrong-filter="corrected">已订正</button>
+                    <button type="button" data-wrong-filter="passed">已通过复测</button>
+                </div>
             </div>
         </div>
 
@@ -567,8 +830,7 @@ window.MathJax = {
                 <option value="mistakes">错误次数最多</option>
                 <option value="oldest">最早更新</option>
             </select>
-            <button id="wrongExportBtn" type="button">导出 Markdown</button>
-            <button id="wrongPrintBtn" type="button">打印 / 保存 PDF</button>
+            <button id="wrongPdfBtn" type="button" title="导出当前筛选结果为 PDF">导出 PDF</button>
             <button id="wrongClearCompletedBtn" type="button" class="danger-tool">清理已完成</button>
         </div>
 
@@ -597,6 +859,48 @@ window.MathJax = {
         <div class="wrong-edit-actions">
             <button id="wrongEditCancel" type="button" class="secondary">取消</button>
             <button id="wrongEditSave" type="button">保存</button>
+        </div>
+    </div>
+</div>
+
+
+<div id="knowledgeGraphModal" class="modal hidden">
+    <div class="modal-card graph-modal-card">
+        <div class="modal-head">
+            <div>可视化知识图谱</div>
+            <button id="knowledgeGraphClose" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="graph-toolbar">
+            <div class="graph-toolbar-left">
+                <label for="knowledgeGraphCategory">查看范围</label>
+                <select id="knowledgeGraphCategory" aria-label="知识图谱分类"></select>
+                <button id="knowledgeGraphFocusBtn" type="button">定位当前题目</button>
+            </div>
+
+            <div class="graph-legend">
+                <span class="legend-item focus">当前卡点</span>
+                <span class="legend-item current">当前题目</span>
+                <span class="legend-item prerequisite">前置知识</span>
+                <span class="legend-item review">需要巩固</span>
+                <span class="legend-item familiar">比较熟悉 / 掌握较稳</span>
+            </div>
+        </div>
+
+        <div class="knowledge-graph-layout">
+            <div class="knowledge-graph-main">
+                <div id="knowledgeGraphSummary" class="graph-summary"></div>
+                <div id="knowledgeGraphCanvas" class="knowledge-graph-canvas">
+                    <div class="wrong-empty">知识图谱加载中…</div>
+                </div>
+            </div>
+
+            <div class="knowledge-graph-side">
+                <div id="knowledgeGraphDetailTitle" class="graph-detail-title">节点详情</div>
+                <div id="knowledgeGraphDetail" class="graph-detail-body">
+                    点击左侧节点后，这里会显示知识点说明、前置知识、后续知识和当前学习状态。
+                </div>
+            </div>
         </div>
     </div>
 </div>
