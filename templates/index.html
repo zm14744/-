@@ -587,7 +587,6 @@ body {
 
 .legend-item.focus::before { background:#2563eb; }
 .legend-item.current::before { background:#7c3aed; }
-.legend-item.prerequisite::before { background:#0ea5e9; }
 .legend-item.review::before { background:#ef4444; }
 
 .knowledge-graph-layout {
@@ -1013,8 +1012,7 @@ window.MathJax = {
             <div class="graph-legend">
                 <span class="legend-item focus">当前卡点</span>
                 <span class="legend-item current">本题相关</span>
-                <span class="legend-item prerequisite">前置知识</span>
-                <span class="legend-item review">需要巩固</span>
+                                <span class="legend-item review">有错误记录</span>
             </div>
         </div>
 
@@ -1029,13 +1027,14 @@ window.MathJax = {
             <div class="knowledge-graph-side">
                 <div id="knowledgeGraphDetailTitle" class="graph-detail-title">节点详情</div>
                 <div id="knowledgeGraphDetail" class="graph-detail-body">
-                    点击左侧节点后，这里会显示知识点说明、前置知识、后续知识和当前学习状态。
+                    点击左侧节点后，这里会显示相关知识和你的学习记录。
                 </div>
             </div>
         </div>
     </div>
 </div>
 
+<script id="knowledgeGraphData" type="application/json">{{ knowledge_graph_data | tojson }}</script>
 <script src="/static/script.js"></script>
 
 </body>
