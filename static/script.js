@@ -355,13 +355,100 @@ function isShortLearningFollowUp(text) {
         "告诉我答案",
         "为什么",
         "然后呢",
-        "下一步呢"
+        "下一步呢",
+        "再讲一下",
+        "再解释一下",
+        "换个写法",
+        "换一种写法",
+        "列一下",
+        "写一下",
+        "展开一下",
+        "用大括号列一下",
+        "用大括号写一下",
+        "用矩阵写一下",
+        "这个怎么看",
+        "这个怎么写",
+        "这一步怎么写"
     ];
 
-    return (
-        value.length <= 6
-        || exactCommands.includes(value)
-    );
+    if (exactCommands.includes(value)) {
+        return true;
+    }
+
+    // 这类短句通常是在追问“怎么表示/怎么改写”，不是一道新题。
+    const followUpPatterns = [
+        /用.+(?:列|写|表示|展开)一下$/,
+        /(?:再|重新).+(?:讲|写|列|解释|说明)一下$/,
+        /(?:换|改).+(?:写法|表示|形式)$/,
+        /^(?:这个|这里|这一步|上面|刚才).{0,12}(?:怎么|为什么|什么意思|看不懂|不明白)/,
+        /(?:怎么写|怎么表示|怎么列|什么意思|看不懂|不明白)$/
+    ];
+
+    if (
+        value.length <= 30
+        && followUpPatterns.some(pattern => pattern.test(value))
+    ) {
+        return true;
+    }
+
+    return value.length <= 6;
+}
+
+function looksLikeActualLearningProblem(message) {
+    if (
+        !message
+        || typeof message.text !== "string"
+    ) {
+        return false;
+    }
+
+    if (message.source === "ocr") {
+        return true;
+    }
+
+    const text = message.text.trim();
+    if (!text || isShortLearningFollowUp(text)) {
+        return false;
+    }
+
+    const compact = text.replace(/\s+/g, "");
+
+    // 明显的题目结构或题干用语。
+    const problemSignals = [
+        "【题目文字】",
+        "【图形信息】",
+        "[图片识题]",
+        "已知",
+        "设",
+        "求",
+        "求解",
+        "证明",
+        "判断",
+        "计算",
+        "写出",
+        "列出",
+        "回答下列问题",
+        "选择题",
+        "证明题",
+        "计算题"
+    ];
+
+    if (
+        problemSignals.some(signal => compact.includes(signal))
+    ) {
+        return true;
+    }
+
+    if (/[（(]\s*[1-9]\s*[)）]/.test(text)) {
+        return true;
+    }
+
+    // 一般完整题目会比“换个写法/再提示一下”长很多。
+    if (text.length >= 80) {
+        return true;
+    }
+
+    return false;
 }
 
 function buildLearningQuestionFromSession(session, teaching, excludeLatest = false) {
@@ -387,10 +474,7 @@ function buildLearningQuestionFromSession(session, teaching, excludeLatest = fal
         const text = message.text.trim();
         if (!text) continue;
 
-        if (
-            message.source !== "ocr"
-            && isShortLearningFollowUp(text)
-        ) {
+        if (!looksLikeActualLearningProblem(message)) {
             continue;
         }
 
@@ -586,10 +670,7 @@ function processLearningFromReply(session, teaching, reply) {
 
     const isSubstantiveQuestion = Boolean(
         latest
-        && (
-            latest.source === "ocr"
-            || !isShortLearningFollowUp(latestText)
-        )
+        && looksLikeActualLearningProblem(latest)
         && normalized.mode !== "check_answer"
         && normalized.mode !== "exercise"
     );
@@ -670,7 +751,7 @@ function manualMarkCurrentWrong() {
 
     const result = addWrongQuestion(
         questionInfo,
-        "手动加入错题本。完成订正后，可以在错题本中标记“已订正”。",
+        "这道题已加入错题本。完成订正后，可以标记为“已订正”。",
         "manual"
     );
 
@@ -903,9 +984,13 @@ function renderWrongBook() {
 
         const feedback = document.createElement("div");
         feedback.className = "wrong-feedback";
-        feedback.textContent = item.feedback
-            ? `最近反馈：${item.feedback}`
-            : "还没有记录订正提示。";
+        if (item.feedback) {
+            feedback.textContent = item.source === "manual"
+                ? `记录说明：${item.feedback}`
+                : `最近反馈：${item.feedback}`;
+        } else {
+            feedback.textContent = "还没有记录订正提示。";
+        }
 
         const actions = document.createElement("div");
         actions.className = "wrong-actions";
