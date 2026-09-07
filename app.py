@@ -1,4 +1,5 @@
 import os
+import json
 import threading
 import time
 from collections import defaultdict, deque
@@ -29,7 +30,57 @@ except Exception as exc:
     recognize_image = None
 
 
+
 app = Flask(__name__)
+
+
+# -----------------------------
+# 知识图谱数据
+# -----------------------------
+_BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+_KNOWLEDGE_GRAPH_PATH = os.path.join(
+    _BASE_DIR,
+    "knowledge_graph.json"
+)
+
+
+def _load_knowledge_graph():
+    try:
+        with open(
+            _KNOWLEDGE_GRAPH_PATH,
+            "r",
+            encoding="utf-8"
+        ) as file:
+            data = json.load(file)
+
+        if not isinstance(data, dict):
+            raise ValueError("知识图谱文件格式不正确。")
+
+        data.setdefault("version", 1)
+        data.setdefault("title", "离散数学知识图谱")
+        data.setdefault("description", "")
+        data.setdefault("nodes", [])
+
+        if not isinstance(data["nodes"], list):
+            data["nodes"] = []
+
+        return data
+
+    except Exception as exc:
+        print(
+            f"知识图谱加载失败：{repr(exc)}"
+        )
+        return {
+            "version": 1,
+            "title": "离散数学知识图谱",
+            "description": "知识图谱暂时不可用。",
+            "nodes": []
+        }
+
+
+KNOWLEDGE_GRAPH_DATA = _load_knowledge_graph()
 
 
 # -----------------------------
