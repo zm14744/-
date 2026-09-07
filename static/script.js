@@ -288,16 +288,78 @@ function escapeRawHtml(text) {
         .replace(/>/g, "&gt;");
 }
 
-function markdownToHtml(text) {
-    const source = String(text ?? "");
-    const rawHtml = marked.parse(source);
+function protectMathForMarkdown(source) {
+    const mathSegments = [];
 
-    if (window.DOMPurify) {
-        return window.DOMPurify.sanitize(rawHtml);
+    const stash = match => {
+        const index = mathSegments.length;
+        mathSegments.push(match);
+        return `MATHPROTECTTOKEN${index}ENDTOKEN`;
+    };
+
+    let protectedText = String(source ?? "");
+
+    // 在 marked 解析 Markdown 之前先藏起公式。
+    // 否则 _、*、\begin{cases} 等可能被 Markdown 当成强调语法。
+    protectedText = protectedText.replace(
+        /\$\$[\s\S]*?\$\$/g,
+        stash
+    );
+
+    protectedText = protectedText.replace(
+        /\\\[[\s\S]*?\\\]/g,
+        stash
+    );
+
+    protectedText = protectedText.replace(
+        /\\\([\s\S]*?\\\)/g,
+        stash
+    );
+
+    protectedText = protectedText.replace(
+        /\$(?!\$)(?:\\.|[^$\n])+\$/g,
+        stash
+    );
+
+    return {
+        protectedText,
+        mathSegments
+    };
+}
+
+function restoreMathAfterMarkdown(html, mathSegments) {
+    let restored = String(html ?? "");
+
+    for (let index = 0; index < mathSegments.length; index += 1) {
+        const token = `MATHPROTECTTOKEN${index}ENDTOKEN`;
+        const safeMath = escapeRawHtml(mathSegments[index]);
+
+        restored = restored
+            .split(token)
+            .join(safeMath);
     }
 
-    // DOMPurify CDN 异常时仍保留 Markdown，但不执行原始 HTML。
-    return marked.parse(escapeRawHtml(source));
+    return restored;
+}
+
+function markdownToHtml(text) {
+    const source = String(text ?? "");
+
+    const {
+        protectedText,
+        mathSegments
+    } = protectMathForMarkdown(source);
+
+    const rawHtml = marked.parse(protectedText);
+
+    const safeHtml = window.DOMPurify
+        ? window.DOMPurify.sanitize(rawHtml)
+        : marked.parse(escapeRawHtml(protectedText));
+
+    return restoreMathAfterMarkdown(
+        safeHtml,
+        mathSegments
+    );
 }
 
 function renderMath(target) {
