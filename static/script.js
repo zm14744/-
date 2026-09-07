@@ -13,8 +13,6 @@ let wrongBookSearch = "";
 let wrongBookSort = "recent";
 let currentWrongEditId = null;
 
-const EMBEDDED_KNOWLEDGE_GRAPH = {"version":1,"title":"离散数学知识脉络","description":"用于教学提示、前置知识提醒和后续学习状态记录的轻量知识图谱。当前版本只描述知识结构，不记录学生掌握度。","nodes":[{"id":"logic_truth","name":"命题与真值","category":"命题逻辑","prerequisites":[]},{"id":"logic_connectives","name":"逻辑联结词","category":"命题逻辑","prerequisites":["命题与真值"]},{"id":"logic_truth_table","name":"真值表","category":"命题逻辑","prerequisites":["逻辑联结词"]},{"id":"logic_equivalence","name":"逻辑等价","category":"命题逻辑","prerequisites":["真值表"]},{"id":"logic_normal_form","name":"范式","category":"命题逻辑","prerequisites":["逻辑等价"]},{"id":"logic_reasoning","name":"命题推理","category":"命题逻辑","prerequisites":["逻辑联结词","逻辑等价"]},{"id":"predicate_domain","name":"谓词与个体域","category":"谓词逻辑","prerequisites":["命题与真值"]},{"id":"predicate_quantifier","name":"量词","category":"谓词逻辑","prerequisites":["谓词与个体域"]},{"id":"predicate_variable","name":"变元与辖域","category":"谓词逻辑","prerequisites":["量词"]},{"id":"predicate_reasoning","name":"量词推理与否定","category":"谓词逻辑","prerequisites":["量词","变元与辖域"]},{"id":"set_operation","name":"集合运算","category":"集合与关系","prerequisites":[]},{"id":"relation_cartesian","name":"笛卡尔积与关系","category":"集合与关系","prerequisites":["集合运算"]},{"id":"relation_property","name":"关系性质","category":"集合与关系","prerequisites":["笛卡尔积与关系"]},{"id":"relation_equivalence","name":"等价关系与划分","category":"集合与关系","prerequisites":["关系性质"]},{"id":"relation_order","name":"偏序关系","category":"集合与关系","prerequisites":["关系性质"]},{"id":"relation_closure","name":"关系闭包","category":"集合与关系","prerequisites":["关系性质"]},{"id":"function_mapping","name":"函数与映射","category":"函数","prerequisites":["集合运算"]},{"id":"function_injection","name":"单射满射双射","category":"函数","prerequisites":["函数与映射"]},{"id":"function_composition","name":"复合函数","category":"函数","prerequisites":["函数与映射"]},{"id":"function_inverse","name":"逆函数","category":"函数","prerequisites":["单射满射双射","复合函数"]},{"id":"count_basic","name":"基本计数原理","category":"计数与组合","prerequisites":[]},{"id":"count_perm_comb","name":"排列与组合","category":"计数与组合","prerequisites":["基本计数原理"]},{"id":"count_binomial","name":"二项式定理","category":"计数与组合","prerequisites":["排列与组合"]},{"id":"count_pigeonhole","name":"鸽巢原理","category":"计数与组合","prerequisites":["基本计数原理"]},{"id":"count_inclusion","name":"容斥原理","category":"计数与组合","prerequisites":["基本计数原理","集合运算"]},{"id":"count_generating","name":"生成函数","category":"计数与组合","prerequisites":["排列与组合"]},{"id":"recurrence_model","name":"递推关系建模","category":"递推关系","prerequisites":["基本计数原理"]},{"id":"recurrence_homogeneous","name":"线性齐次递推","category":"递推关系","prerequisites":["递推关系建模"]},{"id":"recurrence_nonhomogeneous","name":"非齐次递推","category":"递推关系","prerequisites":["线性齐次递推"]},{"id":"recurrence_initial","name":"初始条件","category":"递推关系","prerequisites":["递推关系建模"]},{"id":"graph_basic","name":"图的基本概念","category":"图论","prerequisites":[]},{"id":"graph_adjacency","name":"邻接矩阵","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_matrix","name":"图的矩阵表示","category":"图论","prerequisites":["图的基本概念","邻接矩阵"]},{"id":"graph_connectivity","name":"路径与连通性","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_euler","name":"欧拉图","category":"图论","prerequisites":["路径与连通性"]},{"id":"graph_hamilton","name":"哈密顿图","category":"图论","prerequisites":["路径与连通性"]},{"id":"graph_shortest","name":"最短路","category":"图论","prerequisites":["路径与连通性"]},{"id":"graph_coloring","name":"图着色","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_planar","name":"平面图","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_matching","name":"图匹配","category":"图论","prerequisites":["图的基本概念"]},{"id":"tree_basic","name":"树的基本性质","category":"图论","prerequisites":["图的基本概念","路径与连通性"]},{"id":"tree_spanning","name":"生成树","category":"图论","prerequisites":["树的基本性质","路径与连通性"]},{"id":"tree_mst","name":"最小生成树","category":"图论","prerequisites":["生成树"]},{"id":"tree_matrix_tree","name":"矩阵树定理","category":"图论","prerequisites":["图的矩阵表示","生成树"]},{"id":"algebra_system","name":"代数系统","category":"代数结构","prerequisites":["函数与映射"]},{"id":"algebra_group","name":"群与子群","category":"代数结构","prerequisites":["代数系统"]},{"id":"algebra_homomorphism","name":"同态与同构","category":"代数结构","prerequisites":["群与子群","函数与映射"]},{"id":"algebra_ring_field","name":"环与域","category":"代数结构","prerequisites":["群与子群"]},{"id":"algebra_lattice_bool","name":"格与布尔代数","category":"代数结构","prerequisites":["偏序关系"]}]};
-
 let knowledgeGraphData = null;
 let knowledgeGraphFilter = "";
 let knowledgeGraphViewMode = "focus";
@@ -145,8 +143,9 @@ function normalizeRetestSession(value) {
 
 function createEmptyLearningState() {
     return {
-        version: 3,
+        version: 4,
         knowledge: {},
+        events: [],
         wrongQuestions: []
     };
 }
@@ -205,28 +204,49 @@ function normalizeLearningState(value) {
         return state;
     }
 
-    if (value.knowledge && typeof value.knowledge === "object") {
-        for (const [name, raw] of Object.entries(value.knowledge)) {
-            if (
-                typeof name !== "string"
-                || !name.trim()
-                || !raw
-                || typeof raw !== "object"
-            ) {
-                continue;
-            }
-
-            state.knowledge[name.trim()] = {
-                seen: Math.max(0, Number(raw.seen) || 0),
-                correct: Math.max(0, Number(raw.correct) || 0),
-                wrong: Math.max(0, Number(raw.wrong) || 0),
-                support: Math.max(0, Number(raw.support) || 0),
-                reviewed: Math.max(0, Number(raw.reviewed) || 0),
-                updatedAt: Number.isFinite(raw.updatedAt)
-                    ? raw.updatedAt
+    // v4 起学习统计改为“事件账本”。
+    // v3 及更早只有总数，没有来源会话，无法在删除对话时准确回滚。
+    // 因此升级时保留错题本，但旧的学习计数不继续继承。
+    if (
+        Number(value.version) >= 4
+        && Array.isArray(value.events)
+    ) {
+        state.events = value.events
+            .filter(event => event && typeof event === "object")
+            .map(event => ({
+                id: typeof event.id === "string" && event.id
+                    ? event.id
+                    : `learn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                sessionId: (
+                    typeof event.sessionId === "number"
+                    || typeof event.sessionId === "string"
+                )
+                    ? event.sessionId
+                    : null,
+                type: [
+                    "seen",
+                    "correct",
+                    "wrong",
+                    "support",
+                    "reviewed"
+                ].includes(event.type)
+                    ? event.type
+                    : "",
+                points: Array.isArray(event.points)
+                    ? [
+                        ...new Set(
+                            event.points
+                                .filter(point => typeof point === "string" && point.trim())
+                                .map(point => point.trim())
+                        )
+                    ].slice(0, 4)
+                    : [],
+                createdAt: Number.isFinite(event.createdAt)
+                    ? event.createdAt
                     : Date.now()
-            };
-        }
+            }))
+            .filter(event => event.type && event.points.length)
+            .slice(-1000);
     }
 
     if (Array.isArray(value.wrongQuestions)) {
@@ -267,7 +287,9 @@ function normalizeLearningState(value) {
                         : "",
                     source: item.source === "auto" ? "auto" : "manual",
                     corrected: Boolean(item.corrected),
-                    mistakeCount: Math.max(1, Number(item.mistakeCount) || 1),
+                    mistakeCount: item.source === "auto"
+                        ? Math.max(1, Number(item.mistakeCount) || 1)
+                        : Math.max(0, Number(item.mistakeCount) || 0),
                     sessionId: (
                         typeof item.sessionId === "number"
                         || typeof item.sessionId === "string"
@@ -356,8 +378,8 @@ function normalizeLearningState(value) {
             ].slice(0, 2);
 
             newer.mistakeCount = (
-                Math.max(1, Number(older.mistakeCount) || 1)
-                + Math.max(1, Number(newer.mistakeCount) || 1)
+                Math.max(0, Number(older.mistakeCount) || 0)
+                + Math.max(0, Number(newer.mistakeCount) || 0)
             );
 
             // 同一道题的多个旧记录合并时，以更新时间更晚的状态为准。
@@ -439,6 +461,10 @@ function normalizeLearningState(value) {
             .slice(-MAX_WRONG_QUESTIONS);
     }
 
+    state.knowledge = buildKnowledgeFromEvents(
+        state.events
+    );
+
     return state;
 }
 
@@ -471,25 +497,62 @@ function saveLearningState() {
     }
 }
 
-function ensureKnowledgeRecord(name) {
-    const point = String(name || "").trim();
-    if (!point) return null;
-
-    if (!learningState.knowledge[point]) {
-        learningState.knowledge[point] = {
-            seen: 0,
-            correct: 0,
-            wrong: 0,
-            support: 0,
-            reviewed: 0,
-            updatedAt: Date.now()
-        };
-    }
-
-    return learningState.knowledge[point];
+function emptyKnowledgeRecord() {
+    return {
+        seen: 0,
+        correct: 0,
+        wrong: 0,
+        support: 0,
+        reviewed: 0,
+        updatedAt: 0
+    };
 }
 
-function updateKnowledge(points, eventType) {
+function buildKnowledgeFromEvents(events) {
+    const knowledge = {};
+
+    for (const event of Array.isArray(events) ? events : []) {
+        if (
+            !event
+            || !Array.isArray(event.points)
+            || !event.type
+        ) {
+            continue;
+        }
+
+        for (const rawPoint of event.points) {
+            const point = String(rawPoint || "").trim();
+            if (!point) continue;
+
+            if (!knowledge[point]) {
+                knowledge[point] = emptyKnowledgeRecord();
+            }
+
+            const record = knowledge[point];
+
+            if (event.type === "seen") record.seen += 1;
+            if (event.type === "correct") record.correct += 1;
+            if (event.type === "wrong") record.wrong += 1;
+            if (event.type === "support") record.support += 1;
+            if (event.type === "reviewed") record.reviewed += 1;
+
+            record.updatedAt = Math.max(
+                record.updatedAt,
+                Number(event.createdAt) || 0
+            );
+        }
+    }
+
+    return knowledge;
+}
+
+function rebuildKnowledge() {
+    learningState.knowledge = buildKnowledgeFromEvents(
+        learningState.events
+    );
+}
+
+function updateKnowledge(points, eventType, sessionId = null) {
     const uniquePoints = [
         ...new Set(
             (Array.isArray(points) ? points : [])
@@ -498,57 +561,91 @@ function updateKnowledge(points, eventType) {
         )
     ].slice(0, 4);
 
-    if (!uniquePoints.length) return;
-
-    for (const point of uniquePoints) {
-        const record = ensureKnowledgeRecord(point);
-        if (!record) continue;
-
-        if (eventType === "seen") record.seen += 1;
-        if (eventType === "correct") record.correct += 1;
-        if (eventType === "wrong") record.wrong += 1;
-        if (eventType === "support") record.support += 1;
-        if (eventType === "reviewed") record.reviewed += 1;
-
-        record.updatedAt = Date.now();
+    if (
+        !uniquePoints.length
+        || ![
+            "seen",
+            "correct",
+            "wrong",
+            "support",
+            "reviewed"
+        ].includes(eventType)
+    ) {
+        return;
     }
 
+    const now = Date.now();
+
+    learningState.events.push({
+        id: `learn-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        sessionId: (
+            typeof sessionId === "number"
+            || typeof sessionId === "string"
+        )
+            ? sessionId
+            : null,
+        type: eventType,
+        points: uniquePoints,
+        createdAt: now
+    });
+
+    if (learningState.events.length > 1000) {
+        learningState.events = learningState.events.slice(-1000);
+    }
+
+    rebuildKnowledge();
     saveLearningState();
 }
 
-function knowledgeScore(record) {
-    if (!record || typeof record !== "object") {
-        return 50;
+function removeLearningEventsForSession(sessionId) {
+    if (
+        sessionId === null
+        || sessionId === undefined
+    ) {
+        return;
     }
 
-    const score = (
-        50
-        + (record.correct || 0) * 14
-        - (record.wrong || 0) * 20
-        - (record.support || 0) * 6
-        + (record.reviewed || 0) * 3
+    const before = learningState.events.length;
+
+    learningState.events = learningState.events.filter(
+        event => String(event.sessionId) !== String(sessionId)
     );
 
-    return Math.max(0, Math.min(100, score));
+    if (learningState.events.length !== before) {
+        rebuildKnowledge();
+        saveLearningState();
+    }
 }
 
 function knowledgeStatus(record) {
-    const total = (
-        (record?.seen || 0)
-        + (record?.correct || 0)
-        + (record?.wrong || 0)
-        + (record?.support || 0)
-    );
+    if (!record || typeof record !== "object") {
+        return "暂无记录";
+    }
 
-    if (!total) return "暂无记录";
+    const correct = Number(record.correct) || 0;
+    const wrong = Number(record.wrong) || 0;
+    const seen = Number(record.seen) || 0;
+    const reviewed = Number(record.reviewed) || 0;
 
-    const score = knowledgeScore(record);
+    if (!correct && !wrong && !seen && !reviewed) {
+        return "暂无记录";
+    }
 
-    if (score < 45) return "需要巩固";
-    if (score < 70) return "学习中";
-    if (score < 85) return "比较熟悉";
-    return "掌握较稳";
+    if (wrong > 0) {
+        return "有错误记录";
+    }
+
+    if (correct > 0) {
+        return "已有正确记录";
+    }
+
+    if (reviewed > 0) {
+        return "完成过订正";
+    }
+
+    return "有学习记录";
 }
+
 
 function getLatestUserMessage(session) {
     if (!session || !Array.isArray(session.messages)) {
@@ -871,7 +968,10 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         );
 
         if (countAsMistake) {
-            existing.mistakeCount += 1;
+            existing.mistakeCount = (
+                Math.max(0, Number(existing.mistakeCount) || 0)
+                + 1
+            );
             existing.retestPassed = false;
             existing.retestPassedAt = null;
         }
@@ -894,7 +994,7 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         note: "",
         source: source === "auto" ? "auto" : "manual",
         corrected: false,
-        mistakeCount: 1,
+        mistakeCount: source === "auto" ? 1 : 0,
         sessionId: info.sessionId,
         createdAt: now,
         updatedAt: now,
@@ -931,9 +1031,34 @@ function currentLearningQuestion(session, teaching) {
     const saved = normalizeLearningQuestion(
         session?.learningQuestion
     );
+    const currentTeaching = normalizeTeaching(
+        teaching
+    );
 
     if (saved) {
-        return saved;
+        const livePoints = currentTeaching?.knowledge_points || [];
+        const liveFocus = currentTeaching?.focus_points || [];
+
+        return {
+            ...saved,
+            knowledgePoints: [
+                ...new Set([
+                    ...saved.knowledgePoints,
+                    ...livePoints
+                ])
+            ].slice(0, 4),
+            // 题目正文继续沿用最初保存的原题，
+            // 但“本次卡点”必须跟随当前这一轮对话更新。
+            focusPoints: liveFocus.length
+                ? liveFocus.slice(0, 2)
+                : saved.focusPoints,
+            category: (
+                currentTeaching?.category
+                && currentTeaching.category !== "待识别"
+            )
+                ? currentTeaching.category
+                : saved.category
+        };
     }
 
     return buildLearningQuestionFromSession(
@@ -976,14 +1101,20 @@ function processLearningFromReply(session, teaching, reply) {
             updatedAt: Date.now()
         };
 
-        updateKnowledge(points, "seen");
+        updateKnowledge(points, "seen", session.id);
     }
 
     if (
-        normalized.mode === "full_solution"
+        ["hint", "full_solution"].includes(normalized.mode)
         && points.length
     ) {
-        updateKnowledge(points, "support");
+        updateKnowledge(
+            normalized.focus_points.length
+                ? normalized.focus_points
+                : points,
+            "support",
+            session.id
+        );
     }
 
     const selfReportsWrong = /(?:我|这题|刚才).{0,8}(?:做错|算错|写错|错了)/.test(
@@ -1020,7 +1151,8 @@ function processLearningFromReply(session, teaching, reply) {
                             focusPoints: normalized.focus_points
                         }
                     ),
-                    "wrong"
+                    "wrong",
+                    session.id
                 );
             }
         } else if (assessment === "correct") {
@@ -1028,7 +1160,8 @@ function processLearningFromReply(session, teaching, reply) {
                 normalized.focus_points.length
                     ? normalized.focus_points
                     : points,
-                "correct"
+                "correct",
+                session.id
             );
         }
     }
@@ -1057,13 +1190,8 @@ function manualMarkCurrentWrong() {
         "manual"
     );
 
-    if (result.countAsMistake) {
-        updateKnowledge(
-            wrongBookLearningPoints(questionInfo),
-            "wrong"
-        );
-    }
-
+    // “记为错题”只是收录动作，不等于系统确认学生答错。
+    // 只有 AI 检查为错误、学生明确自报错误、复测失败才累计错误作答。
     saveState();
     renderLearningSummary();
     renderWrongBook();
@@ -1087,18 +1215,16 @@ function formatLearningDate(timestamp) {
         return "";
     }
 
-    return date.toLocaleString(
-        "zh-CN",
-        {
-            month: "numeric",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false
-        }
-    )
-        .replace("/", "月")
-        .replace(",", "日");
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const hour = String(
+        date.getHours()
+    ).padStart(2, "0");
+    const minute = String(
+        date.getMinutes()
+    ).padStart(2, "0");
+
+    return `${month}月${day}日 ${hour}:${minute}`;
 }
 
 function renderLearningSummary() {
@@ -1112,21 +1238,30 @@ function renderLearningSummary() {
         learningState.knowledge || {}
     );
 
-    const weak = entries
+    const errorPoints = entries
         .filter(([_name, record]) => (
-            knowledgeStatus(record) === "需要巩固"
+            (record?.wrong || 0) > 0
         ))
-        .sort((a, b) => knowledgeScore(a[1]) - knowledgeScore(b[1]))
+        .sort(
+            (a, b) => (
+                (b[1].wrong || 0)
+                - (a[1].wrong || 0)
+            )
+        )
         .slice(0, 3)
         .map(([name]) => name);
 
-    const familiar = entries
+    const correctPoints = entries
         .filter(([_name, record]) => (
-            ["比较熟悉", "掌握较稳"].includes(
-                knowledgeStatus(record)
-            )
+            (record?.correct || 0) > 0
+            && !(record?.wrong || 0)
         ))
-        .sort((a, b) => knowledgeScore(b[1]) - knowledgeScore(a[1]))
+        .sort(
+            (a, b) => (
+                (b[1].correct || 0)
+                - (a[1].correct || 0)
+            )
+        )
         .slice(0, 3)
         .map(([name]) => name);
 
@@ -1152,23 +1287,23 @@ function renderLearningSummary() {
     } else {
         if (recentFocus) {
             lines.push(
-                `当前主要薄弱点：${recentFocus.focusPoints.join("、")}`
+                `当前主要卡点：${recentFocus.focusPoints.join("、")}`
             );
         }
 
-        if (weak.length) {
+        if (errorPoints.length) {
             lines.push(
-                `需要巩固：${weak.join("、")}`
+                `有错误记录：${errorPoints.join("、")}`
             );
         }
 
-        if (familiar.length) {
+        if (correctPoints.length) {
             lines.push(
-                `比较熟悉：${familiar.join("、")}`
+                `已有正确记录：${correctPoints.join("、")}`
             );
         }
 
-        if (!weak.length && !familiar.length && entries.length) {
+        if (!errorPoints.length && !correctPoints.length && entries.length) {
             lines.push("目前正在积累学习记录。");
         }
 
@@ -1377,7 +1512,8 @@ function markWrongQuestionCorrected(id) {
 
     updateKnowledge(
         wrongBookLearningPoints(entry),
-        "reviewed"
+        "reviewed",
+        entry.sessionId
     );
 
     saveLearningState();
@@ -1717,7 +1853,8 @@ function processWrongQuestionRetestReply(session, reply) {
             retest.targetPoints.length
                 ? retest.targetPoints
                 : wrongBookLearningPoints(entry),
-            "correct"
+            "correct",
+            session.id
         );
     } else if (assessment === "wrong") {
         entry.retestCount += 1;
@@ -1731,7 +1868,8 @@ function processWrongQuestionRetestReply(session, reply) {
             retest.targetPoints.length
                 ? retest.targetPoints
                 : wrongBookLearningPoints(entry),
-            "wrong"
+            "wrong",
+            session.id
         );
     }
 
@@ -3525,9 +3663,21 @@ function renderSessions() {
         del.onclick = event => {
             event.stopPropagation();
 
+            const confirmed = window.confirm(
+                "确定删除这段对话吗？\n\n这段对话产生的学习统计会同步删除；已经加入错题本的题目仍会保留。"
+            );
+
+            if (!confirmed) {
+                return;
+            }
+
             if (typingTimer) {
                 forceCompleteTyping();
             }
+
+            removeLearningEventsForSession(
+                session.id
+            );
 
             sessions = sessions.filter(
                 item => item.id !== session.id
@@ -3604,6 +3754,28 @@ function normalizeKnowledgeGraphData(data) {
     };
 }
 
+function readInitialKnowledgeGraphData() {
+    const element = document.getElementById(
+        "knowledgeGraphData"
+    );
+
+    if (!element) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(
+            element.textContent || "{}"
+        );
+    } catch (error) {
+        console.warn(
+            "知识图谱初始数据解析失败：",
+            error
+        );
+        return null;
+    }
+}
+
 async function ensureKnowledgeGraphData() {
     if (knowledgeGraphData) {
         return knowledgeGraphData;
@@ -3616,10 +3788,11 @@ async function ensureKnowledgeGraphData() {
     knowledgeGraphLoading = true;
 
     try {
-        // 知识图谱直接随前端代码发布，不再依赖额外 HTTP 接口。
-        // 这样 Zeabur 反向代理、旧 app.py、缓存等都不会导致图谱加载失败。
+        // 唯一数据源是 knowledge_graph.json。
+        // Flask 在首页渲染时把同一份数据注入页面，
+        // 无额外 fetch，也不会出现前后端两份图谱不同步。
         knowledgeGraphData = normalizeKnowledgeGraphData(
-            EMBEDDED_KNOWLEDGE_GRAPH
+            readInitialKnowledgeGraphData()
         );
 
         if (
@@ -3850,7 +4023,7 @@ function renderKnowledgeGraphLoading(message) {
 
     if (summary) {
         summary.textContent = (
-            "这里会把当前题目的知识点、前置知识和学习状态画成可视化图谱。"
+            "这里会把当前题目的知识点关系和学习记录画成可视化图谱。"
         );
     }
 
@@ -3864,7 +4037,7 @@ function renderKnowledgeGraphLoading(message) {
 
     if (detail) {
         detail.textContent = (
-            "点击左侧节点后，这里会显示知识点说明、前置知识、后续知识和当前学习状态。"
+            "点击左侧节点后，这里会显示相关知识和你的学习记录。"
         );
     }
 }
@@ -3989,21 +4162,10 @@ function knowledgeGraphNodeState(nodeName, context) {
         };
     }
 
-    if (context?.prerequisitePoints?.includes(nodeName)) {
-        return {
-            key: "prerequisite",
-            label: "前置知识",
-            fill: "#075985",
-            stroke: "#7dd3fc",
-            text: "#ffffff",
-            badge: "前置"
-        };
-    }
-
-    if (status === "需要巩固") {
+    if (status === "有错误记录") {
         return {
             key: "review",
-            label: "需要巩固",
+            label: "有错误记录",
             fill: "#3f1d1d",
             stroke: "#ef4444",
             text: "#ffffff",
@@ -4549,22 +4711,22 @@ function renderKnowledgeGraphDetail() {
         detail.appendChild(field);
     };
 
+    const relatedNodes = [
+        ...new Set([
+            ...node.prerequisites,
+            ...nextNodes
+        ])
+    ];
+
     addField(
-        "前置知识",
-        node.prerequisites.length
-            ? node.prerequisites.join("、")
-            : "模块起点"
+        "相关知识",
+        relatedNodes.length
+            ? relatedNodes.join("、")
+            : "暂无直接关联"
     );
 
     addField(
-        "后续知识",
-        nextNodes.length
-            ? nextNodes.join("、")
-            : "暂无直接后续"
-    );
-
-    addField(
-        "学习状态",
+        "学习记录",
         record
             ? knowledgeStatus(record)
             : "暂无记录"
@@ -4577,8 +4739,8 @@ function renderKnowledgeGraphDetail() {
         const values = [
             ["看过", record.seen || 0],
             ["答对", record.correct || 0],
-            ["答错", record.wrong || 0],
-            ["提示", record.support || 0],
+            ["错误作答", record.wrong || 0],
+            ["获得帮助", record.support || 0],
             ["订正", record.reviewed || 0]
         ];
 
@@ -4605,7 +4767,6 @@ function renderKnowledgeGraphDetail() {
     if (
         !context.focusPoints.includes(node.name)
         && !context.knowledgePoints.includes(node.name)
-        && !context.prerequisitePoints.includes(node.name)
     ) {
         const tip = document.createElement("div");
         tip.className = "graph-detail-tip";
@@ -4729,12 +4890,6 @@ function renderInfo() {
         if (teaching.knowledge_points.length) {
             lines.push(
                 `整道题涉及：${teaching.knowledge_points.join("、")}`
-            );
-        }
-
-        if (teaching.prerequisite_points.length) {
-            lines.push(
-                `做这题前最好会：${teaching.prerequisite_points.join("、")}`
             );
         }
 
