@@ -651,7 +651,10 @@ $$
                 else:
                     print(
                         "数学格式自动重生成未成功，"
-                        "保留低风险修复后的原回答。"
+                        "已阻止损坏公式返回前端。"
+                    )
+                    return _failure(
+                        "数学公式生成格式异常，请重新发送。"
                     )
 
             print("DeepSeek API 调用成功")
@@ -739,7 +742,16 @@ def _extract_vision_json(content):
 
     corrected_text = data.get("corrected_text", "")
     visual_text = data.get("visual_text", "")
-    has_visual = data.get("has_visual_structure", bool(visual_text))
+    raw_has_visual = data.get("has_visual_structure", bool(visual_text))
+
+    if isinstance(raw_has_visual, bool):
+        has_visual = raw_has_visual
+    elif isinstance(raw_has_visual, str):
+        has_visual = raw_has_visual.strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+    else:
+        has_visual = bool(raw_has_visual)
 
     if not isinstance(corrected_text, str):
         corrected_text = str(corrected_text or "")
