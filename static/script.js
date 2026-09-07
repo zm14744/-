@@ -16,7 +16,8 @@ let currentWrongEditId = null;
 const EMBEDDED_KNOWLEDGE_GRAPH = {"version":1,"title":"离散数学知识脉络","description":"用于教学提示、前置知识提醒和后续学习状态记录的轻量知识图谱。当前版本只描述知识结构，不记录学生掌握度。","nodes":[{"id":"logic_truth","name":"命题与真值","category":"命题逻辑","prerequisites":[]},{"id":"logic_connectives","name":"逻辑联结词","category":"命题逻辑","prerequisites":["命题与真值"]},{"id":"logic_truth_table","name":"真值表","category":"命题逻辑","prerequisites":["逻辑联结词"]},{"id":"logic_equivalence","name":"逻辑等价","category":"命题逻辑","prerequisites":["真值表"]},{"id":"logic_normal_form","name":"范式","category":"命题逻辑","prerequisites":["逻辑等价"]},{"id":"logic_reasoning","name":"命题推理","category":"命题逻辑","prerequisites":["逻辑联结词","逻辑等价"]},{"id":"predicate_domain","name":"谓词与个体域","category":"谓词逻辑","prerequisites":["命题与真值"]},{"id":"predicate_quantifier","name":"量词","category":"谓词逻辑","prerequisites":["谓词与个体域"]},{"id":"predicate_variable","name":"变元与辖域","category":"谓词逻辑","prerequisites":["量词"]},{"id":"predicate_reasoning","name":"量词推理与否定","category":"谓词逻辑","prerequisites":["量词","变元与辖域"]},{"id":"set_operation","name":"集合运算","category":"集合与关系","prerequisites":[]},{"id":"relation_cartesian","name":"笛卡尔积与关系","category":"集合与关系","prerequisites":["集合运算"]},{"id":"relation_property","name":"关系性质","category":"集合与关系","prerequisites":["笛卡尔积与关系"]},{"id":"relation_equivalence","name":"等价关系与划分","category":"集合与关系","prerequisites":["关系性质"]},{"id":"relation_order","name":"偏序关系","category":"集合与关系","prerequisites":["关系性质"]},{"id":"relation_closure","name":"关系闭包","category":"集合与关系","prerequisites":["关系性质"]},{"id":"function_mapping","name":"函数与映射","category":"函数","prerequisites":["集合运算"]},{"id":"function_injection","name":"单射满射双射","category":"函数","prerequisites":["函数与映射"]},{"id":"function_composition","name":"复合函数","category":"函数","prerequisites":["函数与映射"]},{"id":"function_inverse","name":"逆函数","category":"函数","prerequisites":["单射满射双射","复合函数"]},{"id":"count_basic","name":"基本计数原理","category":"计数与组合","prerequisites":[]},{"id":"count_perm_comb","name":"排列与组合","category":"计数与组合","prerequisites":["基本计数原理"]},{"id":"count_binomial","name":"二项式定理","category":"计数与组合","prerequisites":["排列与组合"]},{"id":"count_pigeonhole","name":"鸽巢原理","category":"计数与组合","prerequisites":["基本计数原理"]},{"id":"count_inclusion","name":"容斥原理","category":"计数与组合","prerequisites":["基本计数原理","集合运算"]},{"id":"count_generating","name":"生成函数","category":"计数与组合","prerequisites":["排列与组合"]},{"id":"recurrence_model","name":"递推关系建模","category":"递推关系","prerequisites":["基本计数原理"]},{"id":"recurrence_homogeneous","name":"线性齐次递推","category":"递推关系","prerequisites":["递推关系建模"]},{"id":"recurrence_nonhomogeneous","name":"非齐次递推","category":"递推关系","prerequisites":["线性齐次递推"]},{"id":"recurrence_initial","name":"初始条件","category":"递推关系","prerequisites":["递推关系建模"]},{"id":"graph_basic","name":"图的基本概念","category":"图论","prerequisites":[]},{"id":"graph_adjacency","name":"邻接矩阵","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_matrix","name":"图的矩阵表示","category":"图论","prerequisites":["图的基本概念","邻接矩阵"]},{"id":"graph_connectivity","name":"路径与连通性","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_euler","name":"欧拉图","category":"图论","prerequisites":["路径与连通性"]},{"id":"graph_hamilton","name":"哈密顿图","category":"图论","prerequisites":["路径与连通性"]},{"id":"graph_shortest","name":"最短路","category":"图论","prerequisites":["路径与连通性"]},{"id":"graph_coloring","name":"图着色","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_planar","name":"平面图","category":"图论","prerequisites":["图的基本概念"]},{"id":"graph_matching","name":"图匹配","category":"图论","prerequisites":["图的基本概念"]},{"id":"tree_basic","name":"树的基本性质","category":"图论","prerequisites":["图的基本概念","路径与连通性"]},{"id":"tree_spanning","name":"生成树","category":"图论","prerequisites":["树的基本性质","路径与连通性"]},{"id":"tree_mst","name":"最小生成树","category":"图论","prerequisites":["生成树"]},{"id":"tree_matrix_tree","name":"矩阵树定理","category":"图论","prerequisites":["图的矩阵表示","生成树"]},{"id":"algebra_system","name":"代数系统","category":"代数结构","prerequisites":["函数与映射"]},{"id":"algebra_group","name":"群与子群","category":"代数结构","prerequisites":["代数系统"]},{"id":"algebra_homomorphism","name":"同态与同构","category":"代数结构","prerequisites":["群与子群","函数与映射"]},{"id":"algebra_ring_field","name":"环与域","category":"代数结构","prerequisites":["群与子群"]},{"id":"algebra_lattice_bool","name":"格与布尔代数","category":"代数结构","prerequisites":["偏序关系"]}]};
 
 let knowledgeGraphData = null;
-let knowledgeGraphFilter = "全部";
+let knowledgeGraphFilter = "";
+let knowledgeGraphViewMode = "focus";
 let knowledgeGraphSelectedNodeId = "";
 let knowledgeGraphLoading = false;
 
@@ -1151,19 +1152,19 @@ function renderLearningSummary() {
     } else {
         if (recentFocus) {
             lines.push(
-                `最近主要卡在：${recentFocus.focusPoints.join("、")}`
+                `当前主要薄弱点：${recentFocus.focusPoints.join("、")}`
             );
         }
 
         if (weak.length) {
             lines.push(
-                `最近需要巩固：${weak.join("、")}`
+                `需要巩固：${weak.join("、")}`
             );
         }
 
         if (familiar.length) {
             lines.push(
-                `目前比较熟悉：${familiar.join("、")}`
+                `比较熟悉：${familiar.join("、")}`
             );
         }
 
@@ -1851,7 +1852,7 @@ function buildWrongBookPdfExportElement(items) {
         meta.textContent = metaParts.join(" · ");
         card.appendChild(meta);
 
-        if (item.feedback) {
+        if (shouldShowWrongBookFeedback(item)) {
             const block = document.createElement("div");
             block.style.marginTop = "12px";
             block.style.padding = "10px 12px";
@@ -2160,6 +2161,25 @@ async function exportWrongBookPdf() {
 }
 
 
+function shouldShowWrongBookFeedback(item) {
+    const text = String(item?.feedback || "").trim();
+
+    if (!text) return false;
+
+    if (
+        item?.source === "manual"
+        && (
+            text.includes("加入错题本")
+            || text.includes("完成订正后")
+            || text.includes("手动加入")
+        )
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
 function renderWrongBook() {
     const list = document.getElementById("wrongBookList");
     if (!list) return;
@@ -2282,13 +2302,9 @@ function renderWrongBook() {
         const feedback = document.createElement("div");
         feedback.className = "wrong-feedback";
 
-        if (item.feedback) {
-            const prefix = item.source === "manual"
-                ? "记录说明："
-                : "最近反馈：";
-
+        if (shouldShowWrongBookFeedback(item)) {
             const prefixNode = document.createElement("strong");
-            prefixNode.textContent = prefix;
+            prefixNode.textContent = "最近反馈";
 
             const feedbackBody = document.createElement("div");
             feedbackBody.className = "wrong-feedback-body";
@@ -2296,8 +2312,6 @@ function renderWrongBook() {
 
             feedback.appendChild(prefixNode);
             feedback.appendChild(feedbackBody);
-        } else {
-            feedback.textContent = "还没有记录订正提示。";
         }
 
         const note = document.createElement("div");
@@ -2419,7 +2433,9 @@ function renderWrongBook() {
             card.appendChild(meta);
         }
 
-        card.appendChild(feedback);
+        if (feedback.textContent.trim()) {
+            card.appendChild(feedback);
+        }
 
         if (item.note) {
             card.appendChild(note);
@@ -3687,21 +3703,21 @@ function fillKnowledgeGraphCategoryOptions() {
     if (!select || !knowledgeGraphData) return;
 
     const categories = getKnowledgeGraphCategories();
-    const values = ["全部", ...categories];
 
-    const currentValue = (
-        values.includes(knowledgeGraphFilter)
-            ? knowledgeGraphFilter
-            : "全部"
-    );
+    if (
+        !knowledgeGraphFilter
+        || !categories.includes(knowledgeGraphFilter)
+    ) {
+        knowledgeGraphFilter = categories[0] || "";
+    }
 
     select.innerHTML = "";
 
-    for (const value of values) {
+    for (const value of categories) {
         const option = document.createElement("option");
         option.value = value;
         option.textContent = value;
-        option.selected = value === currentValue;
+        option.selected = value === knowledgeGraphFilter;
         select.appendChild(option);
     }
 }
@@ -3786,12 +3802,19 @@ function openKnowledgeGraph() {
             if (
                 context.category
                 && categories.includes(context.category)
-                && knowledgeGraphFilter === "全部"
             ) {
                 knowledgeGraphFilter = context.category;
+                knowledgeGraphViewMode = "focus";
+            } else if (
+                !knowledgeGraphFilter
+                || !categories.includes(knowledgeGraphFilter)
+            ) {
+                knowledgeGraphFilter = categories[0] || "";
+                knowledgeGraphViewMode = "full";
             }
 
             fillKnowledgeGraphCategoryOptions();
+            updateKnowledgeGraphModeButton();
             renderKnowledgeGraph();
         })
         .catch(() => {
@@ -3847,8 +3870,38 @@ function renderKnowledgeGraphLoading(message) {
 }
 
 function setKnowledgeGraphFilter(value) {
-    knowledgeGraphFilter = String(value || "").trim() || "全部";
+    const next = String(value || "").trim();
+
+    if (!next) return;
+
+    knowledgeGraphFilter = next;
+
+    const context = getCurrentKnowledgeContext();
+
+    // 用户主动切换到别的模块时，默认展示这个模块的完整结构。
+    // 切回当前题目所在模块，则仍保持当前视图模式。
+    if (next !== context.category) {
+        knowledgeGraphViewMode = "full";
+    }
+
+    updateKnowledgeGraphModeButton();
     renderKnowledgeGraph();
+}
+
+function updateKnowledgeGraphModeButton() {
+    const button = document.getElementById(
+        "knowledgeGraphFocusBtn"
+    );
+
+    if (!button) return;
+
+    if (knowledgeGraphViewMode === "focus") {
+        button.textContent = "查看完整模块";
+        button.title = "展开当前模块的全部知识点";
+    } else {
+        button.textContent = "聚焦当前题目";
+        button.title = "只显示与当前题目直接相关的知识点";
+    }
 }
 
 function focusKnowledgeGraphOnCurrent() {
@@ -3856,6 +3909,13 @@ function focusKnowledgeGraphOnCurrent() {
 
     const context = getCurrentKnowledgeContext();
     const categories = getKnowledgeGraphCategories();
+
+    if (knowledgeGraphViewMode === "focus") {
+        knowledgeGraphViewMode = "full";
+        updateKnowledgeGraphModeButton();
+        renderKnowledgeGraph();
+        return;
+    }
 
     if (
         context.category
@@ -3879,16 +3939,16 @@ function focusKnowledgeGraphOnCurrent() {
         }
     }
 
-    const currentNode = (
+    const currentNodeName = (
         context.focusPoints[0]
         || context.knowledgePoints[0]
         || context.prerequisitePoints[0]
         || ""
     );
 
-    if (currentNode) {
+    if (currentNodeName) {
         const node = findKnowledgeGraphNodeByName(
-            currentNode
+            currentNodeName
         );
 
         if (node) {
@@ -3896,9 +3956,12 @@ function focusKnowledgeGraphOnCurrent() {
         }
     }
 
+    knowledgeGraphViewMode = "focus";
     fillKnowledgeGraphCategoryOptions();
+    updateKnowledgeGraphModeButton();
     renderKnowledgeGraph();
 }
+
 
 function knowledgeGraphNodeState(nodeName, context) {
     const record = learningState?.knowledge?.[nodeName];
@@ -3908,7 +3971,7 @@ function knowledgeGraphNodeState(nodeName, context) {
         return {
             key: "focus",
             label: "当前卡点",
-            fill: "#2563eb",
+            fill: "#1d4ed8",
             stroke: "#93c5fd",
             text: "#ffffff",
             badge: "卡点"
@@ -3918,8 +3981,8 @@ function knowledgeGraphNodeState(nodeName, context) {
     if (context?.knowledgePoints?.includes(nodeName)) {
         return {
             key: "current",
-            label: "当前题目涉及",
-            fill: "#6d28d9",
+            label: "当前题目相关",
+            fill: "#5b21b6",
             stroke: "#c4b5fd",
             text: "#ffffff",
             badge: "本题"
@@ -3929,8 +3992,8 @@ function knowledgeGraphNodeState(nodeName, context) {
     if (context?.prerequisitePoints?.includes(nodeName)) {
         return {
             key: "prerequisite",
-            label: "当前前置知识",
-            fill: "#0369a1",
+            label: "前置知识",
+            fill: "#075985",
             stroke: "#7dd3fc",
             text: "#ffffff",
             badge: "前置"
@@ -3948,46 +4011,20 @@ function knowledgeGraphNodeState(nodeName, context) {
         };
     }
 
-    if (status === "学习中") {
-        return {
-            key: "learning",
-            label: "学习中",
-            fill: "#78350f",
-            stroke: "#f59e0b",
-            text: "#ffffff",
-            badge: "学习中"
-        };
-    }
-
-    if (status === "比较熟悉") {
-        return {
-            key: "familiar",
-            label: "比较熟悉",
-            fill: "#064e3b",
-            stroke: "#10b981",
-            text: "#ffffff",
-            badge: "熟悉"
-        };
-    }
-
-    if (status === "掌握较稳") {
-        return {
-            key: "stable",
-            label: "掌握较稳",
-            fill: "#065f46",
-            stroke: "#34d399",
-            text: "#ffffff",
-            badge: "较稳"
-        };
-    }
+    const badgeMap = {
+        "学习中": "学习中",
+        "比较熟悉": "熟悉",
+        "掌握较稳": "较稳",
+        "暂无记录": "未学"
+    };
 
     return {
-        key: "none",
-        label: "暂无记录",
+        key: "neutral",
+        label: status,
         fill: "#111827",
         stroke: "#475569",
         text: "#ffffff",
-        badge: "未学"
+        badge: badgeMap[status] || "未学"
     };
 }
 
@@ -4026,6 +4063,66 @@ function createSvgElement(tag, attrs = {}) {
     }
 
     return element;
+}
+
+function knowledgeGraphFocusedNodes(category, context) {
+    const categoryNodes = knowledgeGraphVisibleNodes(
+        category
+    );
+
+    if (!categoryNodes.length) {
+        return [];
+    }
+
+    const byName = new Map(
+        categoryNodes.map(node => [node.name, node])
+    );
+
+    const currentNames = uniqueTextList([
+        ...(context?.focusPoints || []),
+        ...(context?.knowledgePoints || []),
+        ...(context?.prerequisitePoints || []),
+        ...(context?.knowledgePath || [])
+    ], 10)
+        .filter(name => byName.has(name));
+
+    if (!currentNames.length) {
+        return categoryNodes;
+    }
+
+    const included = new Set(currentNames);
+
+    // 所有当前相关节点补一层直接前置。
+    for (const name of currentNames) {
+        const node = byName.get(name);
+
+        for (const prerequisite of node?.prerequisites || []) {
+            if (byName.has(prerequisite)) {
+                included.add(prerequisite);
+            }
+        }
+    }
+
+    // 当前“主要卡点”再补一层直接后续，帮助学生知道学会后会接到哪里。
+    const focusNames = (
+        context?.focusPoints?.length
+            ? context.focusPoints
+            : context?.knowledgePoints?.slice(0, 1) || []
+    );
+
+    for (const focusName of focusNames) {
+        if (!byName.has(focusName)) continue;
+
+        for (const node of categoryNodes) {
+            if (node.prerequisites.includes(focusName)) {
+                included.add(node.name);
+            }
+        }
+    }
+
+    return categoryNodes.filter(
+        node => included.has(node.name)
+    );
 }
 
 function knowledgeGraphVisibleNodes(category) {
@@ -4314,44 +4411,75 @@ function renderKnowledgeGraphSummary(context) {
 
     if (!summary) return;
 
-    const lines = [];
+    summary.innerHTML = "";
 
-    lines.push(
-        "说明：点击图中的知识点，可以查看它的前置知识、后续知识和你当前的学习状态。"
+    const addItem = (
+        label,
+        value,
+        className = ""
+    ) => {
+        if (!value) return;
+
+        const item = document.createElement("div");
+        item.className = [
+            "graph-summary-item",
+            className
+        ]
+            .filter(Boolean)
+            .join(" ");
+
+        const labelNode = document.createElement("span");
+        labelNode.className = "graph-summary-label";
+        labelNode.textContent = label;
+
+        const valueNode = document.createElement("span");
+        valueNode.className = "graph-summary-value";
+        valueNode.textContent = value;
+
+        item.appendChild(labelNode);
+        item.appendChild(valueNode);
+        summary.appendChild(item);
+    };
+
+    addItem(
+        "当前模块",
+        context.category || knowledgeGraphFilter || "暂未识别"
     );
 
-    if (context.category) {
-        lines.push(
-            `当前题目所属模块：${context.category}`
-        );
-    }
-
     if (context.focusPoints.length) {
-        lines.push(
-            `这次主要卡在：${context.focusPoints.join("、")}`
+        addItem(
+            "主要卡点",
+            context.focusPoints.join("、"),
+            "focus"
         );
     }
 
-    if (context.knowledgePoints.length) {
-        lines.push(
-            `整题涉及：${context.knowledgePoints.join("、")}`
+    const related = context.knowledgePoints
+        .filter(
+            point => !context.focusPoints.includes(point)
+        )
+        .slice(0, 4);
+
+    if (related.length) {
+        addItem(
+            "本题相关",
+            related.join("、")
         );
     }
 
-    if (context.prerequisitePoints.length) {
-        lines.push(
-            `做这题前最好会：${context.prerequisitePoints.join("、")}`
+    if (
+        !context.focusPoints.length
+        && !related.length
+    ) {
+        addItem(
+            "当前视图",
+            knowledgeGraphViewMode === "focus"
+                ? "与当前题目直接相关的知识"
+                : "完整模块"
         );
     }
-
-    if (context.knowledgePath.length >= 2) {
-        lines.push(
-            `知识脉络：${context.knowledgePath.join(" → ")}`
-        );
-    }
-
-    summary.textContent = lines.join("\n");
 }
+
 
 function renderKnowledgeGraphDetail() {
     const title = document.getElementById(
@@ -4369,14 +4497,14 @@ function renderKnowledgeGraphDetail() {
 
     if (!node) {
         title.textContent = "节点详情";
-        detail.textContent = (
-            "点击左侧节点后，这里会显示知识点说明、前置知识、后续知识和当前学习状态。"
+        detail.innerHTML = (
+            '<div class="graph-detail-empty">点击左侧知识点查看详情。</div>'
         );
         return;
     }
 
     const context = getCurrentKnowledgeContext();
-    const state = knowledgeGraphNodeState(
+    const relationState = knowledgeGraphNodeState(
         node.name,
         context
     );
@@ -4388,91 +4516,104 @@ function renderKnowledgeGraphDetail() {
     title.textContent = node.name;
     detail.innerHTML = "";
 
-    const categoryLabel = document.createElement("span");
-    categoryLabel.className = "detail-label";
-    categoryLabel.textContent = "所属模块";
-    detail.appendChild(categoryLabel);
+    const subline = document.createElement("div");
+    subline.className = "graph-detail-subline";
 
-    const categoryText = document.createElement("div");
-    categoryText.textContent = node.category;
-    detail.appendChild(categoryText);
+    const category = document.createElement("span");
+    category.textContent = node.category;
+    subline.appendChild(category);
 
-    const pill = document.createElement("span");
-    pill.className = `graph-status-pill ${state.key}`;
-    pill.textContent = state.label;
-    detail.appendChild(pill);
-
-    const prerequisiteLabel = document.createElement("span");
-    prerequisiteLabel.className = "detail-label";
-    prerequisiteLabel.textContent = "前置知识";
-    detail.appendChild(prerequisiteLabel);
-
-    const prerequisiteText = document.createElement("div");
-    prerequisiteText.textContent = node.prerequisites.length
-        ? node.prerequisites.join("、")
-        : "这个知识点已经是当前模块里的起点。";
-    detail.appendChild(prerequisiteText);
-
-    const nextLabel = document.createElement("span");
-    nextLabel.className = "detail-label";
-    nextLabel.textContent = "后续知识";
-    detail.appendChild(nextLabel);
-
-    const nextText = document.createElement("div");
-    nextText.textContent = nextNodes.length
-        ? nextNodes.join("、")
-        : "目前没有记录到更靠后的直接知识点。";
-    detail.appendChild(nextText);
-
-    const relationLabel = document.createElement("span");
-    relationLabel.className = "detail-label";
-    relationLabel.textContent = "与当前题目的关系";
-    detail.appendChild(relationLabel);
-
-    const relationText = document.createElement("div");
-    const relations = [];
-
-    if (context.focusPoints.includes(node.name)) {
-        relations.push("这是你这次主要卡住的知识点。");
+    if (relationState.key !== "neutral") {
+        const pill = document.createElement("span");
+        pill.className = `graph-status-pill ${relationState.key}`;
+        pill.textContent = relationState.label;
+        subline.appendChild(pill);
     }
 
-    if (context.knowledgePoints.includes(node.name)) {
-        relations.push("它属于当前这道题涉及的核心知识点。");
+    detail.appendChild(subline);
+
+    const addField = (label, value) => {
+        const field = document.createElement("div");
+        field.className = "graph-detail-field";
+
+        const labelNode = document.createElement("div");
+        labelNode.className = "graph-detail-field-label";
+        labelNode.textContent = label;
+
+        const valueNode = document.createElement("div");
+        valueNode.className = "graph-detail-field-value";
+        valueNode.textContent = value;
+
+        field.appendChild(labelNode);
+        field.appendChild(valueNode);
+        detail.appendChild(field);
+    };
+
+    addField(
+        "前置知识",
+        node.prerequisites.length
+            ? node.prerequisites.join("、")
+            : "模块起点"
+    );
+
+    addField(
+        "后续知识",
+        nextNodes.length
+            ? nextNodes.join("、")
+            : "暂无直接后续"
+    );
+
+    addField(
+        "学习状态",
+        record
+            ? knowledgeStatus(record)
+            : "暂无记录"
+    );
+
+    if (record) {
+        const metrics = document.createElement("div");
+        metrics.className = "graph-metrics";
+
+        const values = [
+            ["看过", record.seen || 0],
+            ["答对", record.correct || 0],
+            ["答错", record.wrong || 0],
+            ["提示", record.support || 0],
+            ["订正", record.reviewed || 0]
+        ];
+
+        for (const [label, value] of values) {
+            const cell = document.createElement("div");
+            cell.className = "graph-metric";
+
+            const number = document.createElement("div");
+            number.className = "graph-metric-number";
+            number.textContent = String(value);
+
+            const caption = document.createElement("div");
+            caption.className = "graph-metric-label";
+            caption.textContent = label;
+
+            cell.appendChild(number);
+            cell.appendChild(caption);
+            metrics.appendChild(cell);
+        }
+
+        detail.appendChild(metrics);
     }
 
-    if (context.prerequisitePoints.includes(node.name)) {
-        relations.push("它是当前题目前最好先掌握的前置知识。");
+    if (
+        !context.focusPoints.includes(node.name)
+        && !context.knowledgePoints.includes(node.name)
+        && !context.prerequisitePoints.includes(node.name)
+    ) {
+        const tip = document.createElement("div");
+        tip.className = "graph-detail-tip";
+        tip.textContent = "这个节点不是当前题目的直接重点，可以顺着连线查看它与其它知识点的关系。";
+        detail.appendChild(tip);
     }
-
-    if (!relations.length) {
-        relations.push("当前题目没有直接强调这个知识点，但你可以顺着图谱查看它和其它知识点的关系。");
-    }
-
-    relationText.textContent = relations.join(" ");
-    detail.appendChild(relationText);
-
-    const learningLabel = document.createElement("span");
-    learningLabel.className = "detail-label";
-    learningLabel.textContent = "学习记录";
-    detail.appendChild(learningLabel);
-
-    const learningText = document.createElement("div");
-
-    if (!record) {
-        learningText.textContent = "目前还没有这个知识点的学习记录。";
-    } else {
-        learningText.textContent = [
-            `当前状态：${knowledgeStatus(record)}`,
-            `看过 ${record.seen || 0} 次`,
-            `答对 ${record.correct || 0} 次`,
-            `答错 ${record.wrong || 0} 次`,
-            `获得提示 ${record.support || 0} 次`,
-            `完成订正 ${record.reviewed || 0} 次`
-        ].join("，");
-    }
-
-    detail.appendChild(learningText);
 }
+
 
 function renderKnowledgeGraph() {
     const modal = document.getElementById(
@@ -4491,6 +4632,7 @@ function renderKnowledgeGraph() {
     }
 
     fillKnowledgeGraphCategoryOptions();
+    updateKnowledgeGraphModeButton();
 
     const context = getCurrentKnowledgeContext();
     const canvas = document.getElementById(
@@ -4510,54 +4652,45 @@ function renderKnowledgeGraph() {
         return;
     }
 
-    if (knowledgeGraphFilter === "全部") {
-        const visibleNodes = knowledgeGraphVisibleNodes(
-            "全部"
-        );
-        ensureKnowledgeGraphSelection(
-            visibleNodes,
-            context
-        );
+    const fullNodes = knowledgeGraphVisibleNodes(
+        knowledgeGraphFilter
+    );
 
-        const categories = getKnowledgeGraphCategories();
-
-        for (const category of categories) {
-            const categoryNodes = knowledgeGraphVisibleNodes(
-                category
-            );
-
-            renderKnowledgeGraphSection(
-                canvas,
-                categoryNodes,
-                category,
-                category === context.category
-                    ? "这是当前题目所在的模块。"
-                    : "",
+    const visibleNodes = (
+        knowledgeGraphViewMode === "focus"
+            ? knowledgeGraphFocusedNodes(
+                knowledgeGraphFilter,
                 context
-            );
-        }
-    } else {
-        const visibleNodes = knowledgeGraphVisibleNodes(
-            knowledgeGraphFilter
-        );
-        ensureKnowledgeGraphSelection(
-            visibleNodes,
-            context
-        );
+            )
+            : fullNodes
+    );
 
-        renderKnowledgeGraphSection(
-            canvas,
-            visibleNodes,
-            knowledgeGraphFilter,
-            knowledgeGraphFilter === context.category
-                ? "这是当前题目所在的模块。"
-                : "",
-            context
-        );
-    }
+    ensureKnowledgeGraphSelection(
+        visibleNodes,
+        context
+    );
+
+    const description = (
+        knowledgeGraphViewMode === "focus"
+            ? (
+                visibleNodes.length < fullNodes.length
+                    ? `已聚焦当前题目，只显示 ${visibleNodes.length} 个直接相关知识点。`
+                    : "当前没有可进一步收缩的题目上下文，显示当前模块。"
+            )
+            : `完整模块，共 ${fullNodes.length} 个知识点。`
+    );
+
+    renderKnowledgeGraphSection(
+        canvas,
+        visibleNodes,
+        knowledgeGraphFilter || "知识图谱",
+        description,
+        context
+    );
 
     renderKnowledgeGraphDetail();
 }
+
 
 // -----------------------------
 // 右侧会话信息
