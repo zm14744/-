@@ -587,7 +587,6 @@ body {
 
 .legend-item.focus::before { background:#2563eb; }
 .legend-item.current::before { background:#7c3aed; }
-.legend-item.review::before { background:#ef4444; }
 
 .knowledge-graph-layout {
     display:grid;
@@ -784,7 +783,6 @@ body {
 .graph-status-pill.focus { background:#2563eb; }
 .graph-status-pill.current { background:#7c3aed; }
 .graph-status-pill.prerequisite { background:#0ea5e9; }
-.graph-status-pill.review { background:#ef4444; }
 .graph-status-pill.learning { background:#f59e0b; color:#111827; }
 .graph-status-pill.familiar { background:#10b981; }
 .graph-status-pill.stable { background:#059669; }
@@ -1012,8 +1010,7 @@ window.MathJax = {
             <div class="graph-legend">
                 <span class="legend-item focus">当前卡点</span>
                 <span class="legend-item current">本题相关</span>
-                                <span class="legend-item review">有错误记录</span>
-            </div>
+                            </div>
         </div>
 
         <div class="knowledge-graph-layout">
@@ -1027,7 +1024,7 @@ window.MathJax = {
             <div class="knowledge-graph-side">
                 <div id="knowledgeGraphDetailTitle" class="graph-detail-title">节点详情</div>
                 <div id="knowledgeGraphDetail" class="graph-detail-body">
-                    点击左侧节点后，这里会显示相关知识和你的学习记录。
+                    点击左侧知识点查看它与其它知识点的直接关系。
                 </div>
             </div>
         </div>
