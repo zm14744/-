@@ -1,4 +1,6 @@
+import json
 import re
+from pathlib import Path
 
 
 MODE_LABELS = {
@@ -8,6 +10,99 @@ MODE_LABELS = {
     "exercise": "练习出题",
     "check_answer": "答案诊断",
 }
+
+
+KNOWLEDGE_GRAPH_PATH = Path(__file__).with_name("knowledge_graph.json")
+
+
+def _load_knowledge_graph():
+    try:
+        with KNOWLEDGE_GRAPH_PATH.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except Exception as exc:
+        print(f"知识图谱加载失败：{repr(exc)}")
+        return {"nodes": []}
+
+    if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
+        print("知识图谱格式异常：缺少 nodes 列表")
+        return {"nodes": []}
+
+    return data
+
+
+_KNOWLEDGE_GRAPH = _load_knowledge_graph()
+_KNOWLEDGE_INDEX = {
+    node.get("name"): node
+    for node in _KNOWLEDGE_GRAPH.get("nodes", [])
+    if isinstance(node, dict) and isinstance(node.get("name"), str)
+}
+
+
+def _direct_prerequisites(points, limit=4):
+    result = []
+
+    for point in points or []:
+        node = _KNOWLEDGE_INDEX.get(point)
+        if not node:
+            continue
+
+        prerequisites = node.get("prerequisites") or []
+        for name in prerequisites:
+            if isinstance(name, str) and name not in result and name not in points:
+                result.append(name)
+                if len(result) >= limit:
+                    return result
+
+    return result
+
+
+def _longest_prerequisite_path(point, visited=None):
+    if point not in _KNOWLEDGE_INDEX:
+        return [point] if point else []
+
+    visited = set(visited or ())
+    if point in visited:
+        return [point]
+    visited.add(point)
+
+    prerequisites = _KNOWLEDGE_INDEX[point].get("prerequisites") or []
+    candidate_paths = []
+
+    for prerequisite in prerequisites:
+        if not isinstance(prerequisite, str):
+            continue
+        candidate_paths.append(
+            _longest_prerequisite_path(prerequisite, visited.copy())
+        )
+
+    if not candidate_paths:
+        return [point]
+
+    best = max(candidate_paths, key=len)
+    return best + [point]
+
+
+def _knowledge_path(points, limit=5):
+    best = []
+
+    for point in points or []:
+        path = _longest_prerequisite_path(point)
+        if len(path) > len(best):
+            best = path
+
+    if len(best) > limit:
+        best = best[-limit:]
+
+    return best
+
+
+def _enrich_with_graph(result):
+    result = dict(result or {})
+    points = result.get("knowledge_points") or []
+    result["prerequisite_points"] = _direct_prerequisites(points)
+    result["knowledge_path"] = _knowledge_path(points)
+    return result
+
 
 
 # 第 7 步先采用轻量、可解释的规则分类。
@@ -167,6 +262,9 @@ PROBLEM_PATTERNS = [
 
 _INTERNAL_IMAGE_MARKERS = (
     "[图片识题]",
+    "【题目文字】",
+    "【图形信息】",
+    # 兼容旧版本会话记录
     "【题干与公式识别】",
     "【图形结构识别】",
 )
@@ -329,7 +427,7 @@ def analyze_question(text):
         "input_source": "图片识题" if _is_image_input(text) else "文本输入",
     }
 
-    return result
+    return _enrich_with_graph(result)
 
 
 def analyze_messages(messages):
@@ -380,7 +478,7 @@ def analyze_messages(messages):
         else "文本输入"
     )
 
-    return {
+    return _enrich_with_graph({
         "category": classified["category"],
         "related_categories": classified["related_categories"],
         "knowledge_points": classified["knowledge_points"],
@@ -389,7 +487,7 @@ def analyze_messages(messages):
         "mode_label": MODE_LABELS[mode],
         "confidence": classified["confidence"],
         "input_source": input_source,
-    }
+    })
 
 
 def teaching_prompt(context):
@@ -403,9 +501,13 @@ def teaching_prompt(context):
     mode_label = context.get("mode_label") or MODE_LABELS["hint"]
     confidence = context.get("confidence") or "低"
     input_source = context.get("input_source") or "文本输入"
+    prerequisite_points = context.get("prerequisite_points") or []
+    knowledge_path = context.get("knowledge_path") or []
 
     points_text = "、".join(points) if points else "暂未可靠识别"
     related_text = "、".join(related) if related else "无"
+    prerequisites_text = "、".join(prerequisite_points) if prerequisite_points else "无明确前置知识"
+    path_text = " → ".join(knowledge_path) if knowledge_path else "暂无"
 
     mode_instruction = {
         "hint": (
@@ -434,9 +536,12 @@ def teaching_prompt(context):
         f"相关模块：{related_text}\n"
         f"问题类型：{question_type}\n"
         f"知识点：{points_text}\n"
+        f"前置知识：{prerequisites_text}\n"
+        f"知识脉络：{path_text}\n"
         f"教学模式：{mode_label}\n"
         f"分类置信度：{confidence}\n"
         f"执行要求：{mode_instruction}\n"
+        "如果学生明显卡在当前知识点，可以优先检查前置知识；不要机械地逐条讲完整知识脉络。\n"
         "分类结果只是教学辅助信号，不是事实来源。若分类与题目实际内容冲突，"
         "必须以题目内容为准，不得为了迎合标签而编造知识点。"
     )
