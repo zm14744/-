@@ -80,6 +80,7 @@ function normalizeTeaching(value) {
         category: asText(value.category) || "待识别",
         related_categories: asTextList(value.related_categories),
         knowledge_points: asTextList(value.knowledge_points),
+        focus_points: asTextList(value.focus_points).slice(0, 2),
         prerequisite_points: asTextList(value.prerequisite_points),
         knowledge_path: asTextList(value.knowledge_path),
         question_type: asText(value.question_type) || "综合题",
@@ -119,9 +120,17 @@ function normalizeLearningQuestion(value) {
             .slice(0, 4)
         : [];
 
+    const focusPoints = Array.isArray(value.focusPoints)
+        ? value.focusPoints
+            .filter(item => typeof item === "string" && item.trim())
+            .map(item => item.trim())
+            .slice(0, 2)
+        : [];
+
     return {
         text: text.slice(0, 3000),
         knowledgePoints,
+        focusPoints,
         category: typeof value.category === "string"
             ? value.category.trim()
             : "",
@@ -183,6 +192,12 @@ function normalizeLearningState(value) {
                             .filter(point => typeof point === "string" && point.trim())
                             .map(point => point.trim())
                             .slice(0, 4)
+                        : [],
+                    focusPoints: Array.isArray(item.focusPoints)
+                        ? item.focusPoints
+                            .filter(point => typeof point === "string" && point.trim())
+                            .map(point => point.trim())
+                            .slice(0, 2)
                         : [],
                     category: typeof item.category === "string"
                         ? item.category.trim()
@@ -483,6 +498,9 @@ function buildLearningQuestionFromSession(session, teaching, excludeLatest = fal
             knowledgePoints: Array.isArray(teaching?.knowledge_points)
                 ? teaching.knowledge_points.slice(0, 4)
                 : [],
+            focusPoints: Array.isArray(teaching?.focus_points)
+                ? teaching.focus_points.slice(0, 2)
+                : [],
             category: typeof teaching?.category === "string"
                 ? teaching.category
                 : "",
@@ -589,6 +607,9 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         const wasCorrected = Boolean(existing.corrected);
 
         existing.feedback = compactFeedback(feedback) || existing.feedback;
+        if (info.focusPoints.length) {
+            existing.focusPoints = info.focusPoints.slice(0, 2);
+        }
         existing.corrected = false;
         existing.updatedAt = now;
 
@@ -613,6 +634,7 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         id: `wrong-${now}-${Math.random().toString(36).slice(2, 8)}`,
         question: info.text,
         knowledgePoints: info.knowledgePoints,
+        focusPoints: info.focusPoints,
         category: info.category,
         feedback: compactFeedback(feedback),
         source: source === "auto" ? "auto" : "manual",
@@ -679,6 +701,7 @@ function processLearningFromReply(session, teaching, reply) {
         session.learningQuestion = {
             text: latestText.slice(0, 3000),
             knowledgePoints: points.slice(0, 4),
+            focusPoints: normalized.focus_points.slice(0, 2),
             category: normalized.category,
             source: latest.source === "ocr" ? "ocr" : "text",
             updatedAt: Date.now()
@@ -854,9 +877,13 @@ function renderLearningSummary() {
         .map(([name]) => name);
 
     const wrongCount = learningState.wrongQuestions.length;
-    const pendingCount = learningState.wrongQuestions.filter(
-        item => !item.corrected
-    ).length;
+    const pendingWrong = learningState.wrongQuestions
+        .filter(item => !item.corrected)
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+    const pendingCount = pendingWrong.length;
+    const recentFocus = pendingWrong.find(
+        item => Array.isArray(item.focusPoints) && item.focusPoints.length
+    );
 
     const lines = [];
 
@@ -866,6 +893,12 @@ function renderLearningSummary() {
             "做题、检查答案或加入错题后，这里会慢慢形成你的学习情况。"
         );
     } else {
+        if (recentFocus) {
+            lines.push(
+                `最近主要卡在：${recentFocus.focusPoints.join("、")}`
+            );
+        }
+
         if (weak.length) {
             lines.push(
                 `最近需要巩固：${weak.join("、")}`
@@ -968,9 +1001,15 @@ function renderWrongBook() {
 
         const metaParts = [];
 
+        if (item.focusPoints.length) {
+            metaParts.push(
+                `本次主要卡在：${item.focusPoints.join("、")}`
+            );
+        }
+
         if (item.knowledgePoints.length) {
             metaParts.push(
-                `知识：${item.knowledgePoints.join("、")}`
+                `整题涉及：${item.knowledgePoints.join("、")}`
             );
         }
 
@@ -2114,9 +2153,15 @@ function renderInfo() {
             `这是什么题：${getFriendlyQuestionType(teaching.question_type)}`
         );
 
+        if (teaching.focus_points.length) {
+            lines.push(
+                `这次主要在看：${teaching.focus_points.join("、")}`
+            );
+        }
+
         if (teaching.knowledge_points.length) {
             lines.push(
-                `涉及哪些知识：${teaching.knowledge_points.join("、")}`
+                `整道题涉及：${teaching.knowledge_points.join("、")}`
             );
         }
 
