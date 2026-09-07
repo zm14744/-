@@ -4,10 +4,13 @@ marked.setOptions({
 });
 
 const STORAGE_KEY = "discrete_math_ai_sessions_v1";
+const LEARNING_STORAGE_KEY = "discrete_math_ai_learning_v1";
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_WRONG_QUESTIONS = 80;
 
 let sessions = [];
 let currentId = null;
+let learningState = createEmptyLearningState();
 
 let typingTimer = null;
 let typingFullText = "";
@@ -86,6 +89,860 @@ function normalizeTeaching(value) {
         input_source: asText(value.input_source) || "文本输入"
     };
 }
+
+
+function createEmptyLearningState() {
+    return {
+        version: 1,
+        knowledge: {},
+        wrongQuestions: []
+    };
+}
+
+function normalizeLearningQuestion(value) {
+    if (!value || typeof value !== "object") {
+        return null;
+    }
+
+    const text = typeof value.text === "string"
+        ? value.text.trim()
+        : "";
+
+    if (!text) {
+        return null;
+    }
+
+    const knowledgePoints = Array.isArray(value.knowledgePoints)
+        ? value.knowledgePoints
+            .filter(item => typeof item === "string" && item.trim())
+            .map(item => item.trim())
+            .slice(0, 4)
+        : [];
+
+    return {
+        text: text.slice(0, 3000),
+        knowledgePoints,
+        category: typeof value.category === "string"
+            ? value.category.trim()
+            : "",
+        source: value.source === "ocr" ? "ocr" : "text",
+        updatedAt: Number.isFinite(value.updatedAt)
+            ? value.updatedAt
+            : Date.now()
+    };
+}
+
+function normalizeLearningState(value) {
+    const state = createEmptyLearningState();
+
+    if (!value || typeof value !== "object") {
+        return state;
+    }
+
+    if (value.knowledge && typeof value.knowledge === "object") {
+        for (const [name, raw] of Object.entries(value.knowledge)) {
+            if (
+                typeof name !== "string"
+                || !name.trim()
+                || !raw
+                || typeof raw !== "object"
+            ) {
+                continue;
+            }
+
+            state.knowledge[name.trim()] = {
+                seen: Math.max(0, Number(raw.seen) || 0),
+                correct: Math.max(0, Number(raw.correct) || 0),
+                wrong: Math.max(0, Number(raw.wrong) || 0),
+                support: Math.max(0, Number(raw.support) || 0),
+                reviewed: Math.max(0, Number(raw.reviewed) || 0),
+                updatedAt: Number.isFinite(raw.updatedAt)
+                    ? raw.updatedAt
+                    : Date.now()
+            };
+        }
+    }
+
+    if (Array.isArray(value.wrongQuestions)) {
+        state.wrongQuestions = value.wrongQuestions
+            .filter(item => item && typeof item === "object")
+            .map(item => {
+                const question = typeof item.question === "string"
+                    ? item.question.trim()
+                    : "";
+
+                if (!question) return null;
+
+                return {
+                    id: typeof item.id === "string" && item.id
+                        ? item.id
+                        : `wrong-${Date.now()}-${Math.random()}`,
+                    question: question.slice(0, 3000),
+                    knowledgePoints: Array.isArray(item.knowledgePoints)
+                        ? item.knowledgePoints
+                            .filter(point => typeof point === "string" && point.trim())
+                            .map(point => point.trim())
+                            .slice(0, 4)
+                        : [],
+                    category: typeof item.category === "string"
+                        ? item.category.trim()
+                        : "",
+                    feedback: typeof item.feedback === "string"
+                        ? item.feedback.trim().slice(0, 1000)
+                        : "",
+                    source: item.source === "auto" ? "auto" : "manual",
+                    corrected: Boolean(item.corrected),
+                    mistakeCount: Math.max(1, Number(item.mistakeCount) || 1),
+                    createdAt: Number.isFinite(item.createdAt)
+                        ? item.createdAt
+                        : Date.now(),
+                    updatedAt: Number.isFinite(item.updatedAt)
+                        ? item.updatedAt
+                        : Date.now()
+                };
+            })
+            .filter(Boolean)
+            .slice(-MAX_WRONG_QUESTIONS);
+    }
+
+    return state;
+}
+
+function loadLearningState() {
+    try {
+        const raw = localStorage.getItem(LEARNING_STORAGE_KEY);
+
+        if (!raw) {
+            learningState = createEmptyLearningState();
+            return;
+        }
+
+        learningState = normalizeLearningState(
+            JSON.parse(raw)
+        );
+    } catch (error) {
+        console.warn("学习记录读取失败：", error);
+        learningState = createEmptyLearningState();
+    }
+}
+
+function saveLearningState() {
+    try {
+        localStorage.setItem(
+            LEARNING_STORAGE_KEY,
+            JSON.stringify(learningState)
+        );
+    } catch (error) {
+        console.warn("学习记录保存失败：", error);
+    }
+}
+
+function ensureKnowledgeRecord(name) {
+    const point = String(name || "").trim();
+    if (!point) return null;
+
+    if (!learningState.knowledge[point]) {
+        learningState.knowledge[point] = {
+            seen: 0,
+            correct: 0,
+            wrong: 0,
+            support: 0,
+            reviewed: 0,
+            updatedAt: Date.now()
+        };
+    }
+
+    return learningState.knowledge[point];
+}
+
+function updateKnowledge(points, eventType) {
+    const uniquePoints = [
+        ...new Set(
+            (Array.isArray(points) ? points : [])
+                .filter(point => typeof point === "string" && point.trim())
+                .map(point => point.trim())
+        )
+    ].slice(0, 4);
+
+    if (!uniquePoints.length) return;
+
+    for (const point of uniquePoints) {
+        const record = ensureKnowledgeRecord(point);
+        if (!record) continue;
+
+        if (eventType === "seen") record.seen += 1;
+        if (eventType === "correct") record.correct += 1;
+        if (eventType === "wrong") record.wrong += 1;
+        if (eventType === "support") record.support += 1;
+        if (eventType === "reviewed") record.reviewed += 1;
+
+        record.updatedAt = Date.now();
+    }
+
+    saveLearningState();
+}
+
+function knowledgeScore(record) {
+    if (!record || typeof record !== "object") {
+        return 50;
+    }
+
+    const score = (
+        50
+        + (record.correct || 0) * 14
+        - (record.wrong || 0) * 20
+        - (record.support || 0) * 6
+        + (record.reviewed || 0) * 3
+    );
+
+    return Math.max(0, Math.min(100, score));
+}
+
+function knowledgeStatus(record) {
+    const total = (
+        (record?.seen || 0)
+        + (record?.correct || 0)
+        + (record?.wrong || 0)
+        + (record?.support || 0)
+    );
+
+    if (!total) return "暂无记录";
+
+    const score = knowledgeScore(record);
+
+    if (score < 45) return "需要巩固";
+    if (score < 70) return "学习中";
+    if (score < 85) return "比较熟悉";
+    return "掌握较稳";
+}
+
+function getLatestUserMessage(session) {
+    if (!session || !Array.isArray(session.messages)) {
+        return null;
+    }
+
+    for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+        const message = session.messages[index];
+
+        if (
+            message
+            && message.role === "user"
+            && typeof message.text === "string"
+            && message.text.trim()
+        ) {
+            return message;
+        }
+    }
+
+    return null;
+}
+
+function isShortLearningFollowUp(text) {
+    const value = String(text || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+    if (!value) return true;
+
+    const exactCommands = [
+        "继续",
+        "再提示一下",
+        "再给个提示",
+        "给我提示",
+        "完整解析",
+        "给我完整解析",
+        "直接给答案",
+        "告诉我答案",
+        "为什么",
+        "然后呢",
+        "下一步呢"
+    ];
+
+    return (
+        value.length <= 6
+        || exactCommands.includes(value)
+    );
+}
+
+function buildLearningQuestionFromSession(session, teaching, excludeLatest = false) {
+    if (!session || !Array.isArray(session.messages)) {
+        return null;
+    }
+
+    const end = excludeLatest
+        ? session.messages.length - 2
+        : session.messages.length - 1;
+
+    for (let index = end; index >= 0; index -= 1) {
+        const message = session.messages[index];
+
+        if (
+            !message
+            || message.role !== "user"
+            || typeof message.text !== "string"
+        ) {
+            continue;
+        }
+
+        const text = message.text.trim();
+        if (!text) continue;
+
+        if (
+            message.source !== "ocr"
+            && isShortLearningFollowUp(text)
+        ) {
+            continue;
+        }
+
+        return {
+            text: text.slice(0, 3000),
+            knowledgePoints: Array.isArray(teaching?.knowledge_points)
+                ? teaching.knowledge_points.slice(0, 4)
+                : [],
+            category: typeof teaching?.category === "string"
+                ? teaching.category
+                : "",
+            source: message.source === "ocr" ? "ocr" : "text",
+            updatedAt: Date.now()
+        };
+    }
+
+    return null;
+}
+
+function inferAnswerAssessment(reply) {
+    let text = String(reply || "").replace(/\s+/g, " ").trim();
+
+    if (!text) return "unknown";
+
+    const strongPositive = [
+        "完全正确",
+        "这次作答正确",
+        "作答正确",
+        "答案正确",
+        "结果正确",
+        "计算正确",
+        "没有错误",
+        "没有问题",
+        "没错",
+        "是对的"
+    ];
+
+    const hasPositive = strongPositive.some(
+        phrase => text.includes(phrase)
+    );
+
+    for (const phrase of strongPositive) {
+        text = text.split(phrase).join("");
+    }
+
+    const negative = [
+        "不正确",
+        "这次作答有错误",
+        "作答有错误",
+        "答案有误",
+        "结果有误",
+        "存在错误",
+        "这里错了",
+        "这一步错",
+        "算错",
+        "写错",
+        "错误在",
+        "最早出错",
+        "不成立",
+        "需要修改",
+        "需要纠正",
+        "有一个错误",
+        "有一处错误"
+    ];
+
+    if (negative.some(phrase => text.includes(phrase))) {
+        return "wrong";
+    }
+
+    return hasPositive ? "correct" : "unknown";
+}
+
+function compactFeedback(text) {
+    return String(text || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 1000);
+}
+
+function wrongQuestionFingerprint(question, points) {
+    const normalized = String(question || "")
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .slice(0, 800);
+
+    const pointKey = [...(points || [])]
+        .sort()
+        .join("|");
+
+    return `${normalized}::${pointKey}`;
+}
+
+function addWrongQuestion(questionInfo, feedback, source = "auto") {
+    const info = normalizeLearningQuestion(questionInfo);
+    if (!info) return { entry: null, countAsMistake: false };
+
+    const fingerprint = wrongQuestionFingerprint(
+        info.text,
+        info.knowledgePoints
+    );
+
+    const existing = learningState.wrongQuestions.find(
+        item => wrongQuestionFingerprint(
+            item.question,
+            item.knowledgePoints
+        ) === fingerprint
+    );
+
+    const now = Date.now();
+
+    if (existing) {
+        const wasCorrected = Boolean(existing.corrected);
+
+        existing.feedback = compactFeedback(feedback) || existing.feedback;
+        existing.corrected = false;
+        existing.updatedAt = now;
+
+        const countAsMistake = (
+            source === "auto"
+            || wasCorrected
+        );
+
+        if (countAsMistake) {
+            existing.mistakeCount += 1;
+        }
+
+        saveLearningState();
+
+        return {
+            entry: existing,
+            countAsMistake
+        };
+    }
+
+    const entry = {
+        id: `wrong-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        question: info.text,
+        knowledgePoints: info.knowledgePoints,
+        category: info.category,
+        feedback: compactFeedback(feedback),
+        source: source === "auto" ? "auto" : "manual",
+        corrected: false,
+        mistakeCount: 1,
+        createdAt: now,
+        updatedAt: now
+    };
+
+    learningState.wrongQuestions.push(entry);
+
+    if (learningState.wrongQuestions.length > MAX_WRONG_QUESTIONS) {
+        learningState.wrongQuestions = learningState.wrongQuestions
+            .slice(-MAX_WRONG_QUESTIONS);
+    }
+
+    saveLearningState();
+
+    return {
+        entry,
+        countAsMistake: true
+    };
+}
+
+function currentLearningQuestion(session, teaching) {
+    const saved = normalizeLearningQuestion(
+        session?.learningQuestion
+    );
+
+    if (saved) {
+        return saved;
+    }
+
+    return buildLearningQuestionFromSession(
+        session,
+        teaching,
+        true
+    ) || buildLearningQuestionFromSession(
+        session,
+        teaching,
+        false
+    );
+}
+
+function processLearningFromReply(session, teaching, reply) {
+    const normalized = normalizeTeaching(teaching);
+
+    if (!session || !normalized) {
+        return;
+    }
+
+    const points = normalized.knowledge_points;
+    const latest = getLatestUserMessage(session);
+    const latestText = latest?.text || "";
+
+    const isSubstantiveQuestion = Boolean(
+        latest
+        && (
+            latest.source === "ocr"
+            || !isShortLearningFollowUp(latestText)
+        )
+        && normalized.mode !== "check_answer"
+        && normalized.mode !== "exercise"
+    );
+
+    if (isSubstantiveQuestion && points.length) {
+        session.learningQuestion = {
+            text: latestText.slice(0, 3000),
+            knowledgePoints: points.slice(0, 4),
+            category: normalized.category,
+            source: latest.source === "ocr" ? "ocr" : "text",
+            updatedAt: Date.now()
+        };
+
+        updateKnowledge(points, "seen");
+    }
+
+    if (
+        normalized.mode === "full_solution"
+        && points.length
+    ) {
+        updateKnowledge(points, "support");
+    }
+
+    const selfReportsWrong = /(?:我|这题|刚才).{0,8}(?:做错|算错|写错|错了)/.test(
+        latestText.replace(/\s+/g, "")
+    );
+
+    if (
+        normalized.mode === "check_answer"
+        || selfReportsWrong
+    ) {
+        const assessment = selfReportsWrong
+            ? "wrong"
+            : inferAnswerAssessment(reply);
+
+        if (assessment === "wrong") {
+            const questionInfo = currentLearningQuestion(
+                session,
+                normalized
+            );
+
+            const added = addWrongQuestion(
+                questionInfo,
+                selfReportsWrong
+                    ? "你明确表示这道题做错了，建议完成订正后再标记为已订正。"
+                    : reply,
+                "auto"
+            );
+
+            if (added.countAsMistake) {
+                updateKnowledge(
+                    questionInfo?.knowledgePoints || points,
+                    "wrong"
+                );
+            }
+        } else if (assessment === "correct") {
+            updateKnowledge(points, "correct");
+        }
+    }
+
+    saveState();
+    saveLearningState();
+    renderLearningSummary();
+}
+
+function manualMarkCurrentWrong() {
+    const session = getCurrent();
+    const teaching = normalizeTeaching(session?.teaching);
+
+    if (!session || !teaching) return;
+
+    const questionInfo = currentLearningQuestion(
+        session,
+        teaching
+    );
+
+    if (!questionInfo) return;
+
+    const result = addWrongQuestion(
+        questionInfo,
+        "手动加入错题本。完成订正后，可以在错题本中标记“已订正”。",
+        "manual"
+    );
+
+    if (result.countAsMistake) {
+        updateKnowledge(
+            questionInfo.knowledgePoints,
+            "wrong"
+        );
+    }
+
+    saveState();
+    renderLearningSummary();
+    renderWrongBook();
+
+    const button = document.getElementById("markWrongBtn");
+    if (button) {
+        const previous = button.textContent;
+        button.textContent = "已记录";
+
+        setTimeout(() => {
+            button.textContent = previous;
+            renderLearningSummary();
+        }, 900);
+    }
+}
+
+function markWrongQuestionCorrected(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry || entry.corrected) return;
+
+    entry.corrected = true;
+    entry.updatedAt = Date.now();
+
+    updateKnowledge(
+        entry.knowledgePoints,
+        "reviewed"
+    );
+
+    saveLearningState();
+    renderLearningSummary();
+    renderWrongBook();
+}
+
+function removeWrongQuestion(id) {
+    learningState.wrongQuestions = learningState.wrongQuestions.filter(
+        item => item.id !== id
+    );
+
+    saveLearningState();
+    renderLearningSummary();
+    renderWrongBook();
+}
+
+function formatLearningDate(timestamp) {
+    const date = new Date(timestamp);
+
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    return date.toLocaleDateString(
+        "zh-CN",
+        {
+            month: "numeric",
+            day: "numeric"
+        }
+    );
+}
+
+function renderLearningSummary() {
+    const box = document.getElementById("learningSummary");
+    const markButton = document.getElementById("markWrongBtn");
+    const wrongButton = document.getElementById("wrongBookBtn");
+
+    if (!box) return;
+
+    const entries = Object.entries(
+        learningState.knowledge || {}
+    );
+
+    const weak = entries
+        .filter(([_name, record]) => (
+            knowledgeStatus(record) === "需要巩固"
+        ))
+        .sort((a, b) => knowledgeScore(a[1]) - knowledgeScore(b[1]))
+        .slice(0, 3)
+        .map(([name]) => name);
+
+    const familiar = entries
+        .filter(([_name, record]) => (
+            ["比较熟悉", "掌握较稳"].includes(
+                knowledgeStatus(record)
+            )
+        ))
+        .sort((a, b) => knowledgeScore(b[1]) - knowledgeScore(a[1]))
+        .slice(0, 3)
+        .map(([name]) => name);
+
+    const wrongCount = learningState.wrongQuestions.length;
+    const pendingCount = learningState.wrongQuestions.filter(
+        item => !item.corrected
+    ).length;
+
+    const lines = [];
+
+    if (!entries.length && !wrongCount) {
+        lines.push(
+            "还没有足够的学习记录。",
+            "做题、检查答案或加入错题后，这里会慢慢形成你的学习情况。"
+        );
+    } else {
+        if (weak.length) {
+            lines.push(
+                `最近需要巩固：${weak.join("、")}`
+            );
+        }
+
+        if (familiar.length) {
+            lines.push(
+                `目前比较熟悉：${familiar.join("、")}`
+            );
+        }
+
+        if (!weak.length && !familiar.length && entries.length) {
+            lines.push("目前正在积累学习记录。");
+        }
+
+        lines.push(
+            `错题本：${wrongCount} 道，待订正 ${pendingCount} 道`
+        );
+    }
+
+    box.innerText = lines.join("\n");
+
+    if (wrongButton) {
+        wrongButton.textContent = `查看错题本 (${wrongCount})`;
+    }
+
+    if (markButton) {
+        const session = getCurrent();
+        const teaching = normalizeTeaching(session?.teaching);
+
+        markButton.disabled = !(
+            session
+            && teaching
+            && currentLearningQuestion(session, teaching)
+        );
+    }
+}
+
+function openWrongBook() {
+    const modal = document.getElementById("wrongBookModal");
+    if (!modal) return;
+
+    renderWrongBook();
+    modal.classList.remove("hidden");
+}
+
+function closeWrongBook() {
+    const modal = document.getElementById("wrongBookModal");
+    if (!modal) return;
+
+    modal.classList.add("hidden");
+}
+
+function renderWrongBook() {
+    const list = document.getElementById("wrongBookList");
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    const items = [...learningState.wrongQuestions]
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+
+    if (!items.length) {
+        const empty = document.createElement("div");
+        empty.className = "wrong-empty";
+        empty.textContent = "错题本还是空的。";
+        list.appendChild(empty);
+        return;
+    }
+
+    for (const item of items) {
+        const card = document.createElement("div");
+        card.className = "wrong-card";
+
+        const top = document.createElement("div");
+        top.className = "wrong-card-top";
+
+        const status = document.createElement("span");
+        status.className = item.corrected
+            ? "wrong-status corrected"
+            : "wrong-status";
+        status.textContent = item.corrected
+            ? "已订正"
+            : "待订正";
+
+        const date = document.createElement("span");
+        date.className = "wrong-date";
+        date.textContent = formatLearningDate(item.updatedAt);
+
+        top.appendChild(status);
+        top.appendChild(date);
+
+        const question = document.createElement("div");
+        question.className = "wrong-question";
+        question.textContent = item.question;
+
+        const meta = document.createElement("div");
+        meta.className = "wrong-meta";
+
+        const metaParts = [];
+
+        if (item.knowledgePoints.length) {
+            metaParts.push(
+                `知识：${item.knowledgePoints.join("、")}`
+            );
+        }
+
+        if (item.mistakeCount > 1) {
+            metaParts.push(
+                `累计出错 ${item.mistakeCount} 次`
+            );
+        }
+
+        meta.textContent = metaParts.join(" · ");
+
+        const feedback = document.createElement("div");
+        feedback.className = "wrong-feedback";
+        feedback.textContent = item.feedback
+            ? `最近反馈：${item.feedback}`
+            : "还没有记录订正提示。";
+
+        const actions = document.createElement("div");
+        actions.className = "wrong-actions";
+
+        if (!item.corrected) {
+            const correctedButton = document.createElement("button");
+            correctedButton.type = "button";
+            correctedButton.textContent = "标记已订正";
+            correctedButton.onclick = () => (
+                markWrongQuestionCorrected(item.id)
+            );
+            actions.appendChild(correctedButton);
+        }
+
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "secondary";
+        removeButton.textContent = "移出错题本";
+        removeButton.onclick = () => (
+            removeWrongQuestion(item.id)
+        );
+        actions.appendChild(removeButton);
+
+        card.appendChild(top);
+        card.appendChild(question);
+
+        if (meta.textContent) {
+            card.appendChild(meta);
+        }
+
+        card.appendChild(feedback);
+        card.appendChild(actions);
+
+        list.appendChild(card);
+    }
+}
+
 
 function getFriendlyCategory(value) {
     const text = String(value || "").trim();
@@ -248,7 +1105,10 @@ function loadState() {
                     ? session.name
                     : "新对话",
                 messages,
-                teaching: normalizeTeaching(session.teaching)
+                teaching: normalizeTeaching(session.teaching),
+                learningQuestion: normalizeLearningQuestion(
+                    session.learningQuestion
+                )
             });
         }
 
@@ -396,7 +1256,8 @@ function newChat() {
         id,
         name: "新对话",
         messages: [],
-        teaching: null
+        teaching: null,
+        learningQuestion: null
     });
 
     currentId = id;
@@ -504,6 +1365,12 @@ async function requestAiReply(session) {
             );
             return;
         }
+
+        processLearningFromReply(
+            session,
+            session.teaching,
+            data.reply
+        );
 
         if (currentId === session.id) {
             startTyping(
@@ -1207,6 +2074,7 @@ function renderAll() {
     renderSessions();
     renderChat();
     renderInfo();
+    renderLearningSummary();
 }
 
 
@@ -1219,6 +2087,10 @@ document.addEventListener(
         const input = document.getElementById("text");
         const imageBtn = document.getElementById("imageBtn");
         const imageInput = document.getElementById("imageInput");
+        const markWrongBtn = document.getElementById("markWrongBtn");
+        const wrongBookBtn = document.getElementById("wrongBookBtn");
+        const wrongBookClose = document.getElementById("wrongBookClose");
+        const wrongBookModal = document.getElementById("wrongBookModal");
 
         if (input) {
             input.addEventListener(
@@ -1249,6 +2121,40 @@ document.addEventListener(
             );
         }
 
+        if (markWrongBtn) {
+            markWrongBtn.addEventListener(
+                "click",
+                manualMarkCurrentWrong
+            );
+        }
+
+        if (wrongBookBtn) {
+            wrongBookBtn.addEventListener(
+                "click",
+                openWrongBook
+            );
+        }
+
+        if (wrongBookClose) {
+            wrongBookClose.addEventListener(
+                "click",
+                closeWrongBook
+            );
+        }
+
+        if (wrongBookModal) {
+            wrongBookModal.addEventListener(
+                "click",
+                event => {
+                    if (event.target === wrongBookModal) {
+                        closeWrongBook();
+                    }
+                }
+            );
+        }
+
+        loadLearningState();
+
         const restored = loadState();
 
         if (!restored) {
@@ -1258,7 +2164,8 @@ document.addEventListener(
                 id,
                 name: "新对话",
                 messages: [],
-                teaching: null
+                teaching: null,
+                learningQuestion: null
             });
 
             currentId = id;
