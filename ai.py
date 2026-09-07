@@ -389,10 +389,6 @@ def _looks_like_broken_math(text):
     if flattened_condition and r"\begin{cases}" not in text:
         return True
 
-    for _delimiter, math_content in _iter_math_segments(text):
-        if _has_naked_chinese_in_math(math_content):
-            return True
-
     plain_text = _remove_math_for_plaintext_checks(text)
 
     # a_{ij}= 被放在普通文本中，后面才另起数学块。
@@ -413,6 +409,58 @@ def _looks_like_broken_math(text):
         return True
 
     return False
+
+
+
+def _fallback_math_to_readable_text(text):
+    """
+    如果 LaTeX 结构损坏且自动重生成失败，
+    将常见数学标记转成可读纯文本，避免整次对话被打断。
+    """
+    if not isinstance(text, str):
+        return ""
+
+    value = _repair_common_latex_typos(text)
+
+    replacements = (
+        (r"\begin{cases}", "\n"),
+        (r"\end{cases}", "\n"),
+        (r"\left", ""),
+        (r"\right", ""),
+        (r"\times", "×"),
+        (r"\cdot", "·"),
+        (r"\leq", "≤"),
+        (r"\le", "≤"),
+        (r"\geq", "≥"),
+        (r"\ge", "≥"),
+        (r"\neq", "≠"),
+        (r"\rightarrow", "→"),
+        (r"\Rightarrow", "⇒"),
+        (r"\in", "∈"),
+    )
+
+    for old, new in replacements:
+        value = value.replace(old, new)
+
+    value = re.sub(
+        r"\\text\{([^{}]*)\}",
+        r"\1",
+        value
+    )
+
+    value = value.replace("$$", "")
+    value = value.replace("$", "")
+    value = value.replace(r"\\", "\n")
+
+    value = re.sub(
+        r"\\(?:displaystyle|quad|qquad)",
+        " ",
+        value
+    )
+    value = re.sub(r"[ \t]{2,}", " ", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+
+    return value.strip()
 
 
 def _regenerate_broken_math_answer(
@@ -651,11 +699,16 @@ $$
                 else:
                     print(
                         "数学格式自动重生成未成功，"
-                        "已阻止损坏公式返回前端。"
+                        "已降级为可读文本，避免中断当前对话。"
                     )
-                    return _failure(
-                        "数学公式生成格式异常，请重新发送。"
+                    content = _fallback_math_to_readable_text(
+                        content
                     )
+
+                    if not content:
+                        return _failure(
+                            "AI 服务没有生成有效回答，请重新发送。"
+                        )
 
             print("DeepSeek API 调用成功")
             return _success(content)
