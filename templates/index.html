@@ -301,6 +301,75 @@ body {
     background:#1f2937;
     color:#cbd5e1;
 }
+
+.wrong-actions button.danger {
+    color:#fecaca;
+}
+
+.wrong-toolbar {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:10px 14px;
+    border-bottom:1px solid #1f2937;
+    background:#0f172a;
+}
+
+.wrong-stats {
+    font-size:12px;
+    color:#94a3b8;
+}
+
+.wrong-filters {
+    display:flex;
+    gap:6px;
+}
+
+.wrong-filters button {
+    padding:5px 9px;
+    border:1px solid #334155;
+    border-radius:7px;
+    background:#111827;
+    color:#94a3b8;
+    cursor:pointer;
+    font-size:12px;
+}
+
+.wrong-filters button.active {
+    background:#1d4ed8;
+    border-color:#2563eb;
+    color:white;
+}
+
+.wrong-question p,
+.wrong-feedback-body p {
+    margin:6px 0;
+}
+
+.wrong-question mjx-container,
+.wrong-feedback mjx-container {
+    max-width:100%;
+    overflow-x:auto;
+    overflow-y:hidden;
+}
+
+.wrong-feedback-body {
+    margin-top:4px;
+    max-height:190px;
+    overflow:auto;
+}
+
+@media (max-width:700px) {
+    .wrong-toolbar {
+        align-items:flex-start;
+        flex-direction:column;
+    }
+
+    .wrong-actions {
+        flex-wrap:wrap;
+    }
+}
 </style>
 
 <script>
@@ -364,6 +433,14 @@ window.MathJax = {
         <div class="modal-head">
             <div>错题本</div>
             <button id="wrongBookClose" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="wrong-toolbar">
+            <div id="wrongBookStats" class="wrong-stats"></div>
+            <div class="wrong-filters">
+                <button type="button" data-wrong-filter="all">全部</button>
+                <button type="button" data-wrong-filter="pending">待订正</button>
+                <button type="button" data-wrong-filter="corrected">已完成</button>
+            </div>
         </div>
         <div id="wrongBookList"></div>
     </div>
