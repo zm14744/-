@@ -45,7 +45,7 @@ let preserveChatScrollOnce = null;
 const TYPING_RENDER_INTERVAL = 30;
 const TYPING_CHARS_PER_TICK = 3;
 
-let requestBusy = false;
+const busySessionIds = new Set();
 
 
 // -----------------------------
@@ -75,15 +75,48 @@ function enableInput(enable) {
     if (imageBtn) imageBtn.disabled = !enable;
 }
 
-function setBusy(busy) {
-    requestBusy = busy;
+function sessionBusyKey(sessionId) {
+    return String(sessionId ?? "");
+}
+
+function isSessionBusy(sessionId = currentId) {
+    if (sessionId === null || sessionId === undefined) {
+        return false;
+    }
+
+    return busySessionIds.has(
+        sessionBusyKey(sessionId)
+    );
+}
+
+function isCurrentSessionTyping() {
+    return Boolean(
+        typingTimer
+        && String(typingSessionId) === String(currentId)
+    );
+}
+
+function refreshInputAvailability() {
+    enableInput(
+        !isSessionBusy(currentId)
+        && !isCurrentSessionTyping()
+    );
+}
+
+function setSessionBusy(sessionId, busy) {
+    const key = sessionBusyKey(sessionId);
+
+    if (!key) return;
 
     if (busy) {
-        enableInput(false);
-    } else if (!typingTimer) {
-        enableInput(true);
+        busySessionIds.add(key);
+    } else {
+        busySessionIds.delete(key);
     }
+
+    refreshInputAvailability();
 }
+
 
 function normalizeTeaching(value) {
     if (!value || typeof value !== "object") {
@@ -159,7 +192,7 @@ function normalizeRetestSession(value) {
 
 function createEmptyLearningState() {
     return {
-        version: 6,
+        version: 7,
         knowledge: {},
         events: [],
         wrongQuestions: []
@@ -279,7 +312,9 @@ function normalizeLearningState(value) {
             .filter(item => item && typeof item === "object")
             .map(item => {
                 const question = typeof item.question === "string"
-                    ? item.question.trim()
+                    ? sanitizeStoredWrongQuestionText(
+                        item.question
+                    )
                     : "";
 
                 if (!question) return null;
@@ -900,6 +935,414 @@ function buildLearningQuestionFromSession(session, teaching, excludeLatest = fal
     return null;
 }
 
+function stripQuestionDecorations(text) {
+    return String(text || "")
+        .replace(/^\s*【(?:题目|练习题|题目文字)】\s*/m, "")
+        .replace(/^\s*(?:#{1,4}\s*)?(?:题目|练习题)\s*[:：]?\s*$/m, "")
+        .trim();
+}
+
+function cutQuestionAfterMetaSections(text) {
+    let value = String(text || "").trim();
+
+    if (!value) return "";
+
+    const stopPatterns = [
+        /(?:^|\n)\s*(?:-{3,}\s*\n\s*)?(?:\*\*)?(?:提示|思考提示|解题提示|小提示|关键提示)\s*[:：]?(?:\*\*)?/im,
+        /(?:^|\n)\s*(?:#{1,6}\s*)?(?:参考答案|答案|解析|解答|详细解析|解题过程|过程)\s*[:：]?/im,
+        /(?:^|\n)\s*答\s*[:：]/im,
+        /(?:^|\n)\s*(?:你先|请先|先尝试|可以先|做完后|卡住了|如果卡住|有结果后|把答案发给我|告诉我你的进度).{0,220}$/im
+    ];
+
+    let end = value.length;
+
+    for (const pattern of stopPatterns) {
+        const match = pattern.exec(value);
+
+        if (
+            match
+            && typeof match.index === "number"
+        ) {
+            end = Math.min(end, match.index);
+        }
+    }
+
+    return value
+        .slice(0, end)
+        .replace(/\n\s*[-—_=]{3,}\s*$/g, "")
+        .trim();
+}
+
+function removeConversationalQuestionPrefix(text) {
+    let value = String(text || "").trim();
+
+    if (!value) return "";
+
+    // 明确题目标题后的内容优先。
+    const explicitPatterns = [
+        /【(?:题目|练习题)】/,
+        /(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)/m,
+        /(?:^|\n)\s*\*\*(?:题目|练习题)[:：]?\*\*\s*/m,
+        /(?:^|\n)\s*(?:题目|练习题)\s*[:：]\s*/m,
+        /(?:^|\n)\s*(?:题目|练习题)\s*(?:\n|$)/m
+    ];
+
+    let best = null;
+
+    for (const pattern of explicitPatterns) {
+        const match = pattern.exec(value);
+
+        if (
+            match
+            && (
+                !best
+                || match.index < best.index
+            )
+        ) {
+            best = match;
+        }
+    }
+
+    if (best) {
+        return value
+            .slice(best.index + best[0].length)
+            .trim();
+    }
+
+    // AI 常见开场白：真正题干通常从“设/已知/给定/下列/在……中”开始。
+    const startPatterns = [
+        /(?:^|\n)\s*(?=设)/m,
+        /(?:^|\n)\s*(?=已知)/m,
+        /(?:^|\n)\s*(?=给定)/m,
+        /(?:^|\n)\s*(?=下列)/m,
+        /(?:^|\n)\s*(?=在.{0,50}(?:图|集合|关系|系统|空间|序列|网络|情形)中)/m,
+        /(?:^|\n)\s*(?=求(?:解|证|出|下列|$))/m,
+        /(?:^|\n)\s*(?=证明)/m,
+        /(?:^|\n)\s*(?=计算)/m,
+        /(?:^|\n)\s*(?=判断)/m
+    ];
+
+    let start = -1;
+
+    for (const pattern of startPatterns) {
+        const match = pattern.exec(value);
+
+        if (
+            match
+            && (
+                start < 0
+                || match.index < start
+            )
+        ) {
+            start = match.index;
+        }
+    }
+
+    if (start > 0) {
+        const prefix = value.slice(0, start).trim();
+
+        // 只在前缀明显是聊天套话时切掉，避免误删题干前言。
+        if (
+            /(?:好的|没问题|可以|这次|给你|我来|我们来|先来|出一道|练习一下|下面是)/.test(prefix)
+            && prefix.length <= 160
+        ) {
+            value = value.slice(start).trim();
+        }
+    }
+
+    return value;
+}
+
+function extractOcrQuestionPayload(text) {
+    const value = String(text || "").trim();
+
+    if (!value) return "";
+
+    const questionMarker = "【题目文字】";
+    const graphMarker = "【图形信息】";
+
+    if (!value.includes(questionMarker)) {
+        return cutQuestionAfterMetaSections(value);
+    }
+
+    const qStart = value.indexOf(questionMarker) + questionMarker.length;
+    const gStart = value.indexOf(graphMarker);
+
+    let question = value.slice(
+        qStart,
+        gStart >= 0 ? gStart : value.length
+    ).trim();
+
+    question = cutQuestionAfterMetaSections(question);
+
+    if (gStart >= 0) {
+        const graphInfo = value
+            .slice(gStart + graphMarker.length)
+            .trim();
+
+        // 图形结构是题目必要条件，不属于“无关聊天内容”。
+        if (graphInfo) {
+            question = `${question}\n\n【图形信息】\n${graphInfo}`.trim();
+        }
+    }
+
+    return question;
+}
+
+function countTopLevelQuestionParts(text) {
+    const value = String(text || "");
+
+    const parenthesized = (
+        value.match(
+            /(?:^|\n)\s*[（(]\s*\d{1,2}\s*[)）]\s*\S+/gm
+        ) || []
+    ).length;
+
+    const numbered = (
+        value.match(
+            /(?:^|\n)\s*\d{1,2}\s*[、.．]\s*\S+/gm
+        ) || []
+    ).length;
+
+    return Math.max(parenthesized, numbered);
+}
+
+function looksLikeQuestionPayload(text) {
+    const value = String(text || "").trim();
+
+    if (!value) return false;
+
+    if (/【(?:题目|练习题|题目文字)】/.test(value)) {
+        return true;
+    }
+
+    if (/[？?]/.test(value)) {
+        return true;
+    }
+
+    if (countTopLevelQuestionParts(value) >= 1) {
+        return true;
+    }
+
+    const compact = value
+        .replace(/^[#>*\s]+/, "")
+        .trim();
+
+    const starts = [
+        "设",
+        "已知",
+        "给定",
+        "求",
+        "证明",
+        "计算",
+        "判断",
+        "写出",
+        "列出",
+        "选择",
+        "填空",
+        "解答",
+        "下列",
+        "若",
+        "问",
+        "什么是",
+        "为什么",
+        "为何",
+        "如何",
+        "怎样"
+    ];
+
+    if (
+        starts.some(item => compact.startsWith(item))
+        && compact.length >= 4
+    ) {
+        return true;
+    }
+
+    if (
+        /(?:多少|是否|哪个|哪些|为何|为什么|如何|怎样|求出|求证|求值|求解)/.test(compact)
+        && compact.length >= 6
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+function isConversationControlOnly(text) {
+    const value = String(text || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+    if (!value) return true;
+
+    const exact = [
+        "不会做",
+        "不会",
+        "不知道",
+        "继续",
+        "下一步",
+        "下一步呢",
+        "然后呢",
+        "好的",
+        "好",
+        "谢谢",
+        "懂了",
+        "再提示一下",
+        "给我提示",
+        "完整解析",
+        "给我完整解析",
+        "直接给答案",
+        "告诉我答案",
+        "出一道题",
+        "给我出一道题",
+        "再来一道"
+    ];
+
+    if (exact.includes(value)) {
+        return true;
+    }
+
+    return Boolean(
+        value.length <= 36
+        && (
+            isExerciseRequestText(value)
+            || /^(?:帮我|给我|请|再)?(?:讲一下|解释一下|继续讲|看一下|检查一下|提示一下)/.test(value)
+        )
+    );
+}
+
+function extractAiQuestionPayload(text) {
+    let value = String(text || "").trim();
+
+    if (!value) return "";
+
+    value = removeConversationalQuestionPrefix(value);
+    value = cutQuestionAfterMetaSections(value);
+    value = stripQuestionDecorations(value);
+
+    return value.trim();
+}
+
+function sanitizeStoredWrongQuestionText(text) {
+    let value = String(text || "").trim();
+
+    if (!value) return "";
+
+    if (value.includes("【题目文字】")) {
+        value = extractOcrQuestionPayload(value);
+    } else {
+        value = removeConversationalQuestionPrefix(value);
+        value = cutQuestionAfterMetaSections(value);
+        value = stripQuestionDecorations(value);
+    }
+
+    // 旧版可能把一整段纯讲解存进错题本；明确无题干时直接丢弃。
+    if (
+        isClearlyNonQuestionWrongBookText(value)
+        && !looksLikeQuestionPayload(value)
+    ) {
+        return "";
+    }
+
+    return value.slice(0, 3000).trim();
+}
+
+function extractQuestionOnlyFromMessage(message) {
+    if (
+        !message
+        || typeof message.text !== "string"
+    ) {
+        return "";
+    }
+
+    if (message.role === "user") {
+        if (message.source === "ocr") {
+            return extractOcrQuestionPayload(
+                message.text
+            );
+        }
+
+        return cutQuestionAfterMetaSections(
+            message.text
+        );
+    }
+
+    if (message.role === "ai") {
+        const generated = String(
+            message.generatedQuestion || ""
+        ).trim();
+
+        if (generated) {
+            return sanitizeStoredWrongQuestionText(
+                generated
+            );
+        }
+
+        return extractAiQuestionPayload(
+            message.text
+        );
+    }
+
+    return "";
+}
+
+function shouldOfferWrongBookAction(message) {
+    if (
+        !message
+        || message.isError
+        || message.isNotice
+        || typeof message.text !== "string"
+        || !message.text.trim()
+    ) {
+        return false;
+    }
+
+    if (message.role === "user") {
+        if (message.source === "ocr") {
+            return true;
+        }
+
+        if (isConversationControlOnly(message.text)) {
+            return false;
+        }
+
+        // 这里不看知识点、不看题型、不看离散数学分类。
+        // 只做通用“这条内容里是否有一个问题”的轻量判断。
+        return looksLikeQuestionPayload(
+            extractQuestionOnlyFromMessage(message)
+        );
+    }
+
+    if (message.role === "ai") {
+        if (
+            message.generatedExercise
+            || message.generatedQuestion
+        ) {
+            return Boolean(
+                extractQuestionOnlyFromMessage(message)
+            );
+        }
+
+        const candidate = extractAiQuestionPayload(
+            message.text
+        );
+
+        // AI 普通讲解里经常有反问句，因此这里更保守：
+        // 只有明确题目标题或多个独立小问才主动显示按钮。
+        return Boolean(
+            candidate
+            && (
+                /【(?:题目|练习题)】/.test(message.text)
+                || /(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)/m.test(message.text)
+                || countTopLevelQuestionParts(candidate) >= 2
+            )
+        );
+    }
+
+    return false;
+}
+
+
 function splitQuestionBankText(text) {
     const source = String(text || "").trim();
 
@@ -1283,6 +1726,17 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
     const info = normalizeLearningQuestion(questionInfo);
     if (!info) return { entry: null, countAsMistake: false };
 
+    info.text = sanitizeStoredWrongQuestionText(
+        info.text
+    ).slice(0, 3000);
+
+    if (!info.text) {
+        return {
+            entry: null,
+            countAsMistake: false
+        };
+    }
+
     const fingerprint = wrongQuestionFingerprint(info.text);
 
     const existing = learningState.wrongQuestions.find(
@@ -1474,7 +1928,8 @@ function processLearningFromReply(
     // “记为错题”应保存模型生成的题目，而不是“给我一道题”这句请求。
     if (
         (
-            normalized.mode === "exercise"
+            Boolean(String(generatedQuestion || "").trim())
+            || normalized.mode === "exercise"
             || isExerciseRequestText(latestText)
         )
         && typeof reply === "string"
@@ -1482,7 +1937,7 @@ function processLearningFromReply(
     ) {
         const generatedExercise = (
             String(generatedQuestion || "").trim()
-            || extractAiGeneratedExerciseText(reply)
+            || extractAiQuestionPayload(reply)
         );
 
         session.learningQuestion = {
@@ -3820,6 +4275,66 @@ function restoreMathAfterMarkdown(html, mathSegments) {
     return restored;
 }
 
+function repairBareLatexTextSegment(segment) {
+    let value = String(segment || "");
+
+    if (!value) return "";
+
+    // 路径类表达式：v_1 \to v_2 \to v_3
+    value = value.replace(
+        /((?:[A-Za-z]_(?:\{[^}\n]+\}|[A-Za-z0-9]+)|[A-Za-z][0-9]+)(?:\s*\\(?:to|rightarrow|Rightarrow|xrightarrow\{[^}\n]+\})\s*(?:[A-Za-z]_(?:\{[^}\n]+\}|[A-Za-z0-9]+)|[A-Za-z][0-9]+))+)/g,
+        match => `$${match}$`
+    );
+
+    // 单个常见上下标/幂表达式低风险包裹。
+    value = value.replace(
+        /(?<![$A-Za-z0-9])([A-Za-z](?:_\{[^}\n]{1,30}\}|_[A-Za-z0-9]{1,12}|\^\{[^}\n]{1,30}\}|\^[A-Za-z0-9]{1,8}))(?![$A-Za-z0-9])/g,
+        match => `$${match}$`
+    );
+
+    return value;
+}
+
+function prepareAiDisplayText(text) {
+    let value = String(text ?? "");
+
+    if (!value) return "";
+
+    // 裸矩阵/cases/aligned 只在它们尚未处在 $$ 中时补块公式。
+    value = value.replace(
+        /(^|\n)(\s*)(\\begin\{(bmatrix|pmatrix|matrix|cases|aligned)\}[\s\S]*?\\end\{\3\})(?=\n|$)/g,
+        (_match, prefix, indent, math, _env, offset, full) => {
+            const before = full.slice(
+                Math.max(0, offset - 4),
+                offset
+            );
+
+            if (/\$\$\s*$/.test(before)) {
+                return _match;
+            }
+
+            return `${prefix}${indent}$$\n${math}\n$$`;
+        }
+    );
+
+    // 只修复数学定界符外的文本，避免破坏已经正确的 MathJax。
+    const parts = value.split(/(\$\$[\s\S]*?\$\$|\$[^$\n]*\$|```[\s\S]*?```|`[^`\n]*`)/g);
+
+    return parts.map(part => {
+        if (
+            /^\$\$/.test(part)
+            || /^\$/.test(part)
+            || /^```/.test(part)
+            || /^`/.test(part)
+        ) {
+            return part;
+        }
+
+        return repairBareLatexTextSegment(part);
+    }).join("");
+}
+
+
 function markdownToHtml(text) {
     const source = String(text ?? "");
 
@@ -4140,7 +4655,7 @@ function fallbackHttpError(status) {
 async function requestAiReply(session) {
     if (!session) return;
 
-    setBusy(true);
+    setSessionBusy(session.id, true);
 
     try {
         const response = await fetch("/chat", {
@@ -4229,14 +4744,36 @@ async function requestAiReply(session) {
             );
         }
 
+        const localGeneratedQuestion = sanitizeStoredWrongQuestionText(
+            data.generated_question
+            || extractAiQuestionPayload(
+                data.reply
+            )
+            || ""
+        );
+
         const assistantMeta = {
             generatedExercise: Boolean(
-                data.generated_question
-                || data.generated_teaching
+                localGeneratedQuestion
+                && (
+                    data.generated_teaching
+                    || isExerciseRequestText(
+                        getLatestUserMessage(session)?.text || ""
+                    )
+                    || countTopLevelQuestionParts(
+                        localGeneratedQuestion
+                    ) >= 1
+                    || /【(?:题目|练习题)】/.test(data.reply)
+                )
             ),
-            generatedQuestion: data.generated_question || "",
+            generatedQuestion: localGeneratedQuestion,
             generatedAnswer: data.generated_answer || "",
-            generatedTeaching: data.generated_teaching || null
+            generatedTeaching: data.generated_teaching
+                || (
+                    localGeneratedQuestion
+                        ? returnedTeaching
+                        : null
+                )
         };
 
         if (currentId === session.id) {
@@ -4268,12 +4805,15 @@ async function requestAiReply(session) {
         );
 
     } finally {
-        setBusy(false);
+        setSessionBusy(session.id, false);
     }
 }
 
 function send() {
-    if (typingTimer || requestBusy) {
+    if (
+        isCurrentSessionTyping()
+        || isSessionBusy(currentId)
+    ) {
         return;
     }
 
@@ -4398,7 +4938,10 @@ function cleanOcrTextForVisual(rawText, hasVisualStructure) {
 // OCR 图片识题
 // -----------------------------
 function openImagePicker() {
-    if (typingTimer || requestBusy) {
+    if (
+        isCurrentSessionTyping()
+        || isSessionBusy(currentId)
+    ) {
         return;
     }
 
@@ -4419,7 +4962,11 @@ async function handleImageSelected(event) {
         input.value = "";
     }
 
-    if (!file || typingTimer || requestBusy) {
+    if (
+        !file
+        || isCurrentSessionTyping()
+        || isSessionBusy(currentId)
+    ) {
         return;
     }
 
@@ -4447,7 +4994,7 @@ async function handleImageSelected(event) {
     const session = getCurrent();
     if (!session) return;
 
-    setBusy(true);
+    setSessionBusy(session.id, true);
 
     try {
         const formData = new FormData();
@@ -4543,7 +5090,7 @@ async function handleImageSelected(event) {
         return;
 
     } finally {
-        setBusy(false);
+        setSessionBusy(session.id, false);
     }
 
     // OCR 完成后自动把识别结果交给 AI。
@@ -4569,7 +5116,11 @@ function isClearlyNonQuestionWrongBookText(text) {
         /你选哪个/,
         /可以从以下.*选/,
         /从以下.*选择/,
-        /如果你是想让我.*(?:核对|整理|讲解)/
+        /如果你是想让我.*(?:核对|整理|讲解)/,
+        /^(?:思路提示|解题提示|关键提示)[：:\s]/,
+        /^做这道题[，,。\s]/,
+        /^没关系[，,。\s].*(?:一步一步|一点一点)/,
+        /^第(?:一|二|三|1|2|3)步[：:\s].*(?:先|看|理解|弄清)/
     ];
 
     return patterns.some(
@@ -4678,25 +5229,29 @@ function looksLikeAiGeneratedQuestion(
         return false;
     }
 
-    // AI 生成题必须有明确的“题目”标记。
-    // 这样普通讲解、让用户选方向、题库说明都不会误出现错题按钮。
-    const explicitHeading = Boolean(
-        /【题目】|【练习题】|(?:^|\n)#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)|(?:^|\n)\*\*(?:题目|练习题)[:：]?\*\*|(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)/m.test(value)
-    );
-
-    if (!explicitHeading) {
-        return false;
-    }
-
-    const extracted = extractAiGeneratedExerciseText(
+    const extracted = extractStructuredAiQuestion(
         value
     );
 
-    // 题目本身已经有明确“题目/练习题”标题，
-    // 且提取后的正文确实像一道题，就允许记录。
-    // 不再依赖上一条用户消息，否则删除/修改上一条消息后会让历史 AI 题失去按钮。
-    return looksLikeChatQuestionText(
-        extracted
+    if (!extracted) {
+        return false;
+    }
+
+    const hasExplicitHeading = (
+        explicitQuestionHeadingEnd(value) >= 0
+    );
+
+    if (hasExplicitHeading) {
+        return looksLikeChatQuestionText(
+            extracted
+        );
+    }
+
+    return (
+        countQuestionSubparts(extracted) >= 2
+        && looksLikeChatQuestionText(
+            extracted
+        )
     );
 }
 
@@ -4723,51 +5278,9 @@ function previousUserMessageBefore(session, messageIndex) {
 }
 
 function canMessageBeWrongQuestion(session, messageIndex, message) {
-    if (
-        !session
-        || !message
-        || message.isError
-        || message.isNotice
-        || typeof message.text !== "string"
-        || !message.text.trim()
-    ) {
-        return false;
-    }
-
-    if (message.role === "user") {
-        return looksLikeChatQuestionText(
-            message.text
-        );
-    }
-
-    if (message.role === "ai") {
-        if (
-            message.generatedExercise
-            && (
-                message.generatedQuestion
-                || looksLikeChatQuestionText(
-                    extractAiGeneratedExerciseText(
-                        message.text
-                    )
-                )
-            )
-        ) {
-            return true;
-        }
-
-        const previousUser = previousUserMessageBefore(
-            session,
-            messageIndex
-        );
-
-        return looksLikeAiGeneratedQuestion(
-            message.text,
-            previousUser?.text || ""
-        );
-    }
-
-    return false;
+    return shouldOfferWrongBookAction(message);
 }
+
 
 function questionInfoFromChatMessage(session, messageIndex) {
     if (!session || !Array.isArray(session.messages)) {
@@ -4778,11 +5291,8 @@ function questionInfoFromChatMessage(session, messageIndex) {
 
     if (
         !message
-        || !canMessageBeWrongQuestion(
-            session,
-            messageIndex,
-            message
-        )
+        || message.isError
+        || message.isNotice
     ) {
         return null;
     }
@@ -4795,21 +5305,22 @@ function questionInfoFromChatMessage(session, messageIndex) {
         session.learningQuestion
     );
 
-    let text = message.text.trim();
+    let text = sanitizeStoredWrongQuestionText(
+        extractQuestionOnlyFromMessage(
+            message
+        )
+    );
+
     let source = message.source === "ocr"
         ? "ocr"
         : "text";
 
     if (message.role === "ai") {
-        text = (
-            String(message.generatedQuestion || "").trim()
-            || extractAiGeneratedExerciseText(
-                message.text
-            )
-            || message.text.trim()
-        );
-
         source = "ai";
+    }
+
+    if (!text) {
+        return null;
     }
 
     const savedMatches = Boolean(
@@ -4885,8 +5396,10 @@ function markChatMessageAsWrong(sessionId, messageIndex) {
         messageIndex
     );
 
-    if (!questionInfo) {
-        window.alert("这条消息不像一道可记录的题目。");
+    if (!questionInfo || !questionInfo.text) {
+        window.alert(
+            "没有从这条内容中提取到有效题目。你可以先把题目单独发一条消息，再加入错题本。"
+        );
         return;
     }
 
@@ -5092,7 +5605,7 @@ function startTyping(
 
     typingDiv = div;
 
-    enableInput(false);
+    refreshInputAvailability();
 
     let index = 0;
 
@@ -5138,7 +5651,9 @@ function finishTyping() {
 
     if (typingDiv) {
         typingDiv.innerHTML =
-            `<div class="ai-content">${markdownToHtml(typingFullText)}</div>`;
+            `<div class="ai-content">${markdownToHtml(
+                prepareAiDisplayText(typingFullText)
+            )}</div>`;
     }
 
     if (session) {
@@ -5161,9 +5676,7 @@ function finishTyping() {
     renderSessions();
     renderInfo();
 
-    if (!requestBusy) {
-        enableInput(true);
-    }
+    refreshInputAvailability();
 
     if (finishedDiv) {
         renderMath(finishedDiv);
@@ -5196,7 +5709,9 @@ function forceCompleteTyping() {
 
     if (typingDiv) {
         typingDiv.innerHTML =
-            `<div class="ai-content">${markdownToHtml(typingFullText)}</div>`;
+            `<div class="ai-content">${markdownToHtml(
+                prepareAiDisplayText(typingFullText)
+            )}</div>`;
     }
 
     if (session) {
@@ -5219,9 +5734,7 @@ function forceCompleteTyping() {
     renderSessions();
     renderInfo();
 
-    if (!requestBusy) {
-        enableInput(true);
-    }
+    refreshInputAvailability();
 
     if (finishedDiv) {
         renderMath(finishedDiv);
@@ -5291,7 +5804,9 @@ function renderChat() {
             content.style.whiteSpace = "pre-wrap";
         } else {
             content.innerHTML =
-                `<div class="ai-content">${markdownToHtml(message.text)}</div>`;
+                `<div class="ai-content">${markdownToHtml(
+                    prepareAiDisplayText(message.text)
+                )}</div>`;
         }
 
         div.appendChild(content);
@@ -5300,9 +5815,7 @@ function renderChat() {
         actions.className = "msg-actions";
 
         if (
-            canMessageBeWrongQuestion(
-                session,
-                messageIndex,
+            shouldOfferWrongBookAction(
                 message
             )
         ) {
@@ -5441,6 +5954,10 @@ function renderSessions() {
 
             removeLearningEventsForSession(
                 session.id
+            );
+
+            busySessionIds.delete(
+                sessionBusyKey(session.id)
             );
 
             sessions = sessions.filter(
@@ -5591,10 +6108,102 @@ function getKnowledgeGraphCategories() {
     ));
 }
 
+function getEffectiveSessionTeaching(session) {
+    if (!session) return null;
+
+    const current = normalizeTeaching(
+        session.teaching
+    );
+
+    // 从后往前找“最近一道实际题目”。
+    for (
+        let index = session.messages.length - 1;
+        index >= 0;
+        index -= 1
+    ) {
+        const message = session.messages[index];
+
+        if (!message) continue;
+
+        if (message.role === "ai") {
+            const question = extractQuestionOnlyFromMessage(
+                message
+            );
+
+            if (
+                question
+                && (
+                    message.generatedExercise
+                    || message.generatedQuestion
+                )
+            ) {
+                const own = normalizeTeaching(
+                    message.generatedTeaching
+                );
+
+                if (
+                    own
+                    && own.category !== "待识别"
+                ) {
+                    return own;
+                }
+
+                const learningQuestion = normalizeLearningQuestion(
+                    session.learningQuestion
+                );
+
+                if (
+                    learningQuestion
+                    && learningQuestion.source === "ai"
+                    && wrongQuestionFingerprint(
+                        learningQuestion.text
+                    ) === wrongQuestionFingerprint(
+                        question
+                    )
+                    && learningQuestion.category
+                ) {
+                    return {
+                        category: learningQuestion.category,
+                        related_categories: current?.related_categories || [],
+                        knowledge_points: learningQuestion.knowledgePoints,
+                        focus_points: learningQuestion.focusPoints,
+                        prerequisite_points: current?.prerequisite_points || [],
+                        knowledge_path: current?.knowledge_path || learningQuestion.knowledgePoints,
+                        question_type: current?.question_type || "练习题",
+                        mode: "exercise",
+                        confidence: current?.confidence || 0.9
+                    };
+                }
+
+                // 最近一道题就是 AI 题，但本地暂时没单独元数据时，
+                // session.teaching 通常就是后端刚返回的 generated_teaching。
+                return current;
+            }
+        }
+
+        if (message.role === "user") {
+            const question = extractQuestionOnlyFromMessage(
+                message
+            );
+
+            if (
+                question
+                && looksLikeQuestionPayload(question)
+                && !isConversationControlOnly(message.text)
+            ) {
+                return current;
+            }
+        }
+    }
+
+    return current;
+}
+
+
 function getCurrentKnowledgeContext() {
     const session = getCurrent();
-    const teaching = normalizeTeaching(
-        session?.teaching
+    const teaching = getEffectiveSessionTeaching(
+        session
     );
     const learningQuestion = currentLearningQuestion(
         session,
@@ -6563,7 +7172,7 @@ function renderInfo() {
         `消息数：${session.messages.length}`
     ];
 
-    const teaching = normalizeTeaching(session.teaching);
+    const teaching = getEffectiveSessionTeaching(session);
 
     if (teaching) {
         lines.push(
@@ -6597,6 +7206,7 @@ function renderAll() {
     renderInfo();
     renderLearningSummary();
     renderKnowledgeGraph();
+    refreshInputAvailability();
 }
 
 
@@ -6885,6 +7495,6 @@ document.addEventListener(
         }
 
         renderAll();
-        enableInput(true);
+        refreshInputAvailability();
     }
 );
