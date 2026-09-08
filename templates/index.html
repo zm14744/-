@@ -1267,10 +1267,46 @@ body {
 }
 
 .kg-history-preview {
-    margin-top:7px;
+    margin-top:8px;
+    max-height:180px;
+    overflow:auto;
+    padding:9px 10px;
+    border:1px solid #1f2d42;
+    border-radius:8px;
+    background:#0b1220;
     color:#cbd5e1;
     font-size:13px;
-    line-height:1.55;
+    line-height:1.6;
+    scrollbar-width:thin;
+    scrollbar-color:#475569 transparent;
+}
+
+.kg-history-preview::-webkit-scrollbar {
+    width:6px;
+    height:6px;
+}
+
+.kg-history-preview::-webkit-scrollbar-track {
+    background:transparent;
+}
+
+.kg-history-preview::-webkit-scrollbar-thumb {
+    background:#475569;
+    border-radius:999px;
+}
+
+.kg-history-preview p {
+    margin:.35em 0;
+}
+
+.kg-history-preview ul,
+.kg-history-preview ol {
+    margin:.4em 0;
+    padding-left:1.35em;
+}
+
+.kg-history-preview mjx-container[display="true"] {
+    margin:.7em 0 !important;
 }
 
 .kg-history-points {
