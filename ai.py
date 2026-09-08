@@ -59,6 +59,7 @@ SYSTEM_PROMPT = r"""你是离散数学智能辅学系统中的教学助手。
 - 严禁把分段定义压成一行，例如 `a_{ij}=\{1, 条件, 0, 否则\}` 这种写法即使能渲染也视为错误格式。
 - 分段定义的左侧也必须放在同一个数学块里；禁止先在普通文本中写 `a_{ij}=`，再另起 `$$...$$`。
 - 数学公式与中文说明要分开。例如应写 `$A=(a_{ij})_{5\times5}$ 满足：`，不要把“满足、其中”等中文直接塞进 `$...$`。
+- `v_1`、`a_{ij}`、`A^2`、`\to`、`\frac`、`\begin{bmatrix}` 等任何 LaTeX/上下标表达都必须处在 `$...$` 或 `$$...$$` 中，禁止裸露在普通文本里。
 - 公式中的中文说明必须放入 `\text{...}`，不要把“满足、否则、相邻”等中文裸写在数学公式内部。
 - 矩阵示例：
   $$
@@ -390,6 +391,26 @@ def _looks_like_broken_math(text):
         return True
 
     plain_text = _remove_math_for_plaintext_checks(text)
+
+    # 去掉代码块/行内代码后，普通正文里不应残留裸 LaTeX。
+    plain_for_latex = re.sub(
+        r"```[\s\S]*?```|`[^`\n]*`",
+        "",
+        plain_text
+    )
+
+    if re.search(
+        r"\\(?:begin|end|frac|sqrt|to|rightarrow|Rightarrow|xrightarrow|operatorname|binom)\b",
+        plain_for_latex
+    ):
+        return True
+
+    if re.search(
+        r"(?<![A-Za-z0-9])"
+        r"[A-Za-z](?:_\{[^}\n]{1,30}\}|_[A-Za-z0-9]{1,12})",
+        plain_for_latex
+    ):
+        return True
 
     # a_{ij}= 被放在普通文本中，后面才另起数学块。
     if re.search(
@@ -1052,3 +1073,4 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
     return _failure(
         "图形结构理解暂时不可用，已保留文字识别结果。"
     )
+
