@@ -776,12 +776,31 @@ function getLatestUserMessage(session) {
     return null;
 }
 
+function isPreviousQuestionFollowUp(text) {
+    const value = String(text || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+    if (!value || value.length > 60) {
+        return false;
+    }
+
+    return /(?:上一道题|上一题|前一道题|前一题|前面那道题|前面那题|刚才上一道题|刚才上一题)/.test(
+        value
+    );
+}
+
+
 function isShortLearningFollowUp(text) {
     const value = String(text || "")
         .trim()
         .replace(/\s+/g, "");
 
     if (!value) return true;
+
+    if (isPreviousQuestionFollowUp(value)) {
+        return true;
+    }
 
     const exactCommands = [
         "继续",
@@ -1203,6 +1222,10 @@ function isConversationControlOnly(text) {
         .replace(/\s+/g, "");
 
     if (!value) return true;
+
+    if (isPreviousQuestionFollowUp(value)) {
+        return true;
+    }
 
     const exact = [
         "不会做",
@@ -2309,6 +2332,27 @@ function processLearningFromReply(
         && normalized.mode !== "check_answer"
         && normalized.mode !== "exercise"
     );
+
+    // “上一道题再讲一下”以及后续“继续”都属于题目上下文切换/保持，
+    // 不是新题。根据完整消息历史恢复真正的当前题，避免 learningQuestion
+    // 仍停留在时间上更靠后的那道题。
+    if (
+        !isSubstantiveQuestion
+        && normalized.mode !== "exercise"
+        && !String(generatedQuestion || "").trim()
+    ) {
+        const activeCandidate = activeQuestionCandidateFromHistory(
+            session
+        );
+
+        if (activeCandidate) {
+            applyQuestionCandidateAsCurrent(
+                session,
+                activeCandidate,
+                normalized
+            );
+        }
+    }
 
     if (isSubstantiveQuestion && points.length) {
         session.learningQuestion = {
@@ -5807,7 +5851,7 @@ function markChatMessageAsWrong(sessionId, messageIndex) {
     );
 }
 
-function deleteChatMessage(sessionId, messageIndex) {
+async function deleteChatMessage(sessionId, messageIndex) {
     const session = sessions.find(
         item => String(item.id) === String(sessionId)
     );
@@ -5859,6 +5903,13 @@ function deleteChatMessage(sessionId, messageIndex) {
             session.learningQuestion = null;
         }
     }
+
+    // 删除当前题后，不继续沿用已删除题目的 session.teaching。
+    // 按剩余消息历史重新确定当前题；如果上一题没有本地教学快照，
+    // 再通过轻量 /analyze-questions 接口补一次分类。
+    await ensureActiveQuestionAfterHistoryChange(
+        session
+    );
 
     saveState();
     renderChat();
@@ -6827,6 +6878,283 @@ function collectConversationQuestionCandidates(session) {
     }
 
     return candidates;
+}
+
+
+function activeQuestionCandidateFromHistory(session) {
+    if (
+        !session
+        || !Array.isArray(session.messages)
+    ) {
+        return null;
+    }
+
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+
+    if (!candidates.length) {
+        return null;
+    }
+
+    const byIndex = new Map(
+        candidates.map(candidate => [
+            candidate.index,
+            candidate
+        ])
+    );
+
+    const history = [];
+    let activePos = null;
+
+    for (
+        let index = 0;
+        index < session.messages.length;
+        index += 1
+    ) {
+        const message = session.messages[index];
+
+        if (!message) continue;
+
+        if (
+            message.role === "user"
+            && isPreviousQuestionFollowUp(
+                message.text
+            )
+        ) {
+            if (history.length) {
+                if (activePos === null) {
+                    activePos = history.length - 1;
+                }
+
+                activePos = Math.max(
+                    0,
+                    activePos - 1
+                );
+            }
+
+            continue;
+        }
+
+        const candidate = byIndex.get(index);
+
+        if (!candidate) continue;
+
+        history.push(candidate);
+        activePos = history.length - 1;
+    }
+
+    if (
+        activePos === null
+        || !history[activePos]
+    ) {
+        return null;
+    }
+
+    return history[activePos];
+}
+
+
+function candidateTeachingSnapshot(
+    session,
+    candidate
+) {
+    if (!session || !candidate) {
+        return null;
+    }
+
+    const message = session.messages?.[
+        candidate.index
+    ];
+
+    if (!message) {
+        return null;
+    }
+
+    const own = normalizeTeaching(
+        candidate.role === "ai"
+            ? message.generatedTeaching
+            : message.questionTeaching
+    );
+
+    if (own) {
+        return own;
+    }
+
+    const saved = normalizeLearningQuestion(
+        session.learningQuestion
+    );
+
+    if (
+        saved
+        && wrongQuestionFingerprint(saved.text)
+            === wrongQuestionFingerprint(
+                candidate.text
+            )
+    ) {
+        return {
+            category: saved.category || "待识别",
+            related_categories: [],
+            knowledge_points: saved.knowledgePoints,
+            focus_points: saved.focusPoints,
+            prerequisite_points: [],
+            knowledge_path: saved.knowledgePoints,
+            question_type: candidate.role === "ai"
+                ? "练习题"
+                : "综合题",
+            mode: candidate.role === "ai"
+                ? "exercise"
+                : "hint",
+            mode_label: candidate.role === "ai"
+                ? "练习出题"
+                : "提示引导",
+            confidence: "中",
+            input_source: candidate.source === "ocr"
+                ? "图片识题"
+                : "文本输入"
+        };
+    }
+
+    return null;
+}
+
+
+function applyQuestionCandidateAsCurrent(
+    session,
+    candidate,
+    teachingOverride = null
+) {
+    if (!session || !candidate) {
+        return false;
+    }
+
+    const message = session.messages?.[
+        candidate.index
+    ];
+
+    if (!message) {
+        return false;
+    }
+
+    const teaching = normalizeTeaching(
+        teachingOverride
+    ) || candidateTeachingSnapshot(
+        session,
+        candidate
+    );
+
+    session.teaching = teaching;
+
+    session.learningQuestion = {
+        text: candidate.text,
+        knowledgePoints: (
+            teaching?.knowledge_points || []
+        ).slice(0, 4),
+        focusPoints: (
+            teaching?.focus_points || []
+        ).slice(0, 2),
+        category: teaching?.category || "",
+        source: candidate.role === "ai"
+            ? "ai"
+            : (
+                candidate.source === "ocr"
+                    ? "ocr"
+                    : "text"
+            ),
+        referenceAnswer: String(
+            message.generatedAnswer || ""
+        ).trim().slice(0, 3000),
+        sessionId: session.id,
+        updatedAt: Date.now()
+    };
+
+    return Boolean(teaching);
+}
+
+
+async function ensureActiveQuestionAfterHistoryChange(
+    session
+) {
+    if (!session) {
+        return;
+    }
+
+    const candidate = activeQuestionCandidateFromHistory(
+        session
+    );
+
+    if (!candidate) {
+        session.teaching = null;
+        session.learningQuestion = null;
+        return;
+    }
+
+    if (
+        applyQuestionCandidateAsCurrent(
+            session,
+            candidate
+        )
+    ) {
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            "/analyze-questions",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    questions: [{
+                        key: candidate.key,
+                        text: candidate.text
+                    }]
+                })
+            }
+        );
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                payload?.error
+                || "题目知识识别失败。"
+            );
+        }
+
+        const teaching = normalizeTeaching(
+            payload?.results?.[0]?.teaching
+        );
+
+        if (!teaching) {
+            return;
+        }
+
+        const message = session.messages?.[
+            candidate.index
+        ];
+
+        if (message) {
+            if (candidate.role === "ai") {
+                message.generatedTeaching = teaching;
+            } else {
+                message.questionTeaching = teaching;
+            }
+        }
+
+        applyQuestionCandidateAsCurrent(
+            session,
+            candidate,
+            teaching
+        );
+    } catch (error) {
+        console.warn(
+            "删除题目后恢复上一题失败：",
+            error
+        );
+    }
 }
 
 
