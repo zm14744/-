@@ -738,15 +738,32 @@ def _looks_like_user_question_for_context(text):
     return len(value) >= 60
 
 
+def _extract_explicit_target_question(text):
+    """读取前端为“上一道题”导航附带的明确目标题干。"""
+    value = str(text or "")
+    start_marker = "【当前指向题目】"
+    end_marker = "【当前指向题目结束】"
+
+    start = value.find(start_marker)
+    if start < 0:
+        return ""
+
+    start += len(start_marker)
+    end = value.find(end_marker, start)
+    target = value[start:end if end >= 0 else None].strip()
+    return target
+
+
 def _active_question_from_messages(messages):
     """按对话顺序恢复当前所指题目。
 
     新题会把当前题切到自己；普通“继续/再解释”保持当前题；
-    “上一道题”会把当前题向前回退一题。这样 A -> B -> 上一题 -> 继续
-    会稳定停留在 A，而不会又跳回 B。
+    “上一道题”会把当前题向前回退一题。若前端已经显式附带
+    “【当前指向题目】”，则优先采用该题，避免最近消息窗口截断后猜错。
     """
     history = []
     active_pos = None
+    explicit_active = None
 
     for item in messages if isinstance(messages, list) else []:
         if not isinstance(item, dict):
@@ -760,12 +777,20 @@ def _active_question_from_messages(messages):
         if not content:
             continue
 
-        if role == "user" and _is_previous_question_followup(content):
-            if history:
-                if active_pos is None:
-                    active_pos = len(history) - 1
-                active_pos = max(0, active_pos - 1)
-            continue
+        if role == "user":
+            explicit_target = _extract_explicit_target_question(content)
+            if explicit_target:
+                classified = _classify_content(explicit_target)
+                if classified["score"] > 0:
+                    explicit_active = (explicit_target, classified)
+                continue
+
+            if _is_previous_question_followup(content):
+                if history:
+                    if active_pos is None:
+                        active_pos = len(history) - 1
+                    active_pos = max(0, active_pos - 1)
+                continue
 
         is_question = False
         if role == "user":
@@ -782,6 +807,10 @@ def _active_question_from_messages(messages):
 
         history.append((content, classified))
         active_pos = len(history) - 1
+        explicit_active = None
+
+    if explicit_active is not None:
+        return explicit_active
 
     if active_pos is None or not history:
         return None
