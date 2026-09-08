@@ -52,6 +52,7 @@ let lastRenderedChatSessionId = null;
 
 const TYPING_RENDER_INTERVAL = 30;
 const TYPING_CHARS_PER_TICK = 3;
+const LONG_RESPONSE_DIRECT_RENDER_CHARS = 2200;
 
 const busySessionIds = new Set();
 
@@ -2359,10 +2360,23 @@ function processLearningFromReply(
         );
 
         if (activeCandidate) {
+            const latestMessage = getLatestUserMessage(session);
+            const targetTeaching = (
+                latestMessage
+                && isShortLearningFollowUp(latestMessage.text)
+            )
+                ? (
+                    candidateTeachingSnapshot(
+                        session,
+                        activeCandidate
+                    ) || normalized
+                )
+                : normalized;
+
             applyQuestionCandidateAsCurrent(
                 session,
                 activeCandidate,
-                normalized
+                targetTeaching
             );
         }
     }
@@ -3129,6 +3143,7 @@ function buildWrongBookPdfExportElement(items) {
     container.style.left = "-100000px";
     container.style.top = "0";
     container.style.width = "794px";
+    container.style.boxSizing = "border-box";
     container.style.padding = "34px 40px";
     container.style.background = "#ffffff";
     container.style.color = "#111827";
@@ -3371,6 +3386,94 @@ async function typesetWrongBookPdfElement(container) {
     });
 }
 
+async function rasterizeMathJaxSvgForPdf(container) {
+    if (!container) return;
+
+    const svgs = [
+        ...container.querySelectorAll("mjx-container svg")
+    ];
+
+    for (const svg of svgs) {
+        const rect = svg.getBoundingClientRect();
+        const width = Math.max(1, rect.width);
+        const height = Math.max(1, rect.height);
+
+        const clone = svg.cloneNode(true);
+        clone.setAttribute(
+            "xmlns",
+            "http://www.w3.org/2000/svg"
+        );
+        clone.setAttribute("width", `${width}px`);
+        clone.setAttribute("height", `${height}px`);
+
+        const serialized = new XMLSerializer()
+            .serializeToString(clone);
+        const blob = new Blob(
+            [serialized],
+            { type: "image/svg+xml;charset=utf-8" }
+        );
+        const url = URL.createObjectURL(blob);
+
+        try {
+            const image = new Image();
+
+            await new Promise((resolve, reject) => {
+                image.onload = resolve;
+                image.onerror = reject;
+                image.src = url;
+            });
+
+            const scale = 2;
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(
+                1,
+                Math.ceil(width * scale)
+            );
+            canvas.height = Math.max(
+                1,
+                Math.ceil(height * scale)
+            );
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+            canvas.style.display = svg.style.display || "inline-block";
+            canvas.style.verticalAlign = "middle";
+
+            const context = canvas.getContext("2d");
+            context.setTransform(
+                scale,
+                0,
+                0,
+                scale,
+                0,
+                0
+            );
+            context.drawImage(
+                image,
+                0,
+                0,
+                width,
+                height
+            );
+
+            // html2canvas 对 MathJax SVG 的 <path>/<use> 在部分浏览器会
+            // 重复绘制。先把每个公式变成普通 canvas，再截图即可彻底
+            // 绕开这条 SVG 渲染路径。
+            svg.replaceWith(canvas);
+        } catch (error) {
+            console.warn(
+                "PDF 数学公式栅格化失败：",
+                error
+            );
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    await new Promise(resolve => {
+        requestAnimationFrame(resolve);
+    });
+}
+
 function canvasSlice(sourceCanvas, startY, sliceHeight) {
     const slice = document.createElement("canvas");
     slice.width = sourceCanvas.width;
@@ -3430,6 +3533,9 @@ async function exportWrongBookPdf() {
         await typesetWrongBookPdfElement(
             exportElement
         );
+        await rasterizeMathJaxSvgForPdf(
+            exportElement
+        );
 
         const {
             jsPDF
@@ -3463,6 +3569,7 @@ async function exportWrongBookPdf() {
                     scale: 2,
                     backgroundColor: "#ffffff",
                     useCORS: true,
+                    foreignObjectRendering: false,
                     logging: false
                 }
             );
@@ -4674,23 +4781,53 @@ function restoreMathAfterMarkdown(html, mathSegments) {
 }
 
 function repairBareLatexTextSegment(segment) {
-    let value = String(segment || "");
+    const source = String(segment || "");
 
-    if (!value) return "";
+    if (!source) return "";
 
-    // 路径类表达式：v_1 \to v_2 \to v_3
-    value = value.replace(
-        /((?:[A-Za-z]_(?:\{[^}\n]+\}|[A-Za-z0-9]+)|[A-Za-z][0-9]+)(?:\s*\\(?:to|rightarrow|Rightarrow|xrightarrow\{[^}\n]+\})\s*(?:[A-Za-z]_(?:\{[^}\n]+\}|[A-Za-z0-9]+)|[A-Za-z][0-9]+))+)/g,
-        match => `$${match}$`
-    );
+    return source
+        .split("\n")
+        .map(line => {
+            const trimmed = line.trim();
 
-    // 单个常见上下标/幂表达式低风险包裹。
-    value = value.replace(
-        /(?<![$A-Za-z0-9])([A-Za-z](?:_\{[^}\n]{1,30}\}|_[A-Za-z0-9]{1,12}|\^\{[^}\n]{1,30}\}|\^[A-Za-z0-9]{1,8}))(?![$A-Za-z0-9])/g,
-        match => `$${match}$`
-    );
+            if (!trimmed) return line;
 
-    return value;
+            // 对“整行几乎就是公式”的裸 LaTeX 先做块级包裹。
+            // 先处理这一层，避免后面的单命令修复把一个完整公式拆成很多小块。
+            if (
+                !trimmed.includes("$")
+                && !/[\u4e00-\u9fff]/.test(trimmed)
+                && /\\(?:frac|binom|sqrt|sum|prod|cup|cap|lor|land|neg|operatorname|to|rightarrow|Rightarrow)\b/.test(trimmed)
+                && /^[A-Za-z0-9\s\\{}()[\]|=+\-*/!,.^_:<>]+$/.test(trimmed)
+            ) {
+                const indent = line.match(/^\s*/)?.[0] || "";
+                return `${indent}$$${trimmed}$$`;
+            }
+
+            let value = line;
+
+            // 正文里偶尔会出现单独裸露的 LaTeX 运算符。只包裹命令本身，
+            // 避免把旁边的中文一起塞进 MathJax。
+            value = value.replace(
+                /(?<![$\\])\\(lor|land|neg|cup|cap|in|notin|subseteq|subset|supseteq|supset|leq|le|geq|ge|neq|to|rightarrow|Rightarrow)(?![A-Za-z])/g,
+                match => `$${match}$`
+            );
+
+            // 路径类表达式：v_1 \to v_2 \to v_3
+            value = value.replace(
+                /((?:[A-Za-z]_(?:\{[^}\n]+\}|[A-Za-z0-9]+)|[A-Za-z][0-9]+)(?:\s*\\(?:to|rightarrow|Rightarrow|xrightarrow\{[^}\n]+\})\s*(?:[A-Za-z]_(?:\{[^}\n]+\}|[A-Za-z0-9]+)|[A-Za-z][0-9]+))+)/g,
+                match => `$${match}$`
+            );
+
+            // 单个常见上下标/幂表达式低风险包裹。
+            value = value.replace(
+                /(?<![$A-Za-z0-9])([A-Za-z](?:_\{[^}\n]{1,30}\}|_[A-Za-z0-9]{1,12}|\^\{[^}\n]{1,30}\}|\^[A-Za-z0-9]{1,8}))(?![$A-Za-z0-9])/g,
+                match => `$${match}$`
+            );
+
+            return value;
+        })
+        .join("\n");
 }
 
 function prepareAiDisplayText(text) {
@@ -4996,6 +5133,88 @@ function newChat() {
 // -----------------------------
 // 发送聊天
 // -----------------------------
+function questionCandidateFingerprint(candidate) {
+    return candidate
+        ? wrongQuestionFingerprint(candidate.text)
+        : "";
+}
+
+function findQuestionCandidateByFingerprint(
+    session,
+    fingerprint
+) {
+    const target = String(fingerprint || "").trim();
+    if (!target) return null;
+
+    return collectConversationQuestionCandidates(session)
+        .find(candidate => (
+            questionCandidateFingerprint(candidate) === target
+        )) || null;
+}
+
+function currentQuestionCandidateFromLearningState(session) {
+    const saved = normalizeLearningQuestion(
+        session?.learningQuestion
+    );
+
+    if (!saved) return null;
+
+    return findQuestionCandidateByFingerprint(
+        session,
+        wrongQuestionFingerprint(saved.text)
+    );
+}
+
+function resolvePreviousQuestionCandidate(session) {
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+
+    if (!candidates.length) return null;
+
+    // 当前题优先以 learningQuestion 为准。这样 A -> B 后，
+    // “上一道题”明确从 B 往前退到 A，而不是重新猜最近主题。
+    const current = currentQuestionCandidateFromLearningState(
+        session
+    );
+
+    if (current) {
+        const position = candidates.findIndex(
+            candidate => (
+                questionCandidateFingerprint(candidate)
+                === questionCandidateFingerprint(current)
+            )
+        );
+
+        if (position > 0) {
+            return candidates[position - 1];
+        }
+
+        if (position === 0) {
+            return candidates[0];
+        }
+    }
+
+    // 兼容旧会话：若还没有 learningQuestion，就退到时间上倒数第二道。
+    return candidates.length >= 2
+        ? candidates[candidates.length - 2]
+        : candidates[0];
+}
+
+function buildTargetQuestionApiText(userText, candidate) {
+    const question = String(candidate?.text || "").trim();
+
+    if (!question) return String(userText || "");
+
+    return [
+        String(userText || "").trim(),
+        "",
+        "【当前指向题目】",
+        question,
+        "【当前指向题目结束】"
+    ].join("\n");
+}
+
 function buildApiMessages(session) {
     return session.messages
         .filter(message => !message.isError && !message.isNotice)
@@ -5128,15 +5347,36 @@ async function requestAiReply(session) {
         );
 
         if (returnedTeaching) {
-            session.teaching = normalizeTeaching(
+            const normalizedReturnedTeaching = normalizeTeaching(
                 returnedTeaching
             );
+            const latestUser = getLatestUserMessage(session);
+            const activeCandidate = activeQuestionCandidateFromHistory(
+                session
+            );
 
-            if (!data.generated_question) {
-                attachTeachingSnapshotToLatestQuestion(
+            // “上一道题/继续/再讲一下”不是新题。返回的教学分析必须写回
+            // 当前指向题，而不是重新覆盖到时间上最新的另一道题。
+            if (
+                !data.generated_question
+                && latestUser
+                && isShortLearningFollowUp(latestUser.text)
+                && activeCandidate
+            ) {
+                applyQuestionCandidateAsCurrent(
                     session,
-                    returnedTeaching
+                    activeCandidate,
+                    normalizedReturnedTeaching
                 );
+            } else {
+                session.teaching = normalizedReturnedTeaching;
+
+                if (!data.generated_question) {
+                    attachTeachingSnapshotToLatestQuestion(
+                        session,
+                        normalizedReturnedTeaching
+                    );
+                }
             }
 
             saveState();
@@ -5306,17 +5546,28 @@ function send() {
 
     session.messages.push(message);
 
-    // “上一道题/上一题”是明确的上下文切换。消息一进入历史就立即
-    // 把当前题切回去，不等 AI 回答后才更新右侧难点。
+    // “上一道题/上一题”是明确的上下文切换。
+    // 这里不再只靠后端从最近 16 条消息里猜，而是先由前端根据当前
+    // learningQuestion 精确找到上一题，并把目标题干通过 apiText 显式告诉后端。
     if (isPreviousQuestionFollowUp(text)) {
-        const activeCandidate = activeQuestionCandidateFromHistory(
+        const targetCandidate = resolvePreviousQuestionCandidate(
             session
         );
 
-        if (activeCandidate) {
+        if (targetCandidate) {
+            const targetFingerprint = questionCandidateFingerprint(
+                targetCandidate
+            );
+
+            message.targetQuestionFingerprint = targetFingerprint;
+            message.apiText = buildTargetQuestionApiText(
+                text,
+                targetCandidate
+            );
+
             applyQuestionCandidateAsCurrent(
                 session,
-                activeCandidate
+                targetCandidate
             );
         }
     }
@@ -6053,6 +6304,24 @@ function startTyping(
 
     if (typingTimer) {
         forceCompleteTyping();
+    }
+
+    // 长回答继续逐字输出会等待几十秒，期间 LaTeX 只能以源码形式裸露。
+    // 超过阈值时直接完整渲染 Markdown + MathJax；短回答仍保留打字机效果。
+    if (text.length >= LONG_RESPONSE_DIRECT_RENDER_CHARS) {
+        addAssistantMessage(
+            session,
+            text,
+            meta
+        );
+
+        forceChatBottomOnce = true;
+        saveState();
+        renderChat();
+        renderSessions();
+        renderInfo();
+        refreshInputAvailability();
+        return;
     }
 
     typingFullText = text;
@@ -6967,6 +7236,61 @@ function activeQuestionCandidateFromHistory(session) {
         return null;
     }
 
+    // 1. 如果最近一次“上一道题”已经被前端解析过，直接使用它记录的
+    // 目标指纹。这样 AI 回复回来后不会又被最新题目的 teaching 覆盖。
+    for (
+        let index = session.messages.length - 1;
+        index >= 0;
+        index -= 1
+    ) {
+        const message = session.messages[index];
+
+        if (!message || message.role !== "user") {
+            continue;
+        }
+
+        if (
+            isPreviousQuestionFollowUp(message.text)
+            && message.targetQuestionFingerprint
+        ) {
+            const target = candidates.find(candidate => (
+                questionCandidateFingerprint(candidate)
+                === message.targetQuestionFingerprint
+            ));
+
+            if (target) {
+                // 如果该导航之后已经出现真正的新题，新题应成为当前题。
+                const newerQuestion = candidates.find(
+                    candidate => candidate.index > index
+                );
+
+                if (!newerQuestion) {
+                    return target;
+                }
+            }
+
+            break;
+        }
+
+        // 最近用户消息若是真正的新题，就不再向前寻找旧导航命令。
+        if (
+            message.role === "user"
+            && looksLikeActualLearningProblem(message)
+        ) {
+            break;
+        }
+    }
+
+    // 2. 普通“继续/再讲一下”应保持当前 learningQuestion。
+    const savedCandidate = currentQuestionCandidateFromLearningState(
+        session
+    );
+
+    if (savedCandidate) {
+        return savedCandidate;
+    }
+
+    // 3. 旧会话没有 learningQuestion 时，按历史命令做兼容恢复。
     const byIndex = new Map(
         candidates.map(candidate => [
             candidate.index,
@@ -7018,7 +7342,7 @@ function activeQuestionCandidateFromHistory(session) {
         activePos === null
         || !history[activePos]
     ) {
-        return null;
+        return candidates[candidates.length - 1];
     }
 
     return history[activePos];
@@ -7112,6 +7436,14 @@ function applyQuestionCandidateAsCurrent(
         session,
         candidate
     );
+
+    if (teaching) {
+        if (candidate.role === "ai") {
+            message.generatedTeaching = teaching;
+        } else {
+            message.questionTeaching = teaching;
+        }
+    }
 
     session.teaching = teaching;
 
