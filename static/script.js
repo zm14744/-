@@ -6640,6 +6640,107 @@ function getCurrentKnowledgeContext() {
     };
 }
 
+function isHistorySystemMetaText(text) {
+    const value = String(text || "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
+
+    if (!value) return true;
+
+    const metaKeywords = [
+        "错题本",
+        "知识图谱",
+        "图谱",
+        "渲染",
+        "滚轮",
+        "滚动",
+        "按钮",
+        "会话",
+        "对话栏",
+        "输入框",
+        "页面",
+        "界面",
+        "外观",
+        "背景",
+        "删除消息",
+        "删除对话",
+        "ocr扫描",
+        "ocr识别",
+        "github",
+        "代码",
+        "部署",
+        "zeabur",
+        "服务器",
+        "模型生成",
+        "ai生成",
+        "功能",
+        "bug"
+    ];
+
+    return metaKeywords.some(
+        item => value.includes(item)
+    );
+}
+
+function looksLikeFormalStudyQuestionForHistory(
+    text,
+    message = null
+) {
+    const value = sanitizeStoredWrongQuestionText(
+        text
+    ).trim();
+
+    if (!value) {
+        return false;
+    }
+
+    if (isHistorySystemMetaText(value)) {
+        return false;
+    }
+
+    if (
+        message?.source === "ocr"
+        || /【(?:题目|练习题|题目文字)】/.test(value)
+    ) {
+        return true;
+    }
+
+    if (countTopLevelQuestionParts(value) >= 1) {
+        return true;
+    }
+
+    const compact = value
+        .replace(/^[#>*\s]+/, "")
+        .trim();
+
+    if (
+        /^(?:设|已知|给定|下列|若|对于|在.+中|求|证明|计算|判断|写出|列出|选择|填空|解答)/.test(
+            compact
+        )
+    ) {
+        return true;
+    }
+
+    // 概念型学习问题允许进入历史，但必须已经被 teaching.py
+    // 明确识别成离散数学模块；系统功能问句不会因为一个问号就进来。
+    const teaching = normalizeTeaching(
+        message?.questionTeaching
+        || message?.generatedTeaching
+    );
+
+    if (
+        teaching
+        && teaching.category
+        && teaching.category !== "待识别"
+        && /^(?:什么是|为什么|为何|如何|怎样)/.test(compact)
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+
 function collectConversationQuestionCandidates(session) {
     if (
         !session
@@ -6686,46 +6787,30 @@ function collectConversationQuestionCandidates(session) {
             );
 
             if (
-                message.source !== "ocr"
-                && !looksLikeQuestionPayload(
-                    question
+                !looksLikeFormalStudyQuestionForHistory(
+                    question,
+                    message
                 )
             ) {
                 continue;
             }
         } else if (message.role === "ai") {
-            question = String(
-                message.generatedQuestion || ""
-            ).trim();
-
-            if (
-                !question
-                && looksLikeStandaloneAiQuestion(
-                    message.text
-                )
-            ) {
-                question = extractAiQuestionPayload(
-                    message.text
-                );
-            }
-
+            // 历史图谱不再从普通 AI 讲解里猜“可能是一道题”。
+            // 只有后端明确保存的 generatedQuestion 才作为 AI 历史题。
             question = sanitizeStoredWrongQuestionText(
-                question
+                message.generatedQuestion || ""
             );
 
             if (
                 !question
-                || !looksLikeQuestionPayload(
-                    question
+                || !looksLikeFormalStudyQuestionForHistory(
+                    question,
+                    message
                 )
             ) {
                 continue;
             }
         } else {
-            continue;
-        }
-
-        if (!question) {
             continue;
         }
 
@@ -6753,6 +6838,7 @@ function collectConversationQuestionCandidates(session) {
 
     return candidates;
 }
+
 
 async function refreshConversationKnowledgeIndex(
     session = getCurrent()
@@ -6914,16 +7000,28 @@ function getConversationKnowledgeContext() {
 
     let classifiedMessageCount = 0;
 
-    const collectTeaching = teachingValue => {
+    const history = getConversationQuestionHistory(
+        session
+    );
+
+    for (const item of history) {
         const teaching = normalizeTeaching(
-            teachingValue
+            item.teaching
         );
+
+        if (item.text) {
+            questionFingerprints.add(
+                wrongQuestionFingerprint(
+                    item.text
+                )
+            );
+        }
 
         if (
             !teaching
             || teaching.category === "待识别"
         ) {
-            return false;
+            continue;
         }
 
         knowledgePoints.push(
@@ -6945,65 +7043,14 @@ function getConversationKnowledgeContext() {
             );
         }
 
-        return true;
-    };
-
-    for (const message of session.messages) {
-        if (!message) continue;
-
-        if (
-            message.role === "ai"
-            && (
-                message.generatedExercise
-                || message.generatedQuestion
-            )
-        ) {
-            const question = extractQuestionOnlyFromMessage(
-                message
-            );
-
-            if (question) {
-                questionFingerprints.add(
-                    wrongQuestionFingerprint(question)
-                );
-            }
-
-            if (
-                collectTeaching(
-                    message.generatedTeaching
-                )
-            ) {
-                classifiedMessageCount += 1;
-            }
-        }
-
-        if (
-            message.role === "user"
-            && message.questionTeaching
-        ) {
-            const question = extractQuestionOnlyFromMessage(
-                message
-            );
-
-            if (question) {
-                questionFingerprints.add(
-                    wrongQuestionFingerprint(question)
-                );
-            }
-
-            if (
-                collectTeaching(
-                    message.questionTeaching
-                )
-            ) {
-                classifiedMessageCount += 1;
-            }
-        }
+        classifiedMessageCount += 1;
     }
 
-    // 旧会话完全没有逐题分类时才使用旧学习数据兜底。
-    // 已经重新索引过时，不再让旧错分类污染本对话图谱。
-    if (classifiedMessageCount === 0) {
+    // 只有严格历史题一条都没有时，才使用旧学习数据兜底。
+    if (
+        history.length === 0
+        && classifiedMessageCount === 0
+    ) {
         const seenEvents = learningState.events.filter(
             event => (
                 String(event.sessionId)
@@ -7022,7 +7069,12 @@ function getConversationKnowledgeContext() {
             session.learningQuestion
         );
 
-        if (learningQuestion) {
+        if (
+            learningQuestion
+            && looksLikeFormalStudyQuestionForHistory(
+                learningQuestion.text
+            )
+        ) {
             knowledgePoints.push(
                 ...learningQuestion.knowledgePoints,
                 ...learningQuestion.focusPoints
@@ -7038,32 +7090,6 @@ function getConversationKnowledgeContext() {
                 questionFingerprints.add(
                     wrongQuestionFingerprint(
                         learningQuestion.text
-                    )
-                );
-            }
-        }
-
-        for (const item of learningState.wrongQuestions) {
-            if (
-                String(item.sessionId)
-                    !== String(session.id)
-            ) {
-                continue;
-            }
-
-            knowledgePoints.push(
-                ...(item.knowledgePoints || []),
-                ...(item.focusPoints || [])
-            );
-
-            if (item.category) {
-                categories.push(item.category);
-            }
-
-            if (item.question) {
-                questionFingerprints.add(
-                    wrongQuestionFingerprint(
-                        item.question
                     )
                 );
             }
@@ -7245,8 +7271,6 @@ function knowledgeHistorySourceLabel(item) {
 
 function knowledgeHistoryPreview(text, limit = 78) {
     const value = String(text || "")
-        .replace(/\$\$?/g, "")
-        .replace(/\\[a-zA-Z]+/g, "")
         .replace(/\s+/g, " ")
         .trim();
 
@@ -7256,6 +7280,7 @@ function knowledgeHistoryPreview(text, limit = 78) {
 
     return value.slice(0, limit) + "…";
 }
+
 
 
 function getActiveKnowledgeContext() {
@@ -8450,9 +8475,11 @@ function renderKnowledgeGraphHistory() {
         category.textContent = item.category;
 
         const preview = document.createElement("div");
-        preview.className = "kg-history-preview";
-        preview.textContent = knowledgeHistoryPreview(
-            item.text
+        preview.className = "kg-history-preview ai-content";
+        preview.innerHTML = markdownToHtml(
+            prepareAiDisplayText(
+                item.text
+            )
         );
 
         const points = document.createElement("div");
@@ -8499,6 +8526,8 @@ function renderKnowledgeGraphHistory() {
         card.appendChild(actions);
         list.appendChild(card);
     }
+
+    renderMath(list);
 }
 
 function renderKnowledgeGraphSide() {
