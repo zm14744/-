@@ -192,7 +192,7 @@ function normalizeRetestSession(value) {
 
 function createEmptyLearningState() {
     return {
-        version: 7,
+        version: 8,
         knowledge: {},
         events: [],
         wrongQuestions: []
@@ -936,10 +936,31 @@ function buildLearningQuestionFromSession(session, teaching, excludeLatest = fal
 }
 
 function stripQuestionDecorations(text) {
-    return String(text || "")
+    let value = String(text || "");
+
+    value = value
+        .replace(
+            /^\s*(?:\*\*|__)\s*【(?:题目|练习题|题目文字)】\s*(?:\*\*|__)\s*/m,
+            ""
+        )
         .replace(/^\s*【(?:题目|练习题|题目文字)】\s*/m, "")
-        .replace(/^\s*(?:#{1,4}\s*)?(?:题目|练习题)\s*[:：]?\s*$/m, "")
-        .trim();
+        .replace(
+            /^\s*(?:#{1,4}\s*)?(?:题目|练习题)\s*[:：]?\s*$/m,
+            ""
+        );
+
+    // 删除标题切割后残留的单独 Markdown 装饰行。
+    value = value
+        .replace(
+            /^(?:\s*(?:\*\*|__|[-—_=]{3,})\s*\n)+/,
+            ""
+        )
+        .replace(
+            /(?:\n\s*(?:\*\*|__|[-—_=]{3,})\s*)+$/,
+            ""
+        );
+
+    return value.trim();
 }
 
 function cutQuestionAfterMetaSections(text) {
@@ -948,7 +969,7 @@ function cutQuestionAfterMetaSections(text) {
     if (!value) return "";
 
     const stopPatterns = [
-        /(?:^|\n)\s*(?:-{3,}\s*\n\s*)?(?:\*\*)?(?:提示|思考提示|解题提示|小提示|关键提示)\s*[:：]?(?:\*\*)?/im,
+        /(?:^|\n)\s*(?:-{3,}\s*\n\s*)?(?:\*\*|__)?(?:提示|思考提示|思路提示|解题提示|小提示|关键提示|方法提示|解题思路|思路)\s*[:：]?(?:\*\*|__)?/im,
         /(?:^|\n)\s*(?:#{1,6}\s*)?(?:参考答案|答案|解析|解答|详细解析|解题过程|过程)\s*[:：]?/im,
         /(?:^|\n)\s*答\s*[:：]/im,
         /(?:^|\n)\s*(?:你先|请先|先尝试|可以先|做完后|卡住了|如果卡住|有结果后|把答案发给我|告诉我你的进度).{0,220}$/im
@@ -980,9 +1001,11 @@ function removeConversationalQuestionPrefix(text) {
 
     // 明确题目标题后的内容优先。
     const explicitPatterns = [
+        // 先吃掉完整 **【题目】**，否则只匹配中间标题会留下孤立 **。
+        /(?:^|\n)\s*(?:\*\*|__)\s*【(?:题目|练习题)】\s*(?:\*\*|__)\s*/m,
         /【(?:题目|练习题)】/,
         /(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)/m,
-        /(?:^|\n)\s*\*\*(?:题目|练习题)[:：]?\*\*\s*/m,
+        /(?:^|\n)\s*(?:\*\*|__)\s*(?:题目|练习题)[:：]?\s*(?:\*\*|__)\s*/m,
         /(?:^|\n)\s*(?:题目|练习题)\s*[:：]\s*/m,
         /(?:^|\n)\s*(?:题目|练习题)\s*(?:\n|$)/m
     ];
@@ -1232,6 +1255,11 @@ function sanitizeStoredWrongQuestionText(text) {
         value = extractOcrQuestionPayload(value);
     } else {
         value = removeConversationalQuestionPrefix(value);
+        value = cutQuestionAfterMetaSections(value);
+        value = stripQuestionDecorations(value);
+
+        // 第二遍是刻意的：标题/Markdown 装饰被去掉后，
+        // 原先被遮住的“思路提示/答案/解析”标题也必须继续截掉。
         value = cutQuestionAfterMetaSections(value);
         value = stripQuestionDecorations(value);
     }
