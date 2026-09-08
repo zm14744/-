@@ -114,35 +114,21 @@ body {
     font-weight:600;
 }
 
-.session-current {
-    flex:0 0 auto;
-    padding:2px 5px;
-    border-radius:999px;
-    background:#1d4ed8;
-    color:#dbeafe;
-    font-size:10px;
-    line-height:1.4;
-}
-
-/* 删除按钮 */
+/* 删除按钮：恢复为原来的红色圆点。 */
 .session .del {
     flex:0 0 auto;
-    width:22px;
-    height:22px;
-    border-radius:6px;
-    border:1px solid transparent;
-    background:transparent;
-    color:#64748b;
+    width:20px;
+    height:20px;
+    border-radius:50%;
+    border:none;
+    background:#ef4444;
     cursor:pointer;
     padding:0;
-    font-size:17px;
-    line-height:18px;
+    margin-left:5px;
 }
 
 .session .del:hover {
-    color:#fecaca;
-    background:#3f1d1d;
-    border-color:#7f1d1d;
+    background:#dc2626;
 }
 
 .center {
@@ -757,6 +743,64 @@ body {
     max-width:100%;
     overflow-x:auto;
     overflow-y:hidden;
+}
+
+.wrong-answer-details,
+.wrong-analysis-details {
+    margin-top:10px;
+    border:1px solid #263449;
+    border-radius:9px;
+    background:#0b1220;
+    overflow:hidden;
+}
+
+.wrong-answer-summary,
+.wrong-analysis-summary {
+    padding:10px 12px;
+    color:#cbd5e1;
+    cursor:pointer;
+    user-select:none;
+    list-style:none;
+    font-size:13px;
+    font-weight:600;
+}
+
+.wrong-answer-summary::-webkit-details-marker,
+.wrong-analysis-summary::-webkit-details-marker {
+    display:none;
+}
+
+.wrong-answer-summary::before,
+.wrong-analysis-summary::before {
+    content:"›";
+    display:inline-block;
+    margin-right:8px;
+    color:#60a5fa;
+    transition:transform .15s ease;
+}
+
+.wrong-answer-details[open] .wrong-answer-summary::before,
+.wrong-analysis-details[open] .wrong-analysis-summary::before {
+    transform:rotate(90deg);
+}
+
+.wrong-answer-details[open] .wrong-answer-summary,
+.wrong-analysis-details[open] .wrong-analysis-summary {
+    border-bottom:1px solid #1f2937;
+}
+
+.wrong-answer-inner,
+.wrong-analysis-body {
+    padding:12px;
+    color:#cbd5e1;
+    font-size:13px;
+    line-height:1.68;
+    white-space:normal;
+    word-break:break-word;
+}
+
+.wrong-analysis-box {
+    margin-top:0;
 }
 
 .wrong-edit-card {
