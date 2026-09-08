@@ -463,6 +463,118 @@ body {
     white-space:pre-wrap;
 }
 
+.wrong-picker-card {
+    width:min(760px, 92vw);
+}
+
+.wrong-picker-intro {
+    padding:12px 16px;
+    color:#94a3b8;
+    font-size:13px;
+    border-bottom:1px solid #1f2937;
+}
+
+.wrong-picker-list {
+    padding:12px 16px;
+    max-height:56vh;
+    overflow:auto;
+}
+
+.wrong-picker-item {
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    margin-bottom:8px;
+    padding:11px 12px;
+    border:1px solid #263449;
+    border-radius:9px;
+    background:#0f172a;
+    cursor:pointer;
+}
+
+.wrong-picker-item:hover {
+    border-color:#475569;
+}
+
+.wrong-picker-item input {
+    margin-top:4px;
+}
+
+.wrong-picker-content {
+    min-width:0;
+    flex:1;
+}
+
+.wrong-picker-title {
+    color:#e2e8f0;
+    font-weight:600;
+    margin-bottom:4px;
+}
+
+.wrong-picker-preview {
+    color:#94a3b8;
+    font-size:12px;
+    line-height:1.55;
+}
+
+.wrong-picker-answer {
+    margin-top:6px;
+    color:#93c5fd;
+    font-size:12px;
+}
+
+.wrong-picker-actions {
+    display:flex;
+    justify-content:flex-end;
+    gap:8px;
+    padding:12px 16px 16px;
+    border-top:1px solid #1f2937;
+}
+
+.wrong-picker-actions button {
+    padding:8px 14px;
+    border:none;
+    border-radius:7px;
+    background:#2563eb;
+    color:white;
+    cursor:pointer;
+}
+
+.wrong-picker-actions button.secondary {
+    background:#1f2937;
+    color:#cbd5e1;
+}
+
+.wrong-answer-box,
+.wrong-solution-box {
+    margin-top:10px;
+    padding:10px 12px;
+    border:1px solid #263449;
+    border-radius:8px;
+    background:#0b1220;
+    color:#cbd5e1;
+    font-size:13px;
+    line-height:1.65;
+}
+
+.wrong-answer-box strong {
+    color:#93c5fd;
+}
+
+.wrong-solution-box strong {
+    color:#e2e8f0;
+}
+
+.wrong-answer-body,
+.wrong-solution-body {
+    margin-top:6px;
+}
+
+.wrong-answer-body p,
+.wrong-solution-body p {
+    margin:6px 0;
+}
+
 .wrong-edit-card {
     width:min(720px, 92vw);
 }
@@ -964,6 +1076,26 @@ window.MathJax = {
         </div>
 
         <div id="wrongBookList"></div>
+    </div>
+</div>
+
+<div id="wrongQuestionPickerModal" class="modal hidden">
+    <div class="modal-card wrong-picker-card">
+        <div class="modal-head">
+            <div>选择要加入错题本的题目</div>
+            <button id="wrongQuestionPickerClose" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="wrong-picker-intro">
+            检测到这一段里包含多道独立题目。请选择真正需要记录的题，不会再把整份题库一起塞进错题本。
+        </div>
+
+        <div id="wrongQuestionPickerList" class="wrong-picker-list"></div>
+
+        <div class="wrong-picker-actions">
+            <button id="wrongQuestionPickerCancel" type="button" class="secondary">取消</button>
+            <button id="wrongQuestionPickerConfirm" type="button">加入所选题目</button>
+        </div>
     </div>
 </div>
 
