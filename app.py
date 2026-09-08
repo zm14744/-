@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -7,7 +8,7 @@ from collections import defaultdict, deque
 from flask import Flask, jsonify, render_template, request
 
 from ai import ask_ai, analyze_image_structure
-from teaching import analyze_messages
+from teaching import analyze_messages, analyze_question
 
 
 # -----------------------------
@@ -216,6 +217,69 @@ def home():
     return render_template("index.html")
 
 
+
+_EXERCISE_ANSWER_PATTERN = re.compile(
+    r"\[\[WRONGBOOK_ANSWER\]\]([\s\S]*?)\[\[/WRONGBOOK_ANSWER\]\]",
+    re.IGNORECASE
+)
+
+
+def _split_exercise_answer(reply):
+    """
+    从 AI 出题回复中提取系统隐藏答案。
+    返回：(用户可见回复, 最终答案)
+    """
+    if not isinstance(reply, str):
+        return "", ""
+
+    match = _EXERCISE_ANSWER_PATTERN.search(reply)
+
+    if not match:
+        return reply.strip(), ""
+
+    answer = match.group(1).strip()
+
+    visible = _EXERCISE_ANSWER_PATTERN.sub(
+        "",
+        reply
+    ).strip()
+
+    return visible, answer
+
+
+def _clean_answer_only(text):
+    """
+    最后一道保险：答案区只保留“答案”，不把解析/理由混进去。
+    """
+    value = str(text or "").strip()
+
+    if not value:
+        return ""
+
+    # 去掉常见开场。
+    value = re.sub(
+        r"^(?:好的[，,。\\s]*)?(?:以下是|最终答案(?:是|为)?)[：:\\s]*",
+        "",
+        value,
+        flags=re.IGNORECASE
+    ).strip()
+
+    # 如果模型仍偷偷附带解析，从这些标题开始截断。
+    cut_patterns = [
+        r"\n\s*(?:#{1,6}\s*)?(?:解析|理由|过程|推导|说明|易错点)\s*[:：]?",
+        r"\n\s*(?:因为|所以|由.+可得)\b",
+    ]
+
+    cut_index = len(value)
+
+    for pattern in cut_patterns:
+        match = re.search(pattern, value, flags=re.IGNORECASE)
+        if match:
+            cut_index = min(cut_index, match.start())
+
+    return value[:cut_index].strip()
+
+
 @app.route("/chat", methods=["POST"])
 def chat():
     ip = _get_client_ip()
@@ -315,10 +379,37 @@ def chat():
                 "error": "AI 服务没有生成有效回答，请重新发送。"
             }), 502
 
-        return jsonify({
+        generated_answer = ""
+        generated_teaching = None
+
+        if teaching.get("mode") == "exercise":
+            reply, generated_answer = _split_exercise_answer(
+                reply
+            )
+
+            generated_answer = _clean_answer_only(
+                generated_answer
+            )
+
+            # 当前右侧学习记录与知识图谱应分析“模型真正出的题”，
+            # 不能继续分析“出一道题”这句请求。
+            if reply:
+                generated_teaching = analyze_question(
+                    reply
+                )
+
+        response = {
             "reply": reply,
             "teaching": teaching
-        })
+        }
+
+        if generated_teaching:
+            response["generated_teaching"] = generated_teaching
+
+        if generated_answer:
+            response["generated_answer"] = generated_answer
+
+        return jsonify(response)
 
     error = result.get(
         "error",
