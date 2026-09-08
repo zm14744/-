@@ -80,7 +80,7 @@ body {
 
 .msg {
     max-width:75%;
-    padding:14px 18px;
+    padding:14px 18px 10px;
     margin:10px 0;
     border-radius:12px;
     line-height:1.6;
@@ -89,6 +89,38 @@ body {
 
 .user { background:#3b82f6; margin-left:auto; }
 .ai { background:#1f2937; }
+
+.msg-content {
+    min-width:0;
+}
+
+.msg-actions {
+    display:flex;
+    justify-content:flex-end;
+    gap:6px;
+    margin-top:9px;
+    padding-top:7px;
+    border-top:1px solid rgba(148,163,184,.16);
+}
+
+.msg-actions button {
+    padding:3px 8px;
+    border:1px solid rgba(148,163,184,.22);
+    border-radius:6px;
+    background:rgba(15,23,42,.34);
+    color:#cbd5e1;
+    cursor:pointer;
+    font-size:11px;
+    line-height:1.4;
+}
+
+.msg-actions button:hover {
+    background:rgba(15,23,42,.55);
+}
+
+.msg-actions button.danger {
+    color:#fecaca;
+}
 
 .ai-content p { margin:10px 0; }
 .ai-content h1,.ai-content h2,.ai-content h3 { margin:12px 0 8px; }
