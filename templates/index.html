@@ -806,6 +806,76 @@ body {
     margin-top:0;
 }
 
+.wrong-safe-card {
+    width:min(760px, 94vw);
+}
+
+.wrong-safe-body {
+    display:flex;
+    flex-direction:column;
+    gap:9px;
+    padding:16px;
+    overflow:auto;
+}
+
+.wrong-safe-progress {
+    color:#e2e8f0;
+    font-weight:600;
+}
+
+.wrong-safe-source,
+.wrong-safe-note {
+    color:#94a3b8;
+    font-size:12px;
+    line-height:1.55;
+}
+
+.wrong-safe-body label {
+    margin-top:4px;
+    color:#cbd5e1;
+    font-size:12px;
+}
+
+.wrong-safe-body textarea {
+    min-height:260px;
+    resize:vertical;
+    padding:12px;
+    border:1px solid #334155;
+    border-radius:9px;
+    background:#0b1220;
+    color:#e2e8f0;
+    font:inherit;
+    line-height:1.6;
+}
+
+.wrong-safe-body textarea:focus {
+    outline:none;
+    border-color:#3b82f6;
+    box-shadow:0 0 0 2px rgba(59,130,246,.14);
+}
+
+.wrong-safe-actions {
+    display:flex;
+    justify-content:flex-end;
+    gap:8px;
+    padding:12px 16px 16px;
+    border-top:1px solid #1f2937;
+}
+
+.wrong-safe-actions button {
+    padding:8px 14px;
+    border:none;
+    border-radius:7px;
+    background:#2563eb;
+    color:white;
+    cursor:pointer;
+}
+
+.wrong-safe-actions button.secondary {
+    background:#1f2937;
+    color:#cbd5e1;
+}
+
 .wrong-edit-card {
     width:min(720px, 92vw);
 }
@@ -1330,6 +1400,36 @@ window.MathJax = {
     </div>
 </div>
 
+<div id="wrongSafeModal" class="modal hidden">
+    <div class="modal-card wrong-safe-card">
+        <div class="modal-head">
+            <div>确认加入错题本</div>
+            <button id="wrongSafeClose" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="wrong-safe-body">
+            <div id="wrongSafeProgress" class="wrong-safe-progress">
+                请确认下面就是要保存的题目
+            </div>
+            <div id="wrongSafeSource" class="wrong-safe-source"></div>
+
+            <label for="wrongSafeQuestion">
+                题目预览（可以直接修改）
+            </label>
+            <textarea id="wrongSafeQuestion" rows="12"></textarea>
+
+            <div class="wrong-safe-note">
+                错题本只会保存这个编辑框里的内容。提示、解析、聊天开场白如果仍有残留，可以在这里直接删掉。
+            </div>
+        </div>
+
+        <div class="wrong-safe-actions">
+            <button id="wrongSafeCancel" type="button" class="secondary">取消</button>
+            <button id="wrongSafeConfirm" type="button">确认加入错题本</button>
+        </div>
+    </div>
+</div>
+
 <div id="wrongEditModal" class="modal hidden">
     <div class="modal-card wrong-edit-card">
         <div class="modal-head">
@@ -1367,11 +1467,12 @@ window.MathJax = {
             <div class="graph-toolbar-left">
                 <label for="knowledgeGraphCategory">模块</label>
                 <select id="knowledgeGraphCategory" aria-label="知识图谱分类"></select>
+                <button id="knowledgeGraphScopeBtn" type="button">查看本对话题目</button>
                 <button id="knowledgeGraphFocusBtn" type="button">查看完整模块</button>
             </div>
 
             <div class="graph-legend">
-                <span class="legend-item current">本题相关</span>
+                <span id="knowledgeGraphLegendRelated" class="legend-item current">本题相关</span>
                             </div>
         </div>
 
