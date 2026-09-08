@@ -38,6 +38,8 @@ let typingSessionId = null;
 let typingMeta = null;
 
 let typingAutoFollow = true;
+let typingScrollLockedByUser = false;
+let lastTypingAutoScrollAt = 0;
 let preserveChatScrollOnce = null;
 
 let requestBusy = false;
@@ -1447,7 +1449,12 @@ function currentLearningQuestion(session, teaching) {
     );
 }
 
-function processLearningFromReply(session, teaching, reply) {
+function processLearningFromReply(
+    session,
+    teaching,
+    reply,
+    generatedAnswer = ""
+) {
     const normalized = normalizeTeaching(teaching);
 
     if (!session || !normalized) {
@@ -1478,7 +1485,9 @@ function processLearningFromReply(session, teaching, reply) {
             focusPoints: normalized.focus_points.slice(0, 2),
             category: normalized.category,
             source: "ai",
-            referenceAnswer: "",
+            referenceAnswer: String(
+                generatedAnswer || ""
+            ).trim().slice(0, 3000),
             sessionId: session.id,
             updatedAt: Date.now()
         };
@@ -2419,9 +2428,7 @@ function buildWrongBookPdfExportElement(items) {
             block.appendChild(label);
 
             const body = document.createElement("div");
-            body.innerHTML = markdownToHtml(
-                formatWrongBookGeneratedText(item.answer)
-            );
+            body.innerHTML = markdownToHtml(item.answer);
             block.appendChild(body);
 
             card.appendChild(block);
@@ -2442,9 +2449,7 @@ function buildWrongBookPdfExportElement(items) {
             block.appendChild(label);
 
             const body = document.createElement("div");
-            body.innerHTML = markdownToHtml(
-                formatWrongBookGeneratedText(item.analysis)
-            );
+            body.innerHTML = markdownToHtml(item.analysis);
             block.appendChild(body);
 
             card.appendChild(block);
@@ -2810,6 +2815,44 @@ function formatWrongBookGeneratedText(text) {
     return value;
 }
 
+function extractAnswerOnlyText(text) {
+    let value = String(text || "").trim();
+
+    if (!value) return "";
+
+    const marker = value.match(
+        /\[\[ANSWER_ONLY\]\]([\s\S]*?)\[\[\/ANSWER_ONLY\]\]/i
+    );
+
+    if (marker) {
+        value = marker[1].trim();
+    }
+
+    // 去掉模型常见客套开头。
+    value = value.replace(
+        /^(?:好的[，,。]?\s*)?(?:以下是)?(?:这道题的)?(?:最终)?答案(?:是|为)?[：:\s]*/i,
+        ""
+    ).trim();
+
+    // 一旦进入解析/理由/过程，后面全部不要。
+    const stopPatterns = [
+        /\n\s*(?:#{1,6}\s*)?(?:解析|理由|过程|推导|说明|易错点)\s*[:：]?/i,
+        /\n\s*(?:因为|所以)\b/,
+    ];
+
+    let end = value.length;
+
+    for (const pattern of stopPatterns) {
+        const match = value.match(pattern);
+        if (match && typeof match.index === "number") {
+            end = Math.min(end, match.index);
+        }
+    }
+
+    return value.slice(0, end).trim();
+}
+
+
 function queueWrongQuestionAnswer(id) {
     const entry = learningState.wrongQuestions.find(
         item => item.id === id
@@ -2891,15 +2934,18 @@ async function generateWrongQuestionAnswer(
     renderWrongBook();
 
     const prompt = [
-        "请只给出下面这道离散数学题的最终答案，不要解析、不要提示、不要反问。",
+        "请只给出下面这道离散数学题的最终答案。",
+        "绝对不要提供解析、理由、推导、说明、提示，也不要写“因为/所以/由……可得”。",
         "",
-        "显示兼容要求：",
-        "1. 不要使用任何 LaTeX 反斜杠命令；",
-        "2. 顶点写成 v1、v2，不要写 v_1；",
-        "3. 路径直接使用 Unicode 箭头 →；",
-        "4. ∈、≤、≥、≠、∧、∨、¬ 等直接使用 Unicode 符号；",
-        "5. 如果答案是矩阵，用普通文本逐行写，例如 [0 1 0]；",
-        "6. 可以使用 Markdown 列表，但不要使用 HTML。",
+        "请严格只返回下面这个机器可读格式：",
+        "[[ANSWER_ONLY]]",
+        "最终答案",
+        "[[/ANSWER_ONLY]]",
+        "",
+        "答案内部可以使用规范 MathJax LaTeX：",
+        "- 行内公式使用 $...$；",
+        "- 矩阵/多行公式使用 $$...$$；",
+        "- 不要在答案块之外输出任何文字。",
         "",
         "【题目】",
         entry.question
@@ -2943,7 +2989,7 @@ async function generateWrongQuestionAnswer(
             return false;
         }
 
-        entry.answer = formatWrongBookGeneratedText(
+        entry.answer = extractAnswerOnlyText(
             data.reply
         ).slice(0, 3000);
 
@@ -2998,22 +3044,23 @@ async function generateWrongQuestionAnalysis(id) {
     );
 
     const prompt = [
-        "请为下面这道离散数学错题提供详细但不要啰嗦的解析。",
-        "不要反问学生。",
+        "请为下面这道离散数学错题提供完整解析，直接讲解，不要反问学生。",
         "",
         "内容要求：",
-        "1. 直接解释为什么答案成立；",
-        "2. 分步骤写关键推理；",
-        "3. 最后给一条易错点；",
-        "4. 已知答案如下时，以它为参考并先核对：",
+        "1. 已知最终答案如下，先核对后围绕它解释：",
         knownAnswer || "（暂无参考答案）",
+        "2. 分步骤写关键推理；",
+        "3. 解析要清楚，但不要重复抄题或堆废话；",
+        "4. 最后给一条易错点。",
         "",
-        "显示兼容要求：",
-        "1. 不要使用任何 LaTeX 反斜杠命令；",
-        "2. 顶点写 v1、v2，路径用 →；",
-        "3. 数学关系优先用 Unicode：∈、≤、≥、≠、∧、∨、¬；",
-        "4. 矩阵使用普通文本逐行写，例如 [0 1 0]；",
-        "5. 使用 Markdown 标题和列表即可，不要使用 HTML。",
+        "数学格式必须严格使用 MathJax 可解析的标准 LaTeX：",
+        "- 行内公式使用 $...$；",
+        "- 独立公式、矩阵、cases、多行推导使用 $$...$$；",
+        "- 矩阵必须写成 $$\\\\begin{bmatrix}...\\\\end{bmatrix}$$；",
+        "- 下标写 $v_1$、$a_{ij}$；",
+        "- 路径可以写 $v_1\\\\to v_2\\\\to v_3$；",
+        "- 所有 $ 必须成对闭合；",
+        "- 不允许裸露 \\\\begin{...}、\\\\to、v_1 这类未被数学定界符包裹的 LaTeX。",
         "",
         "【错题】",
         entry.question
@@ -3055,9 +3102,10 @@ async function generateWrongQuestionAnalysis(id) {
             return;
         }
 
-        entry.analysis = formatWrongBookGeneratedText(
-            data.reply
-        ).slice(0, 8000);
+        entry.analysis = data.reply.trim().slice(
+            0,
+            8000
+        );
 
         entry.analysisUpdatedAt = Date.now();
         entry.updatedAt = Date.now();
@@ -3289,9 +3337,7 @@ function renderWrongBook() {
 
         if (visibleAnswer) {
             answerInner.innerHTML = markdownToHtml(
-                formatWrongBookGeneratedText(
-                    visibleAnswer
-                )
+                visibleAnswer
             );
         } else {
             answerInner.textContent = wrongAnswerLoadingIds.has(item.id)
@@ -3334,9 +3380,7 @@ function renderWrongBook() {
             const analysisBody = document.createElement("div");
             analysisBody.className = "wrong-analysis-body";
             analysisBody.innerHTML = markdownToHtml(
-                formatWrongBookGeneratedText(
-                    item.analysis
-                )
+                item.analysis
             );
 
             analysisDetails.appendChild(analysisSummary);
@@ -3488,6 +3532,8 @@ function renderWrongBook() {
         renderMath(question);
         renderMath(feedback);
         renderMath(note);
+        renderMath(answerDetails);
+        renderMath(analysisBox);
     }
 }
 
@@ -3808,16 +3854,85 @@ function scrollChatToBottom() {
     }
 }
 
+function chatBottomDistance(chat) {
+    if (!chat) return 0;
+
+    return Math.max(
+        0,
+        chat.scrollHeight
+        - chat.scrollTop
+        - chat.clientHeight
+    );
+}
+
+function stopTypingAutoFollow() {
+    if (!typingTimer) return;
+
+    typingScrollLockedByUser = true;
+    typingAutoFollow = false;
+}
+
+function handleChatWheelWhileTyping(event) {
+    if (!typingTimer) return;
+
+    // 滚轮向上时，在 scroll 事件之前就停止自动跟随。
+    if (event.deltaY < 0) {
+        stopTypingAutoFollow();
+    }
+}
+
+function handleChatPointerWhileTyping() {
+    if (!typingTimer) return;
+
+    // 支持拖动滚动条。
+    stopTypingAutoFollow();
+}
+
+function handleChatTouchWhileTyping() {
+    if (!typingTimer) return;
+
+    stopTypingAutoFollow();
+}
+
 function handleChatScrollWhileTyping() {
     if (!typingTimer) return;
 
     const chat = document.getElementById("chat");
     if (!chat) return;
 
-    typingAutoFollow = isChatNearBottom(
-        chat,
-        90
-    );
+    const distance = chatBottomDistance(chat);
+
+    if (typingScrollLockedByUser) {
+        if (distance <= 12) {
+            typingScrollLockedByUser = false;
+            typingAutoFollow = true;
+        } else {
+            typingAutoFollow = false;
+        }
+
+        return;
+    }
+
+    typingAutoFollow = distance <= 90;
+}
+
+function maybeAutoFollowTyping() {
+    if (
+        !typingAutoFollow
+        || typingScrollLockedByUser
+    ) {
+        return;
+    }
+
+    // 不再每个字符都操作滚动条。
+    const now = Date.now();
+
+    if (now - lastTypingAutoScrollAt < 120) {
+        return;
+    }
+
+    lastTypingAutoScrollAt = now;
+    scrollChatToBottom();
 }
 
 
@@ -4021,8 +4136,15 @@ async function requestAiReply(session) {
 
         const data = await parseResponseJson(response);
 
-        if (data.teaching) {
-            session.teaching = normalizeTeaching(data.teaching);
+        const returnedTeaching = (
+            data.generated_teaching
+            || data.teaching
+        );
+
+        if (returnedTeaching) {
+            session.teaching = normalizeTeaching(
+                returnedTeaching
+            );
             saveState();
             renderInfo();
         }
@@ -4064,7 +4186,8 @@ async function requestAiReply(session) {
             processLearningFromReply(
                 session,
                 session.teaching,
-                data.reply
+                data.reply,
+                data.generated_answer || ""
             );
         }
 
@@ -4844,6 +4967,8 @@ function startTyping(
         chat,
         90
     );
+    typingScrollLockedByUser = false;
+    lastTypingAutoScrollAt = 0;
 
     const div = document.createElement("div");
     div.className = "msg ai";
@@ -4866,9 +4991,7 @@ function startTyping(
             typingDiv.textContent += text[index];
             index += 1;
 
-            if (typingAutoFollow) {
-                scrollChatToBottom();
-            }
+            maybeAutoFollowTyping();
 
             return;
         }
@@ -4922,11 +5045,16 @@ function finishTyping() {
         renderMath(finishedDiv);
     }
 
-    if (typingAutoFollow) {
+    if (
+        typingAutoFollow
+        && !typingScrollLockedByUser
+    ) {
         scrollChatToBottom();
     }
 
     typingAutoFollow = true;
+    typingScrollLockedByUser = false;
+    lastTypingAutoScrollAt = 0;
 }
 
 // 强制完成当前打字动画
@@ -4975,11 +5103,16 @@ function forceCompleteTyping() {
         renderMath(finishedDiv);
     }
 
-    if (typingAutoFollow) {
+    if (
+        typingAutoFollow
+        && !typingScrollLockedByUser
+    ) {
         scrollChatToBottom();
     }
 
     typingAutoFollow = true;
+    typingScrollLockedByUser = false;
+    lastTypingAutoScrollAt = 0;
 }
 
 
@@ -6382,6 +6515,24 @@ document.addEventListener(
             chat.addEventListener(
                 "scroll",
                 handleChatScrollWhileTyping,
+                { passive: true }
+            );
+
+            chat.addEventListener(
+                "wheel",
+                handleChatWheelWhileTyping,
+                { passive: true }
+            );
+
+            chat.addEventListener(
+                "pointerdown",
+                handleChatPointerWhileTyping,
+                { passive: true }
+            );
+
+            chat.addEventListener(
+                "touchstart",
+                handleChatTouchWhileTyping,
                 { passive: true }
             );
         }
