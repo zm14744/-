@@ -548,9 +548,6 @@ def chat():
             or _looks_like_exercise_request(
                 latest_user_text
             )
-            or _looks_like_generated_question_reply(
-                reply
-            )
         )
 
         generated_question = ""
@@ -568,12 +565,12 @@ def chat():
                 reply
             )
 
-        # 即使上面的 mode 偶发漏判，只要回复本身能抽出明确题目，
-        # 就让该题驱动右侧会话信息和知识图谱。
-        if not generated_question and _looks_like_generated_question_reply(reply):
-            generated_question = _extract_generated_question(
-                reply
-            )
+            # 无论模型有没有附带开场白/提示，真正显示给学生的都只保留题目。
+            if generated_question:
+                reply = (
+                    "【题目】\n\n"
+                    + generated_question
+                )
 
         if generated_question:
             generated_teaching = analyze_question(
