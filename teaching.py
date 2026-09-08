@@ -467,16 +467,12 @@ def _looks_like_exercise_request_text(text):
 
 
 def _looks_like_generated_exercise_text(text):
-    """
-    用于“AI 出题后学生说不会做”的上下文继承。
-    支持【题目】、Markdown 标题，以及模型常见的纯文本“题目”标题。
-    """
     value = str(text or "").strip()
 
     if not value:
         return False
 
-    return re.search(
+    if re.search(
         r"(?:"
         r"【(?:题目|练习题)】"
         r"|(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)"
@@ -485,7 +481,31 @@ def _looks_like_generated_exercise_text(text):
         r")",
         value,
         flags=re.MULTILINE
-    ) is not None
+    ):
+        return True
+
+    parenthesized = re.findall(
+        r"(?:^|\n)\s*[（(]\s*\d{1,2}\s*[)）]\s*\S+",
+        value,
+        flags=re.MULTILINE
+    )
+
+    numbered = re.findall(
+        r"(?:^|\n)\s*\d{1,2}\s*[、.．]\s*\S+",
+        value,
+        flags=re.MULTILINE
+    )
+
+    return bool(
+        re.search(
+            r"(?:设|已知|给定|请回答|回答以下|回答下列|求|判断|写出|计算|证明)",
+            value
+        )
+        and (
+            len(parenthesized) >= 2
+            or len(numbered) >= 2
+        )
+    )
 
 
 def _detect_mode(latest_text):
