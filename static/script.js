@@ -14,6 +14,9 @@ let wrongBookSort = "recent";
 let currentWrongEditId = null;
 
 let pendingWrongQuestionSelection = null;
+let pendingWrongSafeItems = [];
+let pendingWrongSafeIndex = 0;
+
 const wrongAnswerLoadingIds = new Set();
 const wrongAnswerQueue = [];
 let wrongAnswerQueueBusy = false;
@@ -24,6 +27,7 @@ const wrongAnalysisLoadingIds = new Set();
 let knowledgeGraphData = null;
 let knowledgeGraphFilter = "";
 let knowledgeGraphViewMode = "focus";
+let knowledgeGraphScope = "current";
 let knowledgeGraphSelectedNodeId = "";
 let knowledgeGraphLoading = false;
 
@@ -1380,6 +1384,10 @@ function shouldOfferWrongBookAction(
     }
 
     if (message.role === "user") {
+        if (message.isRetestAnswer) {
+            return false;
+        }
+
         if (message.source === "ocr") {
             return true;
         }
@@ -1388,9 +1396,15 @@ function shouldOfferWrongBookAction(
             return false;
         }
 
-        // 用户自己发来的题，不依赖学科分类/知识点。
-        return looksLikeQuestionPayload(
-            extractQuestionOnlyFromMessage(message)
+        const extracted = extractQuestionOnlyFromMessage(
+            message
+        );
+
+        // 用户主动发来的内容不再要求先成功分类。
+        // 只要不是明显的控制短句，就允许进入“题目预览”。
+        return Boolean(
+            extracted
+            && extracted.trim().length >= 4
         );
     }
 
@@ -1696,6 +1710,205 @@ function closeWrongQuestionPicker() {
     pendingWrongQuestionSelection = null;
 }
 
+function normalizeWrongSafeItem(questionInfo) {
+    if (!questionInfo || typeof questionInfo !== "object") {
+        return null;
+    }
+
+    const cleaned = sanitizeStoredWrongQuestionText(
+        questionInfo.text
+    ).trim();
+
+    if (!cleaned) {
+        return null;
+    }
+
+    return {
+        ...questionInfo,
+        text: cleaned
+    };
+}
+
+function openWrongSafePreview(items) {
+    const modal = document.getElementById(
+        "wrongSafeModal"
+    );
+
+    if (!modal) {
+        return false;
+    }
+
+    const sourceItems = Array.isArray(items)
+        ? items
+        : [items];
+
+    pendingWrongSafeItems = sourceItems
+        .map(normalizeWrongSafeItem)
+        .filter(Boolean);
+
+    pendingWrongSafeIndex = 0;
+
+    if (!pendingWrongSafeItems.length) {
+        window.alert(
+            "没有提取到可保存的题目内容。"
+        );
+        return false;
+    }
+
+    modal.classList.remove("hidden");
+    renderWrongSafePreview();
+    return true;
+}
+
+function renderWrongSafePreview() {
+    const modal = document.getElementById(
+        "wrongSafeModal"
+    );
+    const textarea = document.getElementById(
+        "wrongSafeQuestion"
+    );
+    const progress = document.getElementById(
+        "wrongSafeProgress"
+    );
+    const source = document.getElementById(
+        "wrongSafeSource"
+    );
+    const confirm = document.getElementById(
+        "wrongSafeConfirm"
+    );
+
+    if (
+        !modal
+        || !textarea
+        || !pendingWrongSafeItems.length
+    ) {
+        return;
+    }
+
+    const item = pendingWrongSafeItems[
+        pendingWrongSafeIndex
+    ];
+
+    textarea.value = item.text;
+
+    if (progress) {
+        progress.textContent = (
+            pendingWrongSafeItems.length > 1
+                ? `第 ${pendingWrongSafeIndex + 1} / ${pendingWrongSafeItems.length} 道`
+                : "请确认下面就是要保存的题目"
+        );
+    }
+
+    if (source) {
+        const sourceLabel = (
+            item.source === "ai"
+                ? "AI 生成题"
+                : (
+                    item.source === "ocr"
+                        ? "图片识题"
+                        : "聊天题目"
+                )
+        );
+
+        source.textContent = (
+            `来源：${sourceLabel}。只有编辑框中的内容会进入错题本。`
+        );
+    }
+
+    if (confirm) {
+        confirm.textContent = (
+            pendingWrongSafeIndex
+            < pendingWrongSafeItems.length - 1
+                ? "确认并查看下一道"
+                : "确认加入错题本"
+        );
+    }
+
+    setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(
+            0,
+            0
+        );
+    }, 0);
+}
+
+function closeWrongSafePreview() {
+    const modal = document.getElementById(
+        "wrongSafeModal"
+    );
+
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+
+    pendingWrongSafeItems = [];
+    pendingWrongSafeIndex = 0;
+}
+
+function confirmWrongSafePreview() {
+    const textarea = document.getElementById(
+        "wrongSafeQuestion"
+    );
+
+    if (
+        !textarea
+        || !pendingWrongSafeItems.length
+    ) {
+        return;
+    }
+
+    const text = textarea.value.trim();
+
+    if (!text) {
+        window.alert(
+            "题目不能为空。请保留题目正文，或者取消本次加入。"
+        );
+        return;
+    }
+
+    const item = pendingWrongSafeItems[
+        pendingWrongSafeIndex
+    ];
+
+    addQuestionInfoToWrongBook({
+        ...item,
+        text,
+        safeConfirmed: true
+    });
+
+    pendingWrongSafeIndex += 1;
+
+    if (
+        pendingWrongSafeIndex
+        < pendingWrongSafeItems.length
+    ) {
+        renderWrongSafePreview();
+        return;
+    }
+
+    const total = pendingWrongSafeItems.length;
+
+    closeWrongSafePreview();
+
+    const button = document.getElementById(
+        "markWrongBtn"
+    );
+
+    if (button) {
+        const previous = button.textContent;
+        button.textContent = total > 1
+            ? `已记录 ${total} 道`
+            : "已记录";
+
+        setTimeout(() => {
+            button.textContent = previous;
+            renderLearningSummary();
+        }, 1000);
+    }
+}
+
+
 function addQuestionInfoToWrongBook(questionInfo) {
     const result = addWrongQuestion(
         questionInfo,
@@ -1726,13 +1939,15 @@ function confirmWrongQuestionPicker() {
         return;
     }
 
+    const items = [];
+
     for (const checkbox of checked) {
         const index = Number(checkbox.value);
         const choice = pending.choices[index];
 
         if (!choice) continue;
 
-        addQuestionInfoToWrongBook({
+        items.push({
             ...pending.questionInfo,
             text: choice.question,
             referenceAnswer: choice.referenceAnswer || ""
@@ -1741,17 +1956,11 @@ function confirmWrongQuestionPicker() {
 
     closeWrongQuestionPicker();
 
-    const button = document.getElementById("markWrongBtn");
-    if (button) {
-        const previous = button.textContent;
-        button.textContent = `已记录 ${checked.length} 道`;
-
-        setTimeout(() => {
-            button.textContent = previous;
-            renderLearningSummary();
-        }, 1000);
+    if (items.length) {
+        openWrongSafePreview(items);
     }
 }
+
 
 
 function inferAnswerAssessment(reply) {
@@ -1837,12 +2046,31 @@ function wrongBookLearningPoints(entryOrQuestion) {
 }
 
 function addWrongQuestion(questionInfo, feedback, source = "auto") {
+    const safeConfirmed = Boolean(
+        source === "manual"
+        && questionInfo
+        && questionInfo.safeConfirmed
+    );
+
     const info = normalizeLearningQuestion(questionInfo);
     if (!info) return { entry: null, countAsMistake: false };
 
-    info.text = sanitizeStoredWrongQuestionText(
-        info.text
-    ).slice(0, 3000);
+    info.text = safeConfirmed
+        ? String(questionInfo.text || "").trim().slice(0, 3000)
+        : sanitizeStoredWrongQuestionText(
+            info.text
+        ).slice(0, 3000);
+
+    if (
+        source === "auto"
+        && info.text
+        && !looksLikeQuestionPayload(info.text)
+    ) {
+        return {
+            entry: null,
+            countAsMistake: false
+        };
+    }
 
     if (!info.text) {
         return {
@@ -2198,20 +2426,9 @@ function manualMarkCurrentWrong() {
         return;
     }
 
-    addQuestionInfoToWrongBook(
+    openWrongSafePreview(
         questionInfo
     );
-
-    const button = document.getElementById("markWrongBtn");
-    if (button) {
-        const previous = button.textContent;
-        button.textContent = "已记录";
-
-        setTimeout(() => {
-            button.textContent = previous;
-            renderLearningSummary();
-        }, 900);
-    }
 }
 
 
@@ -4278,6 +4495,9 @@ function loadState() {
                     generatedTeaching: normalizeTeaching(
                         message.generatedTeaching
                     ),
+                    questionTeaching: normalizeTeaching(
+                        message.questionTeaching
+                    ),
                     isRetestPrompt: Boolean(message.isRetestPrompt),
                     isRetestAnswer: Boolean(message.isRetestAnswer),
                     isError: Boolean(message.isError),
@@ -4766,6 +4986,60 @@ function fallbackHttpError(status) {
     return "请求失败，请稍后重试。";
 }
 
+function attachTeachingSnapshotToLatestQuestion(
+    session,
+    teaching
+) {
+    const normalized = normalizeTeaching(teaching);
+
+    if (
+        !session
+        || !normalized
+        || !Array.isArray(session.messages)
+    ) {
+        return;
+    }
+
+    for (
+        let index = session.messages.length - 1;
+        index >= 0;
+        index -= 1
+    ) {
+        const message = session.messages[index];
+
+        if (
+            !message
+            || message.role !== "user"
+            || message.isRetestAnswer
+        ) {
+            continue;
+        }
+
+        const question = extractQuestionOnlyFromMessage(
+            message
+        );
+
+        if (
+            message.source === "ocr"
+            || (
+                question
+                && looksLikeQuestionPayload(question)
+                && !isConversationControlOnly(message.text)
+            )
+        ) {
+            message.questionTeaching = normalized;
+            return;
+        }
+
+        // 最近用户消息只是“不会做/继续”等追问时，
+        // 不把这个 follow-up 错当成一道新题。
+        if (isConversationControlOnly(message.text)) {
+            return;
+        }
+    }
+}
+
+
 async function requestAiReply(session) {
     if (!session) return;
 
@@ -4793,6 +5067,14 @@ async function requestAiReply(session) {
             session.teaching = normalizeTeaching(
                 returnedTeaching
             );
+
+            if (!data.generated_question) {
+                attachTeachingSnapshotToLatestQuestion(
+                    session,
+                    returnedTeaching
+                );
+            }
+
             saveState();
             renderInfo();
 
@@ -4804,11 +5086,13 @@ async function requestAiReply(session) {
                 graphModal
                 && !graphModal.classList.contains("hidden")
             ) {
-                const context = getCurrentKnowledgeContext();
+                if (knowledgeGraphScope === "current") {
+                    const context = getCurrentKnowledgeContext();
 
-                if (context.category) {
-                    knowledgeGraphFilter = context.category;
-                    knowledgeGraphViewMode = "focus";
+                    if (context.category) {
+                        knowledgeGraphFilter = context.category;
+                        knowledgeGraphViewMode = "focus";
+                    }
                 }
 
                 renderKnowledgeGraph();
@@ -5529,8 +5813,9 @@ function markChatMessageAsWrong(sessionId, messageIndex) {
         return;
     }
 
-    addQuestionInfoToWrongBook(questionInfo);
-    renderLearningSummary();
+    openWrongSafePreview(
+        questionInfo
+    );
 }
 
 function deleteChatMessage(sessionId, messageIndex) {
@@ -6355,6 +6640,230 @@ function getCurrentKnowledgeContext() {
     };
 }
 
+function getConversationKnowledgeContext() {
+    const session = getCurrent();
+
+    if (!session) {
+        return {
+            category: "",
+            categories: [],
+            focusPoints: [],
+            knowledgePoints: [],
+            prerequisitePoints: [],
+            knowledgePath: [],
+            questionCount: 0,
+            scope: "conversation"
+        };
+    }
+
+    const knowledgePoints = [];
+    const prerequisitePoints = [];
+    const knowledgePath = [];
+    const categories = [];
+    const questionFingerprints = new Set();
+
+    const collectTeaching = teachingValue => {
+        const teaching = normalizeTeaching(
+            teachingValue
+        );
+
+        if (!teaching) return;
+
+        knowledgePoints.push(
+            ...teaching.knowledge_points,
+            ...teaching.focus_points
+        );
+        prerequisitePoints.push(
+            ...teaching.prerequisite_points
+        );
+        knowledgePath.push(
+            ...teaching.knowledge_path
+        );
+
+        if (
+            teaching.category
+            && teaching.category !== "待识别"
+        ) {
+            categories.push(
+                teaching.category
+            );
+        }
+    };
+
+    for (const message of session.messages) {
+        if (!message) continue;
+
+        if (
+            message.role === "ai"
+            && (
+                message.generatedExercise
+                || message.generatedQuestion
+            )
+        ) {
+            const question = extractQuestionOnlyFromMessage(
+                message
+            );
+
+            if (question) {
+                questionFingerprints.add(
+                    wrongQuestionFingerprint(question)
+                );
+            }
+
+            collectTeaching(
+                message.generatedTeaching
+            );
+        }
+
+        if (
+            message.role === "user"
+            && message.questionTeaching
+        ) {
+            const question = extractQuestionOnlyFromMessage(
+                message
+            );
+
+            if (question) {
+                questionFingerprints.add(
+                    wrongQuestionFingerprint(question)
+                );
+            }
+
+            collectTeaching(
+                message.questionTeaching
+            );
+        }
+    }
+
+    // 旧会话没有 message teaching 快照时，用已经存在的学习事件兜底。
+    const seenEvents = learningState.events.filter(
+        event => (
+            String(event.sessionId) === String(session.id)
+            && event.type === "seen"
+        )
+    );
+
+    for (const event of seenEvents) {
+        knowledgePoints.push(
+            ...(event.points || [])
+        );
+    }
+
+    // 当前 learningQuestion 与该会话错题也属于“本对话做过的题”。
+    const learningQuestion = normalizeLearningQuestion(
+        session.learningQuestion
+    );
+
+    if (learningQuestion) {
+        knowledgePoints.push(
+            ...learningQuestion.knowledgePoints,
+            ...learningQuestion.focusPoints
+        );
+
+        if (learningQuestion.category) {
+            categories.push(
+                learningQuestion.category
+            );
+        }
+
+        questionFingerprints.add(
+            wrongQuestionFingerprint(
+                learningQuestion.text
+            )
+        );
+    }
+
+    for (const item of learningState.wrongQuestions) {
+        if (
+            String(item.sessionId) !== String(session.id)
+        ) {
+            continue;
+        }
+
+        knowledgePoints.push(
+            ...(item.knowledgePoints || []),
+            ...(item.focusPoints || [])
+        );
+
+        if (item.category) {
+            categories.push(item.category);
+        }
+
+        if (item.question) {
+            questionFingerprints.add(
+                wrongQuestionFingerprint(
+                    item.question
+                )
+            );
+        }
+    }
+
+    const uniqueKnowledge = uniqueTextList(
+        knowledgePoints,
+        30
+    );
+
+    // 如果事件只留下知识点，没有 category，就从知识图谱节点反推模块。
+    for (const point of uniqueKnowledge) {
+        const node = findKnowledgeGraphNodeByName(
+            point
+        );
+
+        if (node?.category) {
+            categories.push(
+                node.category
+            );
+        }
+    }
+
+    const uniqueCategories = uniqueTextList(
+        categories.filter(
+            item => item && item !== "待识别"
+        ),
+        12
+    );
+
+    return {
+        category: (
+            uniqueCategories.length === 1
+                ? uniqueCategories[0]
+                : "全部"
+        ),
+        categories: uniqueCategories,
+        focusPoints: [],
+        knowledgePoints: uniqueKnowledge,
+        prerequisitePoints: uniqueTextList(
+            prerequisitePoints,
+            20
+        ),
+        knowledgePath: uniqueTextList(
+            knowledgePath,
+            30
+        ),
+        questionCount: Math.max(
+            questionFingerprints.size,
+            seenEvents.length
+        ),
+        scope: "conversation"
+    };
+}
+
+function getActiveKnowledgeContext() {
+    return knowledgeGraphScope === "conversation"
+        ? getConversationKnowledgeContext()
+        : {
+            ...getCurrentKnowledgeContext(),
+            categories: (
+                getCurrentKnowledgeContext().category
+                    ? [getCurrentKnowledgeContext().category]
+                    : []
+            ),
+            questionCount: 1,
+            scope: "current"
+        };
+}
+
+
 function fillKnowledgeGraphCategoryOptions() {
     const select = document.getElementById(
         "knowledgeGraphCategory"
@@ -6362,13 +6871,23 @@ function fillKnowledgeGraphCategoryOptions() {
 
     if (!select || !knowledgeGraphData) return;
 
-    const categories = getKnowledgeGraphCategories();
+    const baseCategories = getKnowledgeGraphCategories();
+
+    const categories = (
+        knowledgeGraphScope === "conversation"
+            ? ["全部", ...baseCategories]
+            : baseCategories
+    );
 
     if (
         !knowledgeGraphFilter
         || !categories.includes(knowledgeGraphFilter)
     ) {
-        knowledgeGraphFilter = categories[0] || "";
+        knowledgeGraphFilter = (
+            knowledgeGraphScope === "conversation"
+                ? "全部"
+                : (baseCategories[0] || "")
+        );
     }
 
     select.innerHTML = "";
@@ -6381,6 +6900,7 @@ function fillKnowledgeGraphCategoryOptions() {
         select.appendChild(option);
     }
 }
+
 
 function findKnowledgeGraphNodeById(nodeId) {
     if (
@@ -6456,6 +6976,8 @@ function openKnowledgeGraph() {
 
     ensureKnowledgeGraphData()
         .then(() => {
+            knowledgeGraphScope = "current";
+
             const context = getCurrentKnowledgeContext();
             const categories = getKnowledgeGraphCategories();
 
@@ -6474,6 +6996,7 @@ function openKnowledgeGraph() {
             }
 
             fillKnowledgeGraphCategoryOptions();
+            updateKnowledgeGraphScopeButton();
             updateKnowledgeGraphModeButton();
             renderKnowledgeGraph();
         })
@@ -6510,7 +7033,7 @@ function renderKnowledgeGraphLoading(message) {
 
     if (summary) {
         summary.textContent = (
-            "这里会把当前题目的知识点关系和学习记录画成可视化图谱。"
+            "这里可以查看当前题目，也可以汇总本对话前面做过的题目。"
         );
     }
 
@@ -6536,17 +7059,79 @@ function setKnowledgeGraphFilter(value) {
 
     knowledgeGraphFilter = next;
 
-    const context = getCurrentKnowledgeContext();
+    const context = getActiveKnowledgeContext();
 
-    // 用户主动切换到别的模块时，默认展示这个模块的完整结构。
-    // 切回当前题目所在模块，则仍保持当前视图模式。
-    if (next !== context.category) {
+    // 当前题目模式下切换别的模块，默认展开完整模块。
+    // 本对话模式允许继续在某个模块内查看本对话涉及的知识。
+    if (
+        knowledgeGraphScope === "current"
+        && next !== context.category
+    ) {
         knowledgeGraphViewMode = "full";
     }
 
     updateKnowledgeGraphModeButton();
     renderKnowledgeGraph();
 }
+
+function updateKnowledgeGraphScopeButton() {
+    const button = document.getElementById(
+        "knowledgeGraphScopeBtn"
+    );
+    const legend = document.getElementById(
+        "knowledgeGraphLegendRelated"
+    );
+
+    if (button) {
+        if (knowledgeGraphScope === "conversation") {
+            button.textContent = "只看当前题目";
+            button.title = "切回当前最后一道题";
+        } else {
+            button.textContent = "查看本对话题目";
+            button.title = "把本对话前面做过的题目一起汇总到图谱";
+        }
+    }
+
+    if (legend) {
+        legend.textContent = (
+            knowledgeGraphScope === "conversation"
+                ? "本对话相关"
+                : "本题相关"
+        );
+    }
+}
+
+function toggleKnowledgeGraphScope() {
+    if (!knowledgeGraphData) return;
+
+    if (knowledgeGraphScope === "current") {
+        knowledgeGraphScope = "conversation";
+        knowledgeGraphFilter = "全部";
+        knowledgeGraphViewMode = "focus";
+    } else {
+        knowledgeGraphScope = "current";
+
+        const context = getCurrentKnowledgeContext();
+        const categories = getKnowledgeGraphCategories();
+
+        if (
+            context.category
+            && categories.includes(context.category)
+        ) {
+            knowledgeGraphFilter = context.category;
+        }
+
+        knowledgeGraphViewMode = "focus";
+    }
+
+    knowledgeGraphSelectedNodeId = "";
+
+    fillKnowledgeGraphCategoryOptions();
+    updateKnowledgeGraphScopeButton();
+    updateKnowledgeGraphModeButton();
+    renderKnowledgeGraph();
+}
+
 
 function updateKnowledgeGraphModeButton() {
     const button = document.getElementById(
@@ -6556,16 +7141,47 @@ function updateKnowledgeGraphModeButton() {
     if (!button) return;
 
     if (knowledgeGraphViewMode === "focus") {
-        button.textContent = "查看完整模块";
-        button.title = "展开当前模块的全部知识点";
+        button.textContent = (
+            knowledgeGraphScope === "conversation"
+                ? "查看完整范围"
+                : "查看完整模块"
+        );
+
+        button.title = (
+            knowledgeGraphScope === "conversation"
+                ? "展开当前筛选范围的全部知识点"
+                : "展开当前模块的全部知识点"
+        );
     } else {
-        button.textContent = "聚焦当前题目";
-        button.title = "只显示与当前题目直接相关的知识点";
+        button.textContent = (
+            knowledgeGraphScope === "conversation"
+                ? "聚焦本对话"
+                : "聚焦当前题目"
+        );
+
+        button.title = (
+            knowledgeGraphScope === "conversation"
+                ? "只显示本对话题目涉及的知识点"
+                : "只显示与当前题目直接相关的知识点"
+        );
     }
 }
 
+
 function focusKnowledgeGraphOnCurrent() {
     if (!knowledgeGraphData) return;
+
+    if (knowledgeGraphScope === "conversation") {
+        knowledgeGraphViewMode = (
+            knowledgeGraphViewMode === "focus"
+                ? "full"
+                : "focus"
+        );
+
+        updateKnowledgeGraphModeButton();
+        renderKnowledgeGraph();
+        return;
+    }
 
     const context = getCurrentKnowledgeContext();
     const categories = getKnowledgeGraphCategories();
@@ -6582,26 +7198,10 @@ function focusKnowledgeGraphOnCurrent() {
         && categories.includes(context.category)
     ) {
         knowledgeGraphFilter = context.category;
-    } else {
-        const relatedName = (
-            context.focusPoints[0]
-            || context.knowledgePoints[0]
-            || context.prerequisitePoints[0]
-            || ""
-        );
-
-        const relatedNode = relatedName
-            ? findKnowledgeGraphNodeByName(relatedName)
-            : null;
-
-        if (relatedNode) {
-            knowledgeGraphFilter = relatedNode.category;
-        }
     }
 
     const currentNodeName = (
-        context.focusPoints[0]
-        || context.knowledgePoints[0]
+        context.knowledgePoints[0]
         || context.prerequisitePoints[0]
         || ""
     );
@@ -6623,6 +7223,7 @@ function focusKnowledgeGraphOnCurrent() {
 }
 
 
+
 function knowledgeGraphNodeState(nodeName, context) {
     if (
         context?.focusPoints?.includes(nodeName)
@@ -6630,7 +7231,11 @@ function knowledgeGraphNodeState(nodeName, context) {
     ) {
         return {
             key: "current",
-            label: "本题相关",
+            label: (
+                knowledgeGraphScope === "conversation"
+                    ? "本对话相关"
+                    : "本题相关"
+            ),
             fill: "#5b21b6",
             stroke: "#c4b5fd",
             text: "#ffffff",
@@ -7064,32 +7669,53 @@ function renderKnowledgeGraphSummary(context) {
         summary.appendChild(item);
     };
 
-    addItem(
-        "当前模块",
-        context.category || knowledgeGraphFilter || "暂未识别"
-    );
+    if (knowledgeGraphScope === "conversation") {
+        addItem(
+            "查看范围",
+            context.questionCount > 0
+                ? `本对话 · 约 ${context.questionCount} 道题`
+                : "本对话"
+        );
 
-    const related = uniqueTextList([
-        ...(context.focusPoints || []),
-        ...(context.knowledgePoints || [])
-    ], 6);
+        if (context.categories?.length) {
+            addItem(
+                "涉及模块",
+                context.categories.join("、")
+            );
+        }
+    } else {
+        addItem(
+            "当前模块",
+            context.category || knowledgeGraphFilter || "暂未识别"
+        );
+    }
+
+    const related = uniqueTextList(
+        context.knowledgePoints || [],
+        12
+    );
 
     if (related.length) {
         addItem(
-            "本题相关",
+            knowledgeGraphScope === "conversation"
+                ? "本对话相关"
+                : "本题相关",
             related.join("、")
         );
-    }
-
-    if (!related.length) {
+    } else {
         addItem(
             "当前视图",
             knowledgeGraphViewMode === "focus"
-                ? "与当前题目直接相关的知识"
-                : "完整模块"
+                ? (
+                    knowledgeGraphScope === "conversation"
+                        ? "本对话暂时没有可汇总的知识点"
+                        : "与当前题目直接相关的知识"
+                )
+                : "完整范围"
         );
     }
 }
+
 
 
 function renderKnowledgeGraphDetail() {
@@ -7114,7 +7740,7 @@ function renderKnowledgeGraphDetail() {
         return;
     }
 
-    const context = getCurrentKnowledgeContext();
+    const context = getActiveKnowledgeContext();
     const state = knowledgeGraphNodeState(
         node.name,
         context
@@ -7187,9 +7813,10 @@ function renderKnowledgeGraph() {
     }
 
     fillKnowledgeGraphCategoryOptions();
+    updateKnowledgeGraphScopeButton();
     updateKnowledgeGraphModeButton();
 
-    const context = getCurrentKnowledgeContext();
+    const context = getActiveKnowledgeContext();
     const canvas = document.getElementById(
         "knowledgeGraphCanvas"
     );
@@ -7228,11 +7855,23 @@ function renderKnowledgeGraph() {
     const description = (
         knowledgeGraphViewMode === "focus"
             ? (
-                visibleNodes.length < fullNodes.length
-                    ? `已聚焦当前题目，只显示 ${visibleNodes.length} 个直接相关知识点。`
-                    : "当前没有可进一步收缩的题目上下文，显示当前模块。"
+                knowledgeGraphScope === "conversation"
+                    ? (
+                        visibleNodes.length
+                            ? `已汇总本对话前面题目，只显示 ${visibleNodes.length} 个相关知识点。`
+                            : "本对话暂时没有可汇总的知识点。"
+                    )
+                    : (
+                        visibleNodes.length < fullNodes.length
+                            ? `已聚焦当前题目，只显示 ${visibleNodes.length} 个直接相关知识点。`
+                            : "当前没有可进一步收缩的题目上下文，显示当前模块。"
+                    )
             )
-            : `完整模块，共 ${fullNodes.length} 个知识点。`
+            : (
+                knowledgeGraphFilter === "全部"
+                    ? `完整知识图谱，共 ${fullNodes.length} 个知识点。`
+                    : `完整模块，共 ${fullNodes.length} 个知识点。`
+            )
     );
 
     renderKnowledgeGraphSection(
@@ -7330,10 +7969,15 @@ document.addEventListener(
         const wrongQuestionPickerCancel = document.getElementById("wrongQuestionPickerCancel");
         const wrongQuestionPickerConfirm = document.getElementById("wrongQuestionPickerConfirm");
         const wrongQuestionPickerModal = document.getElementById("wrongQuestionPickerModal");
+        const wrongSafeClose = document.getElementById("wrongSafeClose");
+        const wrongSafeCancel = document.getElementById("wrongSafeCancel");
+        const wrongSafeConfirm = document.getElementById("wrongSafeConfirm");
+        const wrongSafeModal = document.getElementById("wrongSafeModal");
         const knowledgeGraphBtn = document.getElementById("knowledgeGraphBtn");
         const knowledgeGraphClose = document.getElementById("knowledgeGraphClose");
         const knowledgeGraphModal = document.getElementById("knowledgeGraphModal");
         const knowledgeGraphCategory = document.getElementById("knowledgeGraphCategory");
+        const knowledgeGraphScopeBtn = document.getElementById("knowledgeGraphScopeBtn");
         const knowledgeGraphFocusBtn = document.getElementById("knowledgeGraphFocusBtn");
         const wrongFilterButtons = document.querySelectorAll(
             "[data-wrong-filter]"
@@ -7518,6 +8162,38 @@ document.addEventListener(
             );
         }
 
+        if (wrongSafeClose) {
+            wrongSafeClose.addEventListener(
+                "click",
+                closeWrongSafePreview
+            );
+        }
+
+        if (wrongSafeCancel) {
+            wrongSafeCancel.addEventListener(
+                "click",
+                closeWrongSafePreview
+            );
+        }
+
+        if (wrongSafeConfirm) {
+            wrongSafeConfirm.addEventListener(
+                "click",
+                confirmWrongSafePreview
+            );
+        }
+
+        if (wrongSafeModal) {
+            wrongSafeModal.addEventListener(
+                "click",
+                event => {
+                    if (event.target === wrongSafeModal) {
+                        closeWrongSafePreview();
+                    }
+                }
+            );
+        }
+
         if (knowledgeGraphBtn) {
             knowledgeGraphBtn.addEventListener(
                 "click",
@@ -7547,6 +8223,13 @@ document.addEventListener(
             knowledgeGraphCategory.addEventListener(
                 "change",
                 event => setKnowledgeGraphFilter(event.target.value)
+            );
+        }
+
+        if (knowledgeGraphScopeBtn) {
+            knowledgeGraphScopeBtn.addEventListener(
+                "click",
+                toggleKnowledgeGraphScope
             );
         }
 
