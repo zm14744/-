@@ -1008,14 +1008,14 @@ function isExerciseRequestText(text) {
 
     if (
         !value
-        || value.length > 60
+        || value.length > 90
     ) {
         return false;
     }
 
     return Boolean(
-        /^(?:请|麻烦|能不能|可以)?(?:再|重新|随便)?(?:给我|帮我)?(?:出|来)(?:一道|一题|几道|几题)?[^，。！？]{0,14}(?:题|练习)(?:吧|。|！|!)?$/.test(value)
-        || /^(?:给我)?(?:出题|来一道|练习一下|再来一道)(?:吧|。|！|!)?$/.test(value)
+        /^(?:请|麻烦|能不能|可以)?(?:再|重新|随机|随便)?(?:给我|帮我)?(?:出|来)(?:一道|一题|几道|几题)?[^，。！？!?]{0,28}(?:题目|题|练习)(?:吧|。|！|!)?$/.test(value)
+        || /^(?:请|麻烦|能不能|可以)?(?:给我)?(?:出题|来一道|再来一道|练习一下)(?:吧|。|！|!)?$/.test(value)
     );
 }
 
@@ -1027,8 +1027,9 @@ function extractAiGeneratedExerciseText(reply) {
     const headingPatterns = [
         /【题目】/,
         /【练习题】/,
-        /(?:^|\n)#{1,4}\s*题目\s*(?:\n|$)/m,
-        /(?:^|\n)\*\*题目[:：]?\*\*\s*/m
+        /(?:^|\n)#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)/m,
+        /(?:^|\n)\*\*(?:题目|练习题)[:：]?\*\*\s*/m,
+        /(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)/m
     ];
 
     let bestIndex = -1;
@@ -1057,7 +1058,7 @@ function extractAiGeneratedExerciseText(reply) {
 
     // 练习题回答通常在题目后附“提示”。错题本只保存题目正文。
     const hintMatch = text.match(
-        /\n\s*(?:---+\s*\n\s*)?(?:\*\*)?提示[:：]?(?:\*\*)?/i
+        /\n\s*(?:---+\s*\n\s*)?(?:\*\*)?(?:提示|思考提示|解题提示|小提示)[:：]?(?:\*\*)?/i
     );
 
     if (hintMatch && typeof hintMatch.index === "number") {
@@ -1456,7 +1457,8 @@ function processLearningFromReply(
     session,
     teaching,
     reply,
-    generatedAnswer = ""
+    generatedAnswer = "",
+    generatedQuestion = ""
 ) {
     const normalized = normalizeTeaching(teaching);
 
@@ -1478,8 +1480,9 @@ function processLearningFromReply(
         && typeof reply === "string"
         && reply.trim()
     ) {
-        const generatedExercise = extractAiGeneratedExerciseText(
-            reply
+        const generatedExercise = (
+            String(generatedQuestion || "").trim()
+            || extractAiGeneratedExerciseText(reply)
         );
 
         session.learningQuestion = {
@@ -3694,6 +3697,18 @@ function loadState() {
                     apiText: typeof message.apiText === "string"
                         ? message.apiText
                         : undefined,
+                    generatedExercise: Boolean(
+                        message.generatedExercise
+                    ),
+                    generatedQuestion: typeof message.generatedQuestion === "string"
+                        ? message.generatedQuestion
+                        : "",
+                    generatedAnswer: typeof message.generatedAnswer === "string"
+                        ? message.generatedAnswer
+                        : "",
+                    generatedTeaching: normalizeTeaching(
+                        message.generatedTeaching
+                    ),
                     isRetestPrompt: Boolean(message.isRetestPrompt),
                     isRetestAnswer: Boolean(message.isRetestAnswer),
                     isError: Boolean(message.isError),
@@ -4151,6 +4166,24 @@ async function requestAiReply(session) {
             );
             saveState();
             renderInfo();
+
+            const graphModal = document.getElementById(
+                "knowledgeGraphModal"
+            );
+
+            if (
+                graphModal
+                && !graphModal.classList.contains("hidden")
+            ) {
+                const context = getCurrentKnowledgeContext();
+
+                if (context.category) {
+                    knowledgeGraphFilter = context.category;
+                    knowledgeGraphViewMode = "focus";
+                }
+
+                renderKnowledgeGraph();
+            }
         }
 
         if (!response.ok || data.error) {
@@ -4191,19 +4224,32 @@ async function requestAiReply(session) {
                 session,
                 session.teaching,
                 data.reply,
-                data.generated_answer || ""
+                data.generated_answer || "",
+                data.generated_question || ""
             );
         }
+
+        const assistantMeta = {
+            generatedExercise: Boolean(
+                data.generated_question
+                || data.generated_teaching
+            ),
+            generatedQuestion: data.generated_question || "",
+            generatedAnswer: data.generated_answer || "",
+            generatedTeaching: data.generated_teaching || null
+        };
 
         if (currentId === session.id) {
             startTyping(
                 data.reply,
-                session
+                session,
+                assistantMeta
             );
         } else {
             addAssistantMessage(
                 session,
-                data.reply
+                data.reply,
+                assistantMeta
             );
             saveState();
             renderSessions();
@@ -4569,7 +4615,15 @@ function looksLikeChatQuestionText(text) {
         && /[？?（(]|求|判断|写出|证明|计算|选择|填空/.test(value)
     );
 
-    if (numberedQuestion) {
+    const parenthesizedSubQuestion = (
+        /(?:^|\n)\s*[（(]\s*\d{1,2}\s*[)）]\s*\S{3,}/m.test(value)
+        && /求|判断|写出|证明|计算|选择|填空|通路|回路|矩阵/.test(value)
+    );
+
+    if (
+        numberedQuestion
+        || parenthesizedSubQuestion
+    ) {
         return true;
     }
 
@@ -4627,17 +4681,10 @@ function looksLikeAiGeneratedQuestion(
     // AI 生成题必须有明确的“题目”标记。
     // 这样普通讲解、让用户选方向、题库说明都不会误出现错题按钮。
     const explicitHeading = Boolean(
-        /【题目】|【练习题】|(?:^|\n)#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)|(?:^|\n)\*\*(?:题目|练习题)[:：]?\*\*/m.test(value)
+        /【题目】|【练习题】|(?:^|\n)#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)|(?:^|\n)\*\*(?:题目|练习题)[:：]?\*\*|(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)/m.test(value)
     );
 
     if (!explicitHeading) {
-        return false;
-    }
-
-    if (
-        previousUserText
-        && !isExerciseRequestText(previousUserText)
-    ) {
         return false;
     }
 
@@ -4645,6 +4692,9 @@ function looksLikeAiGeneratedQuestion(
         value
     );
 
+    // 题目本身已经有明确“题目/练习题”标题，
+    // 且提取后的正文确实像一道题，就允许记录。
+    // 不再依赖上一条用户消息，否则删除/修改上一条消息后会让历史 AI 题失去按钮。
     return looksLikeChatQuestionText(
         extracted
     );
@@ -4691,6 +4741,20 @@ function canMessageBeWrongQuestion(session, messageIndex, message) {
     }
 
     if (message.role === "ai") {
+        if (
+            message.generatedExercise
+            && (
+                message.generatedQuestion
+                || looksLikeChatQuestionText(
+                    extractAiGeneratedExerciseText(
+                        message.text
+                    )
+                )
+            )
+        ) {
+            return true;
+        }
+
         const previousUser = previousUserMessageBefore(
             session,
             messageIndex
@@ -4724,6 +4788,9 @@ function questionInfoFromChatMessage(session, messageIndex) {
     }
 
     const teaching = normalizeTeaching(session.teaching);
+    const messageTeaching = normalizeTeaching(
+        message.generatedTeaching
+    );
     const saved = normalizeLearningQuestion(
         session.learningQuestion
     );
@@ -4734,9 +4801,13 @@ function questionInfoFromChatMessage(session, messageIndex) {
         : "text";
 
     if (message.role === "ai") {
-        text = extractAiGeneratedExerciseText(
-            message.text
-        ) || message.text.trim();
+        text = (
+            String(message.generatedQuestion || "").trim()
+            || extractAiGeneratedExerciseText(
+                message.text
+            )
+            || message.text.trim()
+        );
 
         source = "ai";
     }
@@ -4755,31 +4826,48 @@ function questionInfoFromChatMessage(session, messageIndex) {
 
     return {
         text,
-        knowledgePoints: savedMatches
-            ? saved.knowledgePoints
+        knowledgePoints: messageTeaching
+            ? messageTeaching.knowledge_points.slice(0, 4)
             : (
-                isRecent
-                    ? (teaching?.knowledge_points || []).slice(0, 4)
-                    : []
+                savedMatches
+                    ? saved.knowledgePoints
+                    : (
+                        isRecent
+                            ? (teaching?.knowledge_points || []).slice(0, 4)
+                            : []
+                    )
             ),
-        focusPoints: savedMatches
-            ? saved.focusPoints
+        focusPoints: messageTeaching
+            ? messageTeaching.focus_points.slice(0, 2)
             : (
-                isRecent
-                    ? (teaching?.focus_points || []).slice(0, 2)
-                    : []
+                savedMatches
+                    ? saved.focusPoints
+                    : (
+                        isRecent
+                            ? (teaching?.focus_points || []).slice(0, 2)
+                            : []
+                    )
             ),
-        category: savedMatches
-            ? saved.category
+        category: messageTeaching
+            ? messageTeaching.category
             : (
-                isRecent
-                    ? (teaching?.category || "")
-                    : ""
+                savedMatches
+                    ? saved.category
+                    : (
+                        isRecent
+                            ? (teaching?.category || "")
+                            : ""
+                    )
             ),
         source,
-        referenceAnswer: savedMatches
-            ? saved.referenceAnswer
-            : "",
+        referenceAnswer: (
+            String(message.generatedAnswer || "").trim()
+            || (
+                savedMatches
+                    ? saved.referenceAnswer
+                    : ""
+            )
+        ),
         sessionId: session.id,
         updatedAt: Date.now()
     };
@@ -4894,6 +4982,18 @@ function addAssistantMessage(
     session.messages.push({
         role: "ai",
         text,
+        generatedExercise: Boolean(
+            meta.generatedExercise
+        ),
+        generatedQuestion: typeof meta.generatedQuestion === "string"
+            ? meta.generatedQuestion
+            : "",
+        generatedAnswer: typeof meta.generatedAnswer === "string"
+            ? meta.generatedAnswer
+            : "",
+        generatedTeaching: normalizeTeaching(
+            meta.generatedTeaching
+        ),
         isError: Boolean(meta.isError),
         isNotice: Boolean(meta.isNotice)
     });
@@ -4960,6 +5060,18 @@ function startTyping(
     typingFullText = text;
     typingSessionId = session.id;
     typingMeta = {
+        generatedExercise: Boolean(
+            meta.generatedExercise
+        ),
+        generatedQuestion: typeof meta.generatedQuestion === "string"
+            ? meta.generatedQuestion
+            : "",
+        generatedAnswer: typeof meta.generatedAnswer === "string"
+            ? meta.generatedAnswer
+            : "",
+        generatedTeaching: normalizeTeaching(
+            meta.generatedTeaching
+        ),
         isError: Boolean(meta.isError),
         isNotice: Boolean(meta.isNotice)
     };
