@@ -276,10 +276,54 @@ def _split_exercise_answer(reply):
     return visible, answer
 
 
+def _looks_like_generated_question_reply(text):
+    value = str(text or "").strip()
+
+    if not value:
+        return False
+
+    if re.search(
+        r"【(?:题目|练习题)】"
+        r"|(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)"
+        r"|(?:^|\n)\s*\*\*(?:题目|练习题)[:：]?\*\*"
+        r"|(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)",
+        value,
+        flags=re.MULTILINE
+    ):
+        return True
+
+    parenthesized = re.findall(
+        r"(?:^|\n)\s*[（(]\s*\d{1,2}\s*[)）]\s*\S+",
+        value,
+        flags=re.MULTILINE
+    )
+
+    numbered = re.findall(
+        r"(?:^|\n)\s*\d{1,2}\s*[、.．]\s*\S+",
+        value,
+        flags=re.MULTILINE
+    )
+
+    has_problem_language = bool(
+        re.search(
+            r"(?:设|已知|给定|请回答|回答以下|回答下列|求|判断|写出|计算|证明)",
+            value
+        )
+    )
+
+    return bool(
+        has_problem_language
+        and (
+            len(parenthesized) >= 2
+            or len(numbered) >= 2
+        )
+    )
+
+
 def _extract_generated_question(reply):
     """
-    从 AI 的练习题回复中提取真正题干。
-    聊天区仍显示完整回复（可含提示），但错题本只保存这里提取出的题目。
+    从 AI 练习回复中只提取题目本身。
+    不依赖固定题型/知识点，支持单题、多小问、带/不带“题目”标题。
     """
     value = str(reply or "").strip()
 
@@ -290,47 +334,70 @@ def _extract_generated_question(reply):
         r"【(?:题目|练习题)】",
         r"(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)",
         r"(?:^|\n)\s*\*\*(?:题目|练习题)[:：]?\*\*\s*",
-        r"(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)",
+        r"(?:^|\n)\s*(?:题目|练习题)\s*[:：]\s*",
+        r"(?:^|\n)\s*(?:题目|练习题)\s*(?:\n|$)",
     )
 
     best = None
 
     for pattern in heading_patterns:
-        match = re.search(
-            pattern,
-            value,
-            flags=re.MULTILINE
-        )
-
-        if match and (
-            best is None
-            or match.start() < best.start()
-        ):
+        match = re.search(pattern, value, flags=re.MULTILINE)
+        if match and (best is None or match.start() < best.start()):
             best = match
 
     if best:
         value = value[best.end():].strip()
+    else:
+        start_patterns = (
+            r"(?:^|\n)\s*(?=设)",
+            r"(?:^|\n)\s*(?=已知)",
+            r"(?:^|\n)\s*(?=给定)",
+            r"(?:^|\n)\s*(?=下列)",
+            r"(?:^|\n)\s*(?=在.{0,50}(?:图|集合|关系|系统|空间|序列|网络|情形)中)",
+            r"(?:^|\n)\s*(?=求(?:解|证|出|$))",
+            r"(?:^|\n)\s*(?=证明)",
+            r"(?:^|\n)\s*(?=计算)",
+            r"(?:^|\n)\s*(?=判断)",
+        )
 
-    # 错题本只保留题目，不把“提示/思考提示/解题提示”一起塞进去。
-    hint_match = re.search(
-        r"(?:^|\n)\s*"
-        r"(?:-{3,}\s*\n\s*)?"
-        r"(?:\*\*)?"
-        r"(?:提示|思考提示|解题提示|小提示)"
-        r"[:：]?"
-        r"(?:\*\*)?",
-        value,
-        flags=re.IGNORECASE | re.MULTILINE
+        start = None
+        for pattern in start_patterns:
+            match = re.search(pattern, value, flags=re.MULTILINE)
+            if match and (start is None or match.start() < start.start()):
+                start = match
+
+        if start and start.start() > 0:
+            prefix = value[:start.start()].strip()
+            if (
+                len(prefix) <= 180
+                and re.search(
+                    r"(?:好的|没问题|可以|这次|给你|我来|我们来|先来|出一道|练习一下|下面是)",
+                    prefix
+                )
+            ):
+                value = value[start.start():].strip()
+
+    stop_patterns = (
+        r"(?:^|\n)\s*(?:-{3,}\s*\n\s*)?(?:\*\*)?"
+        r"(?:提示|思考提示|解题提示|小提示|关键提示)\s*[:：]?(?:\*\*)?",
+        r"(?:^|\n)\s*(?:#{1,6}\s*)?"
+        r"(?:参考答案|答案|解析|解答|详细解析|解题过程|过程)\s*[:：]?",
+        r"(?:^|\n)\s*答\s*[:：]",
+        r"(?:^|\n)\s*(?:你先|请先|先尝试|可以先|做完后|卡住了|如果卡住|把答案发给我|告诉我你的进度).{0,220}$",
     )
 
-    if hint_match:
-        value = value[:hint_match.start()].strip()
+    stop_index = len(value)
+    for pattern in stop_patterns:
+        match = re.search(
+            pattern,
+            value,
+            flags=re.IGNORECASE | re.MULTILINE
+        )
+        if match:
+            stop_index = min(stop_index, match.start())
 
-    # 隐藏答案块绝不属于题干。
-    value = _EXERCISE_ANSWER_PATTERN.sub(
-        "",
-        value
-    ).strip()
+    value = value[:stop_index].strip()
+    value = _EXERCISE_ANSWER_PATTERN.sub("", value).strip()
 
     return value[:6000]
 
@@ -481,6 +548,9 @@ def chat():
             or _looks_like_exercise_request(
                 latest_user_text
             )
+            or _looks_like_generated_question_reply(
+                reply
+            )
         )
 
         generated_question = ""
@@ -498,15 +568,17 @@ def chat():
                 reply
             )
 
-            # 关键：只分析“真正题干”，不让开场白和提示干扰知识点识别。
-            if generated_question:
-                generated_teaching = analyze_question(
-                    generated_question
-                )
-            elif reply:
-                generated_teaching = analyze_question(
-                    reply
-                )
+        # 即使上面的 mode 偶发漏判，只要回复本身能抽出明确题目，
+        # 就让该题驱动右侧会话信息和知识图谱。
+        if not generated_question and _looks_like_generated_question_reply(reply):
+            generated_question = _extract_generated_question(
+                reply
+            )
+
+        if generated_question:
+            generated_teaching = analyze_question(
+                generated_question
+            )
 
         response = {
             "reply": reply,
