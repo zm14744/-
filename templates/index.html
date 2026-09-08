@@ -139,8 +139,11 @@ body {
 
 .chat {
     flex:1;
+    min-height:0;
     overflow-y:auto;
     padding:20px;
+    overscroll-behavior:contain;
+    overflow-anchor:none;
 }
 
 .msg {
@@ -1368,7 +1371,6 @@ window.MathJax = {
             </div>
 
             <div class="graph-legend">
-                <span class="legend-item focus">当前卡点</span>
                 <span class="legend-item current">本题相关</span>
                             </div>
         </div>
