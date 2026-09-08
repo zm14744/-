@@ -2218,14 +2218,11 @@ function currentLearningQuestion(session, teaching) {
 
         return {
             ...saved,
-            knowledgePoints: [
-                ...new Set([
-                    ...saved.knowledgePoints,
-                    ...livePoints
-                ])
-            ].slice(0, 4),
-            // 题目正文继续沿用最初保存的原题，
-            // 但“本次卡点”必须跟随当前这一轮对话更新。
+            // 当前题已经有实时分类时，以当前题为准，
+            // 不再把上一道题的知识点继续混进来。
+            knowledgePoints: livePoints.length
+                ? livePoints.slice(0, 4)
+                : saved.knowledgePoints,
             focusPoints: liveFocus.length
                 ? liveFocus.slice(0, 2)
                 : saved.focusPoints,
@@ -6640,6 +6637,256 @@ function getCurrentKnowledgeContext() {
     };
 }
 
+function collectConversationQuestionCandidates(session) {
+    if (
+        !session
+        || !Array.isArray(session.messages)
+    ) {
+        return [];
+    }
+
+    const candidates = [];
+    const seen = new Set();
+
+    for (
+        let index = 0;
+        index < session.messages.length;
+        index += 1
+    ) {
+        const message = session.messages[index];
+
+        if (
+            !message
+            || typeof message.text !== "string"
+        ) {
+            continue;
+        }
+
+        let question = "";
+
+        if (message.role === "user") {
+            if (message.isRetestAnswer) {
+                continue;
+            }
+
+            if (
+                message.source !== "ocr"
+                && isConversationControlOnly(
+                    message.text
+                )
+            ) {
+                continue;
+            }
+
+            question = extractQuestionOnlyFromMessage(
+                message
+            );
+
+            if (
+                message.source !== "ocr"
+                && !looksLikeQuestionPayload(
+                    question
+                )
+            ) {
+                continue;
+            }
+        } else if (message.role === "ai") {
+            question = String(
+                message.generatedQuestion || ""
+            ).trim();
+
+            if (
+                !question
+                && looksLikeStandaloneAiQuestion(
+                    message.text
+                )
+            ) {
+                question = extractAiQuestionPayload(
+                    message.text
+                );
+            }
+
+            question = sanitizeStoredWrongQuestionText(
+                question
+            );
+
+            if (
+                !question
+                || !looksLikeQuestionPayload(
+                    question
+                )
+            ) {
+                continue;
+            }
+        } else {
+            continue;
+        }
+
+        if (!question) {
+            continue;
+        }
+
+        const fingerprint = wrongQuestionFingerprint(
+            question
+        );
+
+        if (
+            !fingerprint
+            || seen.has(fingerprint)
+        ) {
+            continue;
+        }
+
+        seen.add(fingerprint);
+
+        candidates.push({
+            key: `${index}:${fingerprint}`,
+            index,
+            role: message.role,
+            source: message.source || "",
+            text: question
+        });
+    }
+
+    return candidates;
+}
+
+async function refreshConversationKnowledgeIndex(
+    session = getCurrent()
+) {
+    if (!session) {
+        return [];
+    }
+
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+
+    if (!candidates.length) {
+        return [];
+    }
+
+    let payload = null;
+
+    try {
+        const response = await fetch(
+            "/analyze-questions",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    questions: candidates.map(
+                        item => ({
+                            key: item.key,
+                            text: item.text
+                        })
+                    )
+                })
+            }
+        );
+
+        payload = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                payload?.error
+                || "历史题目知识识别失败。"
+            );
+        }
+    } catch (error) {
+        console.warn(
+            "历史题目知识识别失败：",
+            error
+        );
+        return candidates;
+    }
+
+    const results = new Map(
+        (payload?.results || []).map(
+            item => [
+                String(item?.key || ""),
+                normalizeTeaching(
+                    item?.teaching
+                )
+            ]
+        )
+    );
+
+    let latestTeaching = null;
+    let latestCandidate = null;
+
+    for (const candidate of candidates) {
+        const message = session.messages[
+            candidate.index
+        ];
+
+        if (!message) continue;
+
+        const teaching = results.get(
+            candidate.key
+        );
+
+        if (!teaching) {
+            continue;
+        }
+
+        if (candidate.role === "ai") {
+            message.generatedExercise = true;
+            message.generatedQuestion = candidate.text;
+            message.generatedTeaching = teaching;
+        } else {
+            message.questionTeaching = teaching;
+        }
+
+        latestTeaching = teaching;
+        latestCandidate = candidate;
+    }
+
+    if (
+        latestTeaching
+        && latestCandidate
+    ) {
+        session.teaching = latestTeaching;
+
+        const latestMessage = session.messages[
+            latestCandidate.index
+        ];
+
+        session.learningQuestion = {
+            text: latestCandidate.text,
+            knowledgePoints: (
+                latestTeaching.knowledge_points || []
+            ).slice(0, 4),
+            focusPoints: (
+                latestTeaching.focus_points || []
+            ).slice(0, 2),
+            category: latestTeaching.category || "",
+            source: (
+                latestCandidate.role === "ai"
+                    ? "ai"
+                    : (
+                        latestCandidate.source === "ocr"
+                            ? "ocr"
+                            : "text"
+                    )
+            ),
+            referenceAnswer: (
+                latestMessage?.generatedAnswer || ""
+            ),
+            sessionId: session.id,
+            updatedAt: Date.now()
+        };
+    }
+
+    saveState();
+    renderInfo();
+
+    return candidates;
+}
+
+
 function getConversationKnowledgeContext() {
     const session = getCurrent();
 
@@ -6662,32 +6909,40 @@ function getConversationKnowledgeContext() {
     const categories = [];
     const questionFingerprints = new Set();
 
+    let classifiedMessageCount = 0;
+
     const collectTeaching = teachingValue => {
         const teaching = normalizeTeaching(
             teachingValue
         );
 
-        if (!teaching) return;
+        if (
+            !teaching
+            || teaching.category === "待识别"
+        ) {
+            return false;
+        }
 
         knowledgePoints.push(
             ...teaching.knowledge_points,
             ...teaching.focus_points
         );
+
         prerequisitePoints.push(
             ...teaching.prerequisite_points
         );
+
         knowledgePath.push(
             ...teaching.knowledge_path
         );
 
-        if (
-            teaching.category
-            && teaching.category !== "待识别"
-        ) {
+        if (teaching.category) {
             categories.push(
                 teaching.category
             );
         }
+
+        return true;
     };
 
     for (const message of session.messages) {
@@ -6710,9 +6965,13 @@ function getConversationKnowledgeContext() {
                 );
             }
 
-            collectTeaching(
-                message.generatedTeaching
-            );
+            if (
+                collectTeaching(
+                    message.generatedTeaching
+                )
+            ) {
+                classifiedMessageCount += 1;
+            }
         }
 
         if (
@@ -6729,81 +6988,90 @@ function getConversationKnowledgeContext() {
                 );
             }
 
-            collectTeaching(
-                message.questionTeaching
-            );
+            if (
+                collectTeaching(
+                    message.questionTeaching
+                )
+            ) {
+                classifiedMessageCount += 1;
+            }
         }
     }
 
-    // 旧会话没有 message teaching 快照时，用已经存在的学习事件兜底。
-    const seenEvents = learningState.events.filter(
-        event => (
-            String(event.sessionId) === String(session.id)
-            && event.type === "seen"
-        )
-    );
-
-    for (const event of seenEvents) {
-        knowledgePoints.push(
-            ...(event.points || [])
-        );
-    }
-
-    // 当前 learningQuestion 与该会话错题也属于“本对话做过的题”。
-    const learningQuestion = normalizeLearningQuestion(
-        session.learningQuestion
-    );
-
-    if (learningQuestion) {
-        knowledgePoints.push(
-            ...learningQuestion.knowledgePoints,
-            ...learningQuestion.focusPoints
-        );
-
-        if (learningQuestion.category) {
-            categories.push(
-                learningQuestion.category
-            );
-        }
-
-        questionFingerprints.add(
-            wrongQuestionFingerprint(
-                learningQuestion.text
+    // 旧会话完全没有逐题分类时才使用旧学习数据兜底。
+    // 已经重新索引过时，不再让旧错分类污染本对话图谱。
+    if (classifiedMessageCount === 0) {
+        const seenEvents = learningState.events.filter(
+            event => (
+                String(event.sessionId)
+                    === String(session.id)
+                && event.type === "seen"
             )
         );
-    }
 
-    for (const item of learningState.wrongQuestions) {
-        if (
-            String(item.sessionId) !== String(session.id)
-        ) {
-            continue;
+        for (const event of seenEvents) {
+            knowledgePoints.push(
+                ...(event.points || [])
+            );
         }
 
-        knowledgePoints.push(
-            ...(item.knowledgePoints || []),
-            ...(item.focusPoints || [])
+        const learningQuestion = normalizeLearningQuestion(
+            session.learningQuestion
         );
 
-        if (item.category) {
-            categories.push(item.category);
+        if (learningQuestion) {
+            knowledgePoints.push(
+                ...learningQuestion.knowledgePoints,
+                ...learningQuestion.focusPoints
+            );
+
+            if (learningQuestion.category) {
+                categories.push(
+                    learningQuestion.category
+                );
+            }
+
+            if (learningQuestion.text) {
+                questionFingerprints.add(
+                    wrongQuestionFingerprint(
+                        learningQuestion.text
+                    )
+                );
+            }
         }
 
-        if (item.question) {
-            questionFingerprints.add(
-                wrongQuestionFingerprint(
-                    item.question
-                )
+        for (const item of learningState.wrongQuestions) {
+            if (
+                String(item.sessionId)
+                    !== String(session.id)
+            ) {
+                continue;
+            }
+
+            knowledgePoints.push(
+                ...(item.knowledgePoints || []),
+                ...(item.focusPoints || [])
             );
+
+            if (item.category) {
+                categories.push(item.category);
+            }
+
+            if (item.question) {
+                questionFingerprints.add(
+                    wrongQuestionFingerprint(
+                        item.question
+                    )
+                );
+            }
         }
     }
 
     const uniqueKnowledge = uniqueTextList(
         knowledgePoints,
-        30
+        40
     );
 
-    // 如果事件只留下知识点，没有 category，就从知识图谱节点反推模块。
     for (const point of uniqueKnowledge) {
         const node = findKnowledgeGraphNodeByName(
             point
@@ -6818,7 +7086,10 @@ function getConversationKnowledgeContext() {
 
     const uniqueCategories = uniqueTextList(
         categories.filter(
-            item => item && item !== "待识别"
+            item => (
+                item
+                && item !== "待识别"
+            )
         ),
         12
     );
@@ -6834,19 +7105,17 @@ function getConversationKnowledgeContext() {
         knowledgePoints: uniqueKnowledge,
         prerequisitePoints: uniqueTextList(
             prerequisitePoints,
-            20
+            24
         ),
         knowledgePath: uniqueTextList(
             knowledgePath,
-            30
+            40
         ),
-        questionCount: Math.max(
-            questionFingerprints.size,
-            seenEvents.length
-        ),
+        questionCount: questionFingerprints.size,
         scope: "conversation"
     };
 }
+
 
 function getActiveKnowledgeContext() {
     return knowledgeGraphScope === "conversation"
@@ -6975,8 +7244,12 @@ function openKnowledgeGraph() {
     );
 
     ensureKnowledgeGraphData()
-        .then(() => {
+        .then(async () => {
             knowledgeGraphScope = "current";
+
+            await refreshConversationKnowledgeIndex(
+                getCurrent()
+            );
 
             const context = getCurrentKnowledgeContext();
             const categories = getKnowledgeGraphCategories();
@@ -7101,10 +7374,23 @@ function updateKnowledgeGraphScopeButton() {
     }
 }
 
-function toggleKnowledgeGraphScope() {
+async function toggleKnowledgeGraphScope() {
     if (!knowledgeGraphData) return;
 
+    const button = document.getElementById(
+        "knowledgeGraphScopeBtn"
+    );
+
     if (knowledgeGraphScope === "current") {
+        if (button) {
+            button.disabled = true;
+            button.textContent = "正在整理本对话…";
+        }
+
+        await refreshConversationKnowledgeIndex(
+            getCurrent()
+        );
+
         knowledgeGraphScope = "conversation";
         knowledgeGraphFilter = "全部";
         knowledgeGraphViewMode = "focus";
@@ -7130,6 +7416,10 @@ function toggleKnowledgeGraphScope() {
     updateKnowledgeGraphScopeButton();
     updateKnowledgeGraphModeButton();
     renderKnowledgeGraph();
+
+    if (button) {
+        button.disabled = false;
+    }
 }
 
 
@@ -7673,7 +7963,7 @@ function renderKnowledgeGraphSummary(context) {
         addItem(
             "查看范围",
             context.questionCount > 0
-                ? `本对话 · 约 ${context.questionCount} 道题`
+                ? `本对话 · ${context.questionCount} 道题`
                 : "本对话"
         );
 
