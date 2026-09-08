@@ -433,6 +433,61 @@ def _contains_any(text, patterns):
     return any(pattern.lower() in text for pattern in patterns)
 
 
+def _looks_like_exercise_request_text(text):
+    """
+    识别“请出一道……题/题目/练习”这类自然表达。
+    只匹配短、明确的出题请求，避免把长篇讨论里的“题目”误判成出题。
+    """
+    value = str(text or "").strip()
+    value = re.sub(r"\s+", "", value)
+
+    if not value or len(value) > 90:
+        return False
+
+    patterns = (
+        r"^(?:请|麻烦|能不能|可以)?"
+        r"(?:再|重新|随机|随便)?"
+        r"(?:给我|帮我)?"
+        r"(?:出|来)"
+        r"(?:一道|一题|几道|几题)?"
+        r"[^，。！？!?]{0,28}"
+        r"(?:题目|题|练习)"
+        r"(?:吧|。|！|!)?$",
+
+        r"^(?:请|麻烦|能不能|可以)?"
+        r"(?:给我)?"
+        r"(?:出题|来一道|再来一道|练习一下)"
+        r"(?:吧|。|！|!)?$",
+    )
+
+    return any(
+        re.search(pattern, value) is not None
+        for pattern in patterns
+    )
+
+
+def _looks_like_generated_exercise_text(text):
+    """
+    用于“AI 出题后学生说不会做”的上下文继承。
+    支持【题目】、Markdown 标题，以及模型常见的纯文本“题目”标题。
+    """
+    value = str(text or "").strip()
+
+    if not value:
+        return False
+
+    return re.search(
+        r"(?:"
+        r"【(?:题目|练习题)】"
+        r"|(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)"
+        r"|(?:^|\n)\s*\*\*(?:题目|练习题)[:：]?\*\*\s*(?:\n|$)"
+        r"|(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)"
+        r")",
+        value,
+        flags=re.MULTILINE
+    ) is not None
+
+
 def _detect_mode(latest_text):
     text = _normalize(latest_text)
 
@@ -446,7 +501,10 @@ def _detect_mode(latest_text):
     # 答案诊断应优先于出题请求；错题复测回答也依赖这个优先级。
     if _contains_any(text, CHECK_PATTERNS):
         return "check_answer"
-    if _contains_any(text, EXERCISE_PATTERNS):
+    if (
+        _looks_like_exercise_request_text(latest_text)
+        or _contains_any(text, EXERCISE_PATTERNS)
+    ):
         return "exercise"
     if any(marker.lower() in text for marker in _INTERNAL_IMAGE_MARKERS):
         return "hint"
@@ -655,9 +713,8 @@ def analyze_messages(messages):
                 if not content:
                     continue
 
-                if (
-                    "【题目】" not in content
-                    and "【练习题】" not in content
+                if not _looks_like_generated_exercise_text(
+                    content
                 ):
                     continue
 
