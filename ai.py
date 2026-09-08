@@ -17,7 +17,8 @@ ASK_AI_MOCK = False
 # 控制单次请求规模，避免上下文无限增长和费用失控
 MAX_HISTORY_MESSAGES = 16
 MAX_MESSAGE_CHARS = 6000
-MAX_OUTPUT_TOKENS = 2000
+MAX_OUTPUT_TOKENS = max(2000, min(6000, int(os.environ.get("DEEPSEEK_MAX_OUTPUT_TOKENS", "5000"))))
+MAX_CONTINUATION_ROUNDS = 1
 
 SYSTEM_PROMPT = r"""你是离散数学智能辅学系统中的教学助手。
 
@@ -571,6 +572,77 @@ def _regenerate_broken_math_answer(
 
 
 
+def _continue_truncated_answer(api_messages, partial_content, headers, timeout=(10, 60)):
+    """当模型因为 max_tokens 截断时，最多自动续写一次并拼接完整答案。"""
+    content = str(partial_content or "").strip()
+    if not content:
+        return content
+
+    messages = list(api_messages)
+    messages.append({
+        "role": "assistant",
+        "content": content,
+    })
+
+    for _round in range(MAX_CONTINUATION_ROUNDS):
+        messages.append({
+            "role": "user",
+            "content": (
+                "上一条回答因为输出长度限制被截断了。请只从截断处继续，"
+                "不要从头重复，不要添加新的开场白；保持原来的 Markdown/LaTeX 格式，"
+                "直到把原本要回答的内容完整结束。"
+            ),
+        })
+
+        payload = {
+            "model": "deepseek-v4-flash",
+            "messages": messages,
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "thinking": {"type": "disabled"},
+            "stream": False,
+        }
+
+        try:
+            response = requests.post(
+                API_URL,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            if not response.ok:
+                print(
+                    "长回答自动续写失败："
+                    f"HTTP {response.status_code}；{response.text[:300]}"
+                )
+                break
+
+            result = response.json()
+            choices = result.get("choices") or []
+            if not choices:
+                break
+
+            choice = choices[0]
+            piece = choice.get("message", {}).get("content")
+            if not isinstance(piece, str) or not piece.strip():
+                break
+
+            piece = piece.strip()
+            content = content.rstrip() + "\n" + piece
+
+            if choice.get("finish_reason") != "length":
+                break
+
+            messages.append({
+                "role": "assistant",
+                "content": piece,
+            })
+        except Exception as exc:
+            print(f"长回答自动续写异常：{repr(exc)}")
+            break
+
+    return content.strip()
+
+
 def _friendly_http_error(status_code):
     """把常见 HTTP 错误转换为用户可读的中文提示。"""
     if status_code == 400:
@@ -699,9 +771,18 @@ $$
                 print(f"DeepSeek 返回缺少 choices：{result}")
                 return _failure("AI 服务没有返回有效内容，请重新发送。")
 
-            content = choices[0].get("message", {}).get("content")
+            choice = choices[0]
+            content = choice.get("message", {}).get("content")
             if not content:
                 return _failure("AI 服务没有生成有效回答，请重新发送。")
+
+            if choice.get("finish_reason") == "length":
+                print("检测到回答达到输出长度上限，自动继续生成。")
+                content = _continue_truncated_answer(
+                    api_messages,
+                    content,
+                    headers,
+                )
 
             content = _repair_common_latex_typos(content)
 
