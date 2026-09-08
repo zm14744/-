@@ -47,6 +47,8 @@ let typingAutoFollow = true;
 let typingScrollLockedByUser = false;
 let lastTypingAutoScrollAt = 0;
 let preserveChatScrollOnce = null;
+let forceChatBottomOnce = false;
+let lastRenderedChatSessionId = null;
 
 const TYPING_RENDER_INTERVAL = 30;
 const TYPING_CHARS_PER_TICK = 3;
@@ -1275,10 +1277,52 @@ function extractAiQuestionPayload(text) {
     return value.trim();
 }
 
+function extractQuestionReviewPayload(text) {
+    const source = String(text || "").trim();
+
+    if (!source) return "";
+
+    const marker = "【题目回顾】";
+    const markerIndex = source.indexOf(marker);
+
+    if (markerIndex < 0) {
+        return source;
+    }
+
+    let value = source
+        .slice(markerIndex + marker.length)
+        .trim();
+
+    // “题目回顾”之后的分步讲解绝不能进入错题本。
+    // 只保留回顾里的原始题干，遇到第一步/开始讲解就截断。
+    const stopPatterns = [
+        /(?:^|\n)\s*(?:[-—_=]{3,}\s*\n\s*)?(?:#{1,6}\s*)?第\s*(?:[一二三四五六七八九十]+|\d+)\s*步\s*[:：]?/m,
+        /(?:^|\n)\s*(?:[-—_=]{3,}\s*\n\s*)?(?:#{1,6}\s*)?(?:开始讲解|下面开始讲解|解题过程|详细讲解)\s*[:：]?/m
+    ];
+
+    let end = value.length;
+
+    for (const pattern of stopPatterns) {
+        const match = pattern.exec(value);
+        if (match && match.index < end) {
+            end = match.index;
+        }
+    }
+
+    return value
+        .slice(0, end)
+        .replace(/(?:\n\s*[-—_=]{3,}\s*)+$/, "")
+        .trim();
+}
+
 function sanitizeStoredWrongQuestionText(text) {
     let value = String(text || "").trim();
 
     if (!value) return "";
+
+    if (value.includes("【题目回顾】")) {
+        value = extractQuestionReviewPayload(value);
+    }
 
     if (value.includes("【题目文字】")) {
         value = extractOcrQuestionPayload(value);
@@ -1414,86 +1458,55 @@ function shouldOfferWrongBookAction(
         }
 
         if (message.source === "ocr") {
-            return true;
+            return Boolean(
+                sanitizeStoredWrongQuestionText(
+                    extractQuestionOnlyFromMessage(message)
+                )
+            );
         }
 
         if (isConversationControlOnly(message.text)) {
             return false;
         }
 
-        const extracted = extractQuestionOnlyFromMessage(
-            message
+        const extracted = sanitizeStoredWrongQuestionText(
+            extractQuestionOnlyFromMessage(message)
         );
 
-        // 用户主动发来的内容不再要求先成功分类。
-        // 只要不是明显的控制短句，就允许进入“题目预览”。
+        if (!extracted) {
+            return false;
+        }
+
+        // 用户消息必须本身像一道完整学习题，不能因为“提到了集合/图论”
+        // 就出现“记为错题”。例如“刚刚那道集合题还是不会”属于追问。
         return Boolean(
-            extracted
-            && extracted.trim().length >= 4
+            looksLikeChatQuestionText(extracted)
+            || looksLikeFormalStudyQuestionForHistory(
+                extracted,
+                message
+            )
         );
     }
 
     if (message.role === "ai") {
-        // 先过滤“讲解、分步骤辅导、测试说明”等明显非题目。
-        if (isClearlyNonQuestionWrongBookText(message.text)) {
-            return false;
-        }
-
-        const extracted = extractQuestionOnlyFromMessage(
-            message
+        // AI 普通讲解、题目回顾、分步提示永远不提供“记为错题”。
+        // 只有后端明确标记的 generatedQuestion 才是可加入错题本的 AI 题。
+        const generated = sanitizeStoredWrongQuestionText(
+            message.generatedQuestion || ""
         );
 
-        // 新版本真正的 AI 生成题由后端明确打 generatedQuestion 标记。
-        if (
-            message.generatedExercise
-            && message.generatedQuestion
-            && looksLikeQuestionPayload(extracted)
-        ) {
-            return true;
-        }
-
-        if (
-            message.generatedQuestion
-            && looksLikeStandaloneAiQuestion(
-                message.generatedQuestion
+        return Boolean(
+            generated
+            && (
+                message.generatedExercise
+                || message.generatedQuestion
             )
-        ) {
-            return true;
-        }
-
-        // 兼容旧聊天记录：如果上一条用户消息明确要求出题，
-        // 即使旧消息没有 generatedQuestion 元数据，也允许真正题干进入错题本。
-        let previousUserText = "";
-
-        if (
-            session
-            && Array.isArray(session.messages)
-            && Number.isInteger(messageIndex)
-        ) {
-            const previous = previousUserMessageBefore(
-                session,
-                messageIndex
-            );
-
-            previousUserText = previous?.text || "";
-        }
-
-        if (
-            previousUserText
-            && isExerciseRequestText(previousUserText)
-            && looksLikeStandaloneAiQuestion(message.text)
-        ) {
-            return true;
-        }
-
-        return looksLikeStandaloneAiQuestion(
-            message.text
+            && looksLikeQuestionPayload(generated)
         );
     }
 
     return false;
 }
-
 
 
 function splitQuestionBankText(text) {
@@ -3348,6 +3361,14 @@ async function typesetWrongBookPdfElement(container) {
             // 字体等待失败不阻止导出。
         }
     }
+
+    // 给 SVG 数学公式和字体两帧时间完成最终布局，
+    // 避免 html2canvas 抓到中间态产生重影。
+    await new Promise(resolve => {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(resolve);
+        });
+    });
 }
 
 function canvasSlice(sourceCanvas, startY, sliceHeight) {
@@ -3461,15 +3482,15 @@ async function exportWrongBookPdf() {
                 - (currentY - marginY)
             );
 
-            if (
-                hasContent
-                && renderedHeight > remaining
-            ) {
-                pdf.addPage();
-                currentY = marginY;
-            }
-
             if (renderedHeight <= usableHeight) {
+                if (
+                    hasContent
+                    && renderedHeight > remaining
+                ) {
+                    pdf.addPage();
+                    currentY = marginY;
+                }
+
                 const image = canvas.toDataURL(
                     "image/jpeg",
                     0.92
@@ -3491,7 +3512,15 @@ async function exportWrongBookPdf() {
                 continue;
             }
 
-            // 单个内容块超过一页时，按像素切片，避免被截断。
+            // 单个内容块超过一页时，从一张新页开始再切片。
+            // 旧版会在这里先 addPage，进入 while 后又 addPage 一次，
+            // 因此中间会凭空多出整张白页。
+            if (hasContent) {
+                pdf.addPage();
+            }
+
+            currentY = marginY;
+
             const pixelsPerMm = canvas.width / usableWidth;
             const fullPagePixels = Math.max(
                 1,
@@ -3501,9 +3530,10 @@ async function exportWrongBookPdf() {
             );
 
             let startY = 0;
+            let firstSlice = true;
 
             while (startY < canvas.height) {
-                if (hasContent) {
+                if (!firstSlice) {
                     pdf.addPage();
                 }
 
@@ -3541,6 +3571,7 @@ async function exportWrongBookPdf() {
                 hasContent = true;
                 currentY = marginY + sliceHeightMm + 4;
                 startY += sliceHeight;
+                firstSlice = false;
             }
         }
 
@@ -4724,10 +4755,10 @@ function markdownToHtml(text) {
 
 function renderMath(target) {
     if (!window.MathJax || !MathJax.typesetPromise) {
-        return;
+        return Promise.resolve();
     }
 
-    MathJax.typesetPromise(
+    return MathJax.typesetPromise(
         target ? [target] : undefined
     ).catch(error => {
         console.warn("MathJax 渲染失败：", error);
@@ -5275,6 +5306,21 @@ function send() {
 
     session.messages.push(message);
 
+    // “上一道题/上一题”是明确的上下文切换。消息一进入历史就立即
+    // 把当前题切回去，不等 AI 回答后才更新右侧难点。
+    if (isPreviousQuestionFollowUp(text)) {
+        const activeCandidate = activeQuestionCandidateFromHistory(
+            session
+        );
+
+        if (activeCandidate) {
+            applyQuestionCandidateAsCurrent(
+                session,
+                activeCandidate
+            );
+        }
+    }
+
     maybeAutoNameSession(
         session,
         text,
@@ -5282,6 +5328,8 @@ function send() {
     );
 
     input.value = "";
+
+    forceChatBottomOnce = true;
 
     saveState();
     renderChat();
@@ -6115,15 +6163,17 @@ function finishTyping() {
 
     refreshInputAvailability();
 
-    if (finishedDiv) {
-        renderMath(finishedDiv);
-    }
+    const mathDone = finishedDiv
+        ? renderMath(finishedDiv)
+        : Promise.resolve();
 
     if (
         typingAutoFollow
         && !typingScrollLockedByUser
     ) {
-        scrollChatToBottom();
+        mathDone.then(() => {
+            scrollChatToBottom();
+        });
     }
 
     typingAutoFollow = true;
@@ -6173,15 +6223,17 @@ function forceCompleteTyping() {
 
     refreshInputAvailability();
 
-    if (finishedDiv) {
-        renderMath(finishedDiv);
-    }
+    const mathDone = finishedDiv
+        ? renderMath(finishedDiv)
+        : Promise.resolve();
 
     if (
         typingAutoFollow
         && !typingScrollLockedByUser
     ) {
-        scrollChatToBottom();
+        mathDone.then(() => {
+            scrollChatToBottom();
+        });
     }
 
     typingAutoFollow = true;
@@ -6196,6 +6248,18 @@ function forceCompleteTyping() {
 function renderChat() {
     const chat = document.getElementById("chat");
     if (!chat) return;
+
+    const oldScrollTop = chat.scrollTop;
+    const oldBottomDistance = chatBottomDistance(chat);
+    const oldNearBottom = oldBottomDistance <= 90;
+    const requestedScrollTop = (
+        preserveChatScrollOnce !== null
+        && Number.isFinite(preserveChatScrollOnce)
+    )
+        ? preserveChatScrollOnce
+        : null;
+
+    preserveChatScrollOnce = null;
 
     if (
         window.MathJax
@@ -6215,8 +6279,14 @@ function renderChat() {
     if (!session) {
         chat.innerHTML =
             '<div class="empty-tip">暂无对话</div>';
+        lastRenderedChatSessionId = null;
         return;
     }
+
+    const sessionChanged = (
+        String(lastRenderedChatSessionId ?? "")
+        !== String(session.id)
+    );
 
     for (
         let messageIndex = 0;
@@ -6291,17 +6361,45 @@ function renderChat() {
         chat.appendChild(div);
     }
 
-    if (
-        preserveChatScrollOnce !== null
-        && Number.isFinite(preserveChatScrollOnce)
-    ) {
-        chat.scrollTop = preserveChatScrollOnce;
-        preserveChatScrollOnce = null;
-    } else {
+    const shouldStickBottom = Boolean(
+        forceChatBottomOnce
+        || sessionChanged
+        || (requestedScrollTop === null && oldNearBottom)
+    );
+
+    forceChatBottomOnce = false;
+    lastRenderedChatSessionId = session.id;
+
+    // 先给一个同步位置，避免 MathJax 渲染期间出现肉眼可见的闪跳。
+    if (shouldStickBottom) {
         scrollChatToBottom();
+    } else if (requestedScrollTop !== null) {
+        chat.scrollTop = requestedScrollTop;
+    } else {
+        chat.scrollTop = oldScrollTop;
     }
 
-    renderMath(chat);
+    renderMath(chat).then(() => {
+        // 公式渲染会改变消息高度，必须在排版完成后再恢复一次位置。
+        // 否则长公式/矩阵会把当前视口“顶”到上方。
+        if (shouldStickBottom) {
+            scrollChatToBottom();
+            return;
+        }
+
+        if (requestedScrollTop !== null) {
+            chat.scrollTop = Math.min(
+                requestedScrollTop,
+                Math.max(0, chat.scrollHeight - chat.clientHeight)
+            );
+            return;
+        }
+
+        chat.scrollTop = Math.min(
+            oldScrollTop,
+            Math.max(0, chat.scrollHeight - chat.clientHeight)
+        );
+    });
 }
 
 
@@ -6555,84 +6653,56 @@ function getEffectiveSessionTeaching(session) {
         session.teaching
     );
 
-    // 从后往前找“最近一道实际题目”。
-    for (
-        let index = session.messages.length - 1;
-        index >= 0;
-        index -= 1
-    ) {
-        const message = session.messages[index];
+    // 右侧信息必须跟“当前指向的题”走，而不是机械取时间上最新的一题。
+    // 因此 A -> B -> “上一道题再讲一下”时，这里应重新读取 A 的教学快照。
+    const activeCandidate = activeQuestionCandidateFromHistory(
+        session
+    );
 
-        if (!message) continue;
+    if (activeCandidate) {
+        const own = candidateTeachingSnapshot(
+            session,
+            activeCandidate
+        );
 
-        if (message.role === "ai") {
-            const question = extractQuestionOnlyFromMessage(
-                message
-            );
-
-            if (
-                question
-                && (
-                    message.generatedExercise
-                    || message.generatedQuestion
-                )
-            ) {
-                const own = normalizeTeaching(
-                    message.generatedTeaching
-                );
-
-                if (
-                    own
-                    && own.category !== "待识别"
-                ) {
-                    return own;
-                }
-
-                const learningQuestion = normalizeLearningQuestion(
-                    session.learningQuestion
-                );
-
-                if (
-                    learningQuestion
-                    && learningQuestion.source === "ai"
-                    && wrongQuestionFingerprint(
-                        learningQuestion.text
-                    ) === wrongQuestionFingerprint(
-                        question
-                    )
-                    && learningQuestion.category
-                ) {
-                    return {
-                        category: learningQuestion.category,
-                        related_categories: current?.related_categories || [],
-                        knowledge_points: learningQuestion.knowledgePoints,
-                        focus_points: learningQuestion.focusPoints,
-                        prerequisite_points: current?.prerequisite_points || [],
-                        knowledge_path: current?.knowledge_path || learningQuestion.knowledgePoints,
-                        question_type: current?.question_type || "练习题",
-                        mode: "exercise",
-                        confidence: current?.confidence || 0.9
-                    };
-                }
-
-                // 最近一道题就是 AI 题，但本地暂时没单独元数据时，
-                // session.teaching 通常就是后端刚返回的 generated_teaching。
-                return current;
-            }
+        if (own) {
+            return own;
         }
 
-        if (message.role === "user") {
-            const question = extractQuestionOnlyFromMessage(
-                message
-            );
+        const learningQuestion = normalizeLearningQuestion(
+            session.learningQuestion
+        );
 
-            if (
-                question
-                && looksLikeQuestionPayload(question)
-                && !isConversationControlOnly(message.text)
-            ) {
+        if (
+            learningQuestion
+            && wrongQuestionFingerprint(learningQuestion.text)
+                === wrongQuestionFingerprint(activeCandidate.text)
+        ) {
+            if (current) {
                 return current;
             }
+
+            return {
+                category: learningQuestion.category || "待识别",
+                related_categories: [],
+                knowledge_points: learningQuestion.knowledgePoints,
+                focus_points: learningQuestion.focusPoints,
+                prerequisite_points: [],
+                knowledge_path: learningQuestion.knowledgePoints,
+                question_type: activeCandidate.role === "ai"
+                    ? "练习题"
+                    : "综合题",
+                mode: activeCandidate.role === "ai"
+                    ? "exercise"
+                    : "hint",
+                mode_label: activeCandidate.role === "ai"
+                    ? "练习出题"
+                    : "提示引导",
+                confidence: "中",
+                input_source: activeCandidate.source === "ocr"
+                    ? "图片识题"
+                    : "文本输入"
+            };
         }
     }
 
