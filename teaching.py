@@ -668,14 +668,135 @@ def analyze_question(text):
     return _enrich_with_graph(result)
 
 
+def _is_previous_question_followup(text):
+    """识别“上一道题/上一题再讲一下”这类明确的题目回退指令。"""
+    value = re.sub(r"\s+", "", str(text or "").strip())
+    if not value or len(value) > 60:
+        return False
+
+    return bool(re.search(
+        r"(?:上一道题|上一题|前一道题|前一题|前面那道题|前面那题|刚才上一道题|刚才上一题)",
+        value,
+    ))
+
+
+def _looks_like_explicit_generated_question(text):
+    """只把带明确题目标题的 assistant 内容视为 AI 生成题，避免把普通分步讲解误判为新题。"""
+    value = str(text or "").strip()
+    if not value:
+        return False
+
+    return bool(re.search(
+        r"(?:"
+        r"【(?:题目|练习题)】"
+        r"|(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)"
+        r"|(?:^|\n)\s*\*\*(?:题目|练习题)[:：]?\*\*\s*(?:\n|$)"
+        r"|(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)"
+        r")",
+        value,
+        flags=re.MULTILINE,
+    ))
+
+
+def _looks_like_user_question_for_context(text):
+    """判断一条 user 消息是否是在提出新的学习题，而不是控制/追问语句。"""
+    value = str(text or "").strip()
+    if not value:
+        return False
+
+    if _is_previous_question_followup(value) or _looks_like_exercise_request_text(value):
+        return False
+
+    if _detect_mode(value) == "check_answer":
+        return False
+
+    classified = _classify_content(value)
+    if classified["score"] <= 0:
+        return False
+
+    if _is_image_input(value):
+        return True
+
+    compact = re.sub(r"\s+", "", value)
+
+    # 明确题干/问法；概念型“什么是欧拉图”也属于一道当前学习问题。
+    if re.search(
+        r"(?:^|[。；;!?！？])(?:设|已知|给定|若|求|求解|证明|计算|判断|写出|列出|选择|填空)",
+        value,
+    ):
+        return True
+
+    if re.search(r"^(?:什么是|为什么|为何|如何|怎样)", compact):
+        return True
+
+    if re.search(r"[？?]$", compact) and len(compact) >= 6:
+        return True
+
+    if re.search(r"[（(]\s*\d{1,2}\s*[)）]", value):
+        return True
+
+    return len(value) >= 60
+
+
+def _active_question_from_messages(messages):
+    """按对话顺序恢复当前所指题目。
+
+    新题会把当前题切到自己；普通“继续/再解释”保持当前题；
+    “上一道题”会把当前题向前回退一题。这样 A -> B -> 上一题 -> 继续
+    会稳定停留在 A，而不会又跳回 B。
+    """
+    history = []
+    active_pos = None
+
+    for item in messages if isinstance(messages, list) else []:
+        if not isinstance(item, dict):
+            continue
+
+        role = item.get("role")
+        content = item.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        content = content.strip()
+        if not content:
+            continue
+
+        if role == "user" and _is_previous_question_followup(content):
+            if history:
+                if active_pos is None:
+                    active_pos = len(history) - 1
+                active_pos = max(0, active_pos - 1)
+            continue
+
+        is_question = False
+        if role == "user":
+            is_question = _looks_like_user_question_for_context(content)
+        elif role == "assistant":
+            is_question = _looks_like_explicit_generated_question(content)
+
+        if not is_question:
+            continue
+
+        classified = _classify_content(content)
+        if classified["score"] <= 0:
+            continue
+
+        history.append((content, classified))
+        active_pos = len(history) - 1
+
+    if active_pos is None or not history:
+        return None
+
+    return history[active_pos]
+
+
 def analyze_messages(messages):
     """
     结合最近对话分析当前教学状态。
 
     关键点：
-    - “教学模式”只看学生本轮最新要求，避免历史里的“给我答案”污染当前意图。
-    - “知识点/题型”若本轮只是“继续”“给我完整解析”等短跟进，则继承最近一道
-      有明确离散数学主题的用户问题，避免右侧信息突然变成“待识别”。
+    - “教学模式”只看学生本轮最新要求，避免历史里的“给我答案”污染当前意图；
+    - 新题出现时切换到新题；普通短追问保持当前题；
+    - 用户明确说“上一道题/上一题”时，当前题向前回退一题，后续“继续”仍保持在回退后的题目。
     """
     if not isinstance(messages, list):
         return analyze_question("")
@@ -697,49 +818,22 @@ def analyze_messages(messages):
     latest = user_messages[-1]
     mode = _detect_mode(latest)
 
-    latest_classified = _classify_content(latest)
-    classification_text = latest
-    classified = latest_classified
+    active = _active_question_from_messages(messages)
 
-    # 如果本轮只是短跟进且没有可靠主题，则向前继承最近一个可识别题目。
-    if latest_classified["score"] < 3:
-        inherited = False
+    if active:
+        classification_text, classified = active
+    else:
+        # 极少数没有识别出“题目消息”的旧对话，保留原来的最近可识别主题兜底。
+        latest_classified = _classify_content(latest)
+        classification_text = latest
+        classified = latest_classified
 
-        # 先找最近一个用户自己发过的明确题目。
-        for previous in reversed(user_messages[:-1]):
-            previous_classified = _classify_content(previous)
-            if previous_classified["score"] >= 3:
-                classification_text = previous
-                classified = previous_classified
-                inherited = True
-                break
-
-        # 如果这段对话是“AI 刚出题 -> 学生说不会做/继续”，
-        # 用户历史里只有“出一道题”这种请求，真正题干在 assistant 消息里。
-        # 这时允许从最近一条带明确【题目】标题的 AI 练习题继承主题。
-        if not inherited:
-            for item in reversed(messages[:-1]):
-                if not isinstance(item, dict) or item.get("role") != "assistant":
-                    continue
-
-                content = item.get("content", "")
-                if not isinstance(content, str):
-                    content = str(content)
-
-                content = content.strip()
-                if not content:
-                    continue
-
-                if not _looks_like_generated_exercise_text(
-                    content
-                ):
-                    continue
-
-                assistant_classified = _classify_content(content)
-
-                if assistant_classified["score"] >= 3:
-                    classification_text = content
-                    classified = assistant_classified
+        if latest_classified["score"] < 3:
+            for previous in reversed(user_messages[:-1]):
+                previous_classified = _classify_content(previous)
+                if previous_classified["score"] >= 3:
+                    classification_text = previous
+                    classified = previous_classified
                     break
 
     input_source = (
