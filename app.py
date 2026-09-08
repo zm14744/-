@@ -619,6 +619,52 @@ def chat():
     }), 503
 
 
+@app.route("/analyze-questions", methods=["POST"])
+def analyze_questions_batch():
+    """批量重新识别历史题目的模块和知识点，不调用大模型。"""
+    data = request.get_json(silent=True) or {}
+    items = data.get("questions")
+
+    if not isinstance(items, list):
+        return jsonify({
+            "error": "题目列表格式不正确。"
+        }), 400
+
+    results = []
+
+    for item in items[:80]:
+        if isinstance(item, dict):
+            key = str(item.get("key", ""))
+            text = str(item.get("text", "")).strip()
+        else:
+            key = ""
+            text = str(item or "").strip()
+
+        if not text:
+            results.append({
+                "key": key,
+                "teaching": None
+            })
+            continue
+
+        try:
+            teaching = analyze_question(
+                text[:6000]
+            )
+        except Exception as exc:
+            print("历史题目知识识别失败：", repr(exc))
+            teaching = None
+
+        results.append({
+            "key": key,
+            "teaching": teaching
+        })
+
+    return jsonify({
+        "results": results
+    })
+
+
 @app.route("/ocr", methods=["POST"])
 def ocr():
     if not OCR_AVAILABLE or recognize_image is None:
