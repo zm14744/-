@@ -42,6 +42,9 @@ let typingScrollLockedByUser = false;
 let lastTypingAutoScrollAt = 0;
 let preserveChatScrollOnce = null;
 
+const TYPING_RENDER_INTERVAL = 30;
+const TYPING_CHARS_PER_TICK = 3;
+
 let requestBusy = false;
 
 
@@ -3875,8 +3878,9 @@ function stopTypingAutoFollow() {
 function handleChatWheelWhileTyping(event) {
     if (!typingTimer) return;
 
-    // 滚轮向上时，在 scroll 事件之前就停止自动跟随。
-    if (event.deltaY < 0) {
+    // 只要用户主动滚轮，就先停止自动跟随。
+    // 这样上下滚动都不会和打字机争夺 scrollTop。
+    if (event.deltaY !== 0) {
         stopTypingAutoFollow();
     }
 }
@@ -4988,8 +4992,16 @@ function startTyping(
         }
 
         if (index < text.length) {
-            typingDiv.textContent += text[index];
-            index += 1;
+            const nextIndex = Math.min(
+                text.length,
+                index + TYPING_CHARS_PER_TICK
+            );
+
+            typingDiv.textContent += text.slice(
+                index,
+                nextIndex
+            );
+            index = nextIndex;
 
             maybeAutoFollowTyping();
 
@@ -5004,7 +5016,7 @@ function startTyping(
         typingTimer = null;
 
         finishTyping();
-    }, 10);
+    }, TYPING_RENDER_INTERVAL);
 }
 
 function finishTyping() {
