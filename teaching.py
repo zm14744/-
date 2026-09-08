@@ -346,79 +346,76 @@ def _score_focus_text(text, category, points, weight=1):
     return scores
 
 
-def _infer_focus_points(messages, category, points, latest_text, mode, latest_score):
-    """定位“这一次主要卡在哪”。只在有足够信号时返回，宁缺毋滥。"""
-    candidates = [point for point in (points or []) if isinstance(point, str) and point]
+def _infer_focus_points(messages, category, points, question_text, mode, question_score):
+    """识别“本题难点”。
+
+    这里的 focus_points 继续沿用旧字段名以兼容前端和本地学习记录，
+    但语义已经改为“题目本身最核心/较难的 1~2 个知识点”。
+
+    重要原则：
+    - 只根据题目文本、已识别知识点和知识图谱层级判断；
+    - 不读取最近助手回复，也不根据学生的跟进语句猜测“学生卡在哪里”；
+    - 信号不足时宁可少给，不制造虚假的个体学习判断。
+    """
+    del messages, mode, question_score  # 保留旧调用签名，避免牵动其它模块。
+
+    candidates = [
+        point
+        for point in (points or [])
+        if isinstance(point, str) and point
+    ]
+
     if not candidates:
         return []
 
     if len(candidates) == 1:
         return candidates[:1]
 
-    # 先看本轮学生自己的话。这里的命中最可信。
-    latest_scores = _score_focus_text(
-        latest_text,
+    text_scores = _score_focus_text(
+        question_text,
         category,
         candidates,
-        weight=4
+        weight=1,
     )
 
-    # 若学生这一轮本身明确点名某个知识点，直接采用。
-    ordered_latest = sorted(
-        latest_scores.items(),
-        key=lambda item: (-item[1], item[0])
+    # 知识图谱层级只用于“同等题面信号”下的排序：
+    # 前置链更长的知识点通常更综合，但不会压过题面明确点名的知识点。
+    ranked = []
+    for point in candidates:
+        path = _longest_prerequisite_path(point)
+        depth = max(0, len(path) - 1)
+        ranked.append((
+            point,
+            int(text_scores.get(point, 0)),
+            depth,
+        ))
+
+    ranked.sort(
+        key=lambda item: (-item[1], -item[2], item[0])
     )
-    if ordered_latest and ordered_latest[0][1] >= 8:
-        top_score = ordered_latest[0][1]
-        second_score = ordered_latest[1][1] if len(ordered_latest) > 1 else 0
-        if top_score >= second_score + 2:
-            return [ordered_latest[0][0]]
 
-    # 对“我这样对不对 / 再讲一下”这类跟进，结合最近几条上下文。
-    # 最新学生消息权重最高，最近助手回复次之；整道原题只给很低权重，防止四个知识点全打平。
-    combined = {point: latest_scores.get(point, 0) for point in candidates}
+    top_point, top_score, top_depth = ranked[0]
 
-    recent = []
-    if isinstance(messages, list):
-        for item in messages[-6:]:
-            if not isinstance(item, dict):
-                continue
-            content = item.get("content", "")
-            if not isinstance(content, str):
-                content = str(content)
-            if not content.strip() or content.strip() == str(latest_text or "").strip():
-                continue
-            recent.append((item.get("role"), content.strip()))
-
-    for offset, (role, content) in enumerate(reversed(recent)):
-        # 最近助手回复通常正围绕当前小问，是定位卡点的重要信号。
-        base_weight = 3 if role == "assistant" else 2
-        weight = max(1, base_weight - offset // 2)
-
-        # 很长的图片原题包含多个小问，只当弱背景，不让它主导卡点。
-        if _is_image_input(content) or len(content) > 500:
-            weight = 1
-
-        scores = _score_focus_text(content, category, candidates, weight=weight)
-        for point, score in scores.items():
-            combined[point] += score
-
-    ordered = sorted(combined.items(), key=lambda item: (-item[1], item[0]))
-    if not ordered or ordered[0][1] < 6:
-        return []
-
-    top_point, top_score = ordered[0]
-    second_score = ordered[1][1] if len(ordered) > 1 else 0
-
-    # 原始综合题本身不要强行推一个卡点；但答案检查/短跟进允许结合上下文定位。
-    if mode not in ("check_answer",) and latest_score >= 3:
-        if top_score < second_score + 4:
+    # 题面完全没有把多个知识点区分开时，用知识图谱层级给一个保守结果。
+    if top_score <= 0:
+        if top_depth <= 0:
             return []
+        return [top_point]
 
-    if top_score < second_score + 2:
-        return []
+    result = [top_point]
 
-    return [top_point]
+    # 第二难点只有在题面也有明确证据、且与第一难点接近时才保留。
+    if len(ranked) >= 2:
+        second_point, second_score, second_depth = ranked[1]
+        close_enough = (
+            second_score > 0
+            and second_score * 10 >= top_score * 7
+            and second_depth >= max(0, top_depth - 1)
+        )
+        if close_enough:
+            result.append(second_point)
+
+    return result[:2]
 
 
 def _normalize(text):
@@ -755,9 +752,9 @@ def analyze_messages(messages):
         messages,
         classified["category"],
         classified["knowledge_points"],
-        latest,
+        classification_text,
         mode,
-        latest_classified["score"],
+        classified["score"],
     )
 
     return _enrich_with_graph({
@@ -789,7 +786,7 @@ def teaching_prompt(context):
     knowledge_path = context.get("knowledge_path") or []
 
     points_text = "、".join(points) if points else "暂未可靠识别"
-    focus_text = "、".join(focus_points) if focus_points else "暂未定位到具体卡点"
+    focus_text = "、".join(focus_points) if focus_points else "暂未识别出突出难点"
     related_text = "、".join(related) if related else "无"
     prerequisites_text = "、".join(prerequisite_points) if prerequisite_points else "无明确前置知识"
     path_text = " → ".join(knowledge_path) if knowledge_path else "暂无"
@@ -831,14 +828,14 @@ def teaching_prompt(context):
         f"相关模块：{related_text}\n"
         f"问题类型：{question_type}\n"
         f"知识点：{points_text}\n"
-        f"本轮重点/卡点：{focus_text}\n"
+        f"本题难点：{focus_text}\n"
         f"前置知识：{prerequisites_text}\n"
         f"知识脉络：{path_text}\n"
         f"教学模式：{mode_label}\n"
         f"分类置信度：{confidence}\n"
         f"执行要求：{mode_instruction}\n"
-        "若已定位到‘本轮重点/卡点’，优先围绕该点回应；不要把整道综合题的全部知识点一次性铺开。\n"
-        "如果学生明显卡在当前知识点，可以优先检查前置知识；不要机械地逐条讲完整知识脉络。\n"
+        "‘本题难点’描述的是题目本身，不代表学生实际不会；回答仍必须以学生当前问题为准。\n"
+        "若当前问题正涉及本题难点，可以优先解释该环节；若学生的提问或作答确实暴露困难，再结合前置知识进行提示。\n"
         "分类结果只是教学辅助信号，不是事实来源。若分类与题目实际内容冲突，"
         "必须以题目内容为准，不得为了迎合标签而编造知识点。"
     )
