@@ -14,10 +14,12 @@ let wrongBookSort = "recent";
 let currentWrongEditId = null;
 
 let pendingWrongQuestionSelection = null;
-const wrongSolutionExpandedIds = new Set();
-const wrongSolutionLoadingIds = new Set();
-const wrongSolutionQueue = [];
-let wrongSolutionQueueBusy = false;
+const wrongAnswerLoadingIds = new Set();
+const wrongAnswerQueue = [];
+let wrongAnswerQueueBusy = false;
+
+const wrongAnalysisExpandedIds = new Set();
+const wrongAnalysisLoadingIds = new Set();
 
 let knowledgeGraphData = null;
 let knowledgeGraphFilter = "";
@@ -152,7 +154,7 @@ function normalizeRetestSession(value) {
 
 function createEmptyLearningState() {
     return {
-        version: 5,
+        version: 6,
         knowledge: {},
         events: [],
         wrongQuestions: []
@@ -303,12 +305,26 @@ function normalizeLearningState(value) {
                     referenceAnswer: typeof item.referenceAnswer === "string"
                         ? item.referenceAnswer.trim().slice(0, 1200)
                         : "",
-                    solution: typeof item.solution === "string"
-                        ? item.solution.trim().slice(0, 8000)
+                    answer: typeof item.answer === "string"
+                        ? item.answer.trim().slice(0, 3000)
                         : "",
-                    solutionUpdatedAt: Number.isFinite(item.solutionUpdatedAt)
-                        ? item.solutionUpdatedAt
+                    analysis: typeof item.analysis === "string"
+                        ? item.analysis.trim().slice(0, 8000)
+                        : (
+                            typeof item.solution === "string"
+                                ? item.solution.trim().slice(0, 8000)
+                                : ""
+                        ),
+                    answerUpdatedAt: Number.isFinite(item.answerUpdatedAt)
+                        ? item.answerUpdatedAt
                         : null,
+                    analysisUpdatedAt: Number.isFinite(item.analysisUpdatedAt)
+                        ? item.analysisUpdatedAt
+                        : (
+                            Number.isFinite(item.solutionUpdatedAt)
+                                ? item.solutionUpdatedAt
+                                : null
+                        ),
                     note: typeof item.note === "string"
                         ? item.note.trim().slice(0, 1500)
                         : "",
@@ -442,9 +458,14 @@ function normalizeLearningState(value) {
                 newer.referenceAnswer = older.referenceAnswer;
             }
 
-            if (!newer.solution && older.solution) {
-                newer.solution = older.solution;
-                newer.solutionUpdatedAt = older.solutionUpdatedAt;
+            if (!newer.answer && older.answer) {
+                newer.answer = older.answer;
+                newer.answerUpdatedAt = older.answerUpdatedAt;
+            }
+
+            if (!newer.analysis && older.analysis) {
+                newer.analysis = older.analysis;
+                newer.analysisUpdatedAt = older.analysisUpdatedAt;
             }
 
             newer.retestCount = (
@@ -493,6 +514,11 @@ function normalizeLearningState(value) {
         }
 
         state.wrongQuestions = [...mergedMap.values()]
+            .filter(
+                item => !isClearlyNonQuestionWrongBookText(
+                    item.question
+                )
+            )
             .sort((a, b) => a.updatedAt - b.updatedAt)
             .slice(-MAX_WRONG_QUESTIONS);
     }
@@ -972,12 +998,19 @@ function splitQuestionBankText(text) {
 
 function isExerciseRequestText(text) {
     const value = String(text || "")
+        .trim()
         .replace(/\s+/g, "");
 
-    if (!value) return false;
+    if (
+        !value
+        || value.length > 60
+    ) {
+        return false;
+    }
 
-    return /(?:给我|帮我|请|再|重新)?(?:出|来)(?:一道|一题|几道|几题)?[^，。！？]{0,10}(?:题|练习)|(?:练习题|测试题|例题).{0,8}(?:来一道|出一道|出一题|给一道)/.test(
-        value
+    return Boolean(
+        /^(?:请|麻烦|能不能|可以)?(?:再|重新|随便)?(?:给我|帮我)?(?:出|来)(?:一道|一题|几道|几题)?[^，。！？]{0,14}(?:题|练习)(?:吧|。|！|!)?$/.test(value)
+        || /^(?:给我)?(?:出题|来一道|练习一下|再来一道)(?:吧|。|！|!)?$/.test(value)
     );
 }
 
@@ -1307,7 +1340,7 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
 
         saveLearningState();
 
-        queueWrongQuestionSolution(
+        queueWrongQuestionAnswer(
             existing.id
         );
 
@@ -1325,8 +1358,10 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         category: info.category,
         feedback: compactFeedback(feedback),
         referenceAnswer: info.referenceAnswer || "",
-        solution: "",
-        solutionUpdatedAt: null,
+        answer: "",
+        analysis: "",
+        answerUpdatedAt: null,
+        analysisUpdatedAt: null,
         note: "",
         source: source === "auto" ? "auto" : "manual",
         corrected: false,
@@ -1357,7 +1392,7 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
 
     saveLearningState();
 
-    queueWrongQuestionSolution(
+    queueWrongQuestionAnswer(
         entry.id
     );
 
@@ -1739,7 +1774,8 @@ function wrongBookSearchText(item) {
         ...(item.focusPoints || []),
         item.feedback,
         item.referenceAnswer,
-        item.solution,
+        item.answer,
+        item.analysis,
         item.note,
         item.lastRetestQuestion,
         item.lastRetestFeedback
@@ -2368,7 +2404,7 @@ function buildWrongBookPdfExportElement(items) {
             card.appendChild(block);
         }
 
-        if (item.solution) {
+        if (item.answer) {
             const block = document.createElement("div");
             block.style.marginTop = "10px";
             block.style.padding = "10px 12px";
@@ -2379,12 +2415,35 @@ function buildWrongBookPdfExportElement(items) {
             const label = document.createElement("div");
             label.style.fontWeight = "700";
             label.style.marginBottom = "4px";
-            label.textContent = "答案与解析";
+            label.textContent = "答案";
             block.appendChild(label);
 
             const body = document.createElement("div");
             body.innerHTML = markdownToHtml(
-                normalizeWrongSolutionMarkdown(item.solution)
+                formatWrongBookGeneratedText(item.answer)
+            );
+            block.appendChild(body);
+
+            card.appendChild(block);
+        }
+
+        if (item.analysis) {
+            const block = document.createElement("div");
+            block.style.marginTop = "10px";
+            block.style.padding = "10px 12px";
+            block.style.borderRadius = "8px";
+            block.style.background = "#f8fafc";
+            block.style.fontSize = "13px";
+
+            const label = document.createElement("div");
+            label.style.fontWeight = "700";
+            label.style.marginBottom = "4px";
+            label.textContent = "解析";
+            block.appendChild(label);
+
+            const body = document.createElement("div");
+            body.innerHTML = markdownToHtml(
+                formatWrongBookGeneratedText(item.analysis)
             );
             block.appendChild(body);
 
@@ -2679,135 +2738,138 @@ async function exportWrongBookPdf() {
 }
 
 
-function normalizeWrongSolutionMarkdown(text) {
-    let source = String(text || "").trim();
+function formatWrongBookGeneratedText(text) {
+    let value = String(text || "").trim();
 
-    if (!source) return "";
+    if (!value) return "";
 
-    // 裸 \begin{...} 环境统一放进块级公式。
-    source = source.replace(
-        /\\begin\{(bmatrix|pmatrix|matrix|cases|aligned|array)\}[\s\S]*?\\end\{\1\}/g,
-        (match, _env, offset, fullText) => {
-            const before = fullText.slice(
-                Math.max(0, offset - 4),
-                offset
-            );
+    // 旧版本已保存的 LaTeX 做“可读化”迁移，避免再次裸露反斜杠。
+    value = value.replace(
+        /\\begin\{(?:bmatrix|pmatrix|matrix)\}([\s\S]*?)\\end\{(?:bmatrix|pmatrix|matrix)\}/g,
+        (_match, body) => {
+            const rows = String(body)
+                .split(/\\\\/)
+                .map(row => row.trim())
+                .filter(Boolean)
+                .map(row => (
+                    "[ "
+                    + row
+                        .split("&")
+                        .map(cell => cell.trim())
+                        .join("  ")
+                    + " ]"
+                ));
 
-            const after = fullText.slice(
-                offset + match.length,
-                offset + match.length + 4
-            );
-
-            if (
-                /\$\$\s*$/.test(before)
-                && /^\s*\$\$/.test(after)
-            ) {
-                return match;
-            }
-
-            return `$$\n${match}\n$$`;
+            return `\n${rows.join("\n")}\n`;
         }
     );
 
-    const lines = source.split(/\r?\n/);
-    let inBlockMath = false;
+    value = value
+        .replace(/\\xrightarrow\{([^{}]+)\}/g, " —$1→ ")
+        .replace(/\\rightarrow/g, "→")
+        .replace(/\\Rightarrow/g, "⇒")
+        .replace(/\\to/g, "→")
+        .replace(/\\neq|\\ne/g, "≠")
+        .replace(/\\leq|\\le/g, "≤")
+        .replace(/\\geq|\\ge/g, "≥")
+        .replace(/\\in\b/g, "∈")
+        .replace(/\\notin\b/g, "∉")
+        .replace(/\\times/g, "×")
+        .replace(/\\cdot/g, "·")
+        .replace(/\\land/g, "∧")
+        .replace(/\\lor/g, "∨")
+        .replace(/\\neg/g, "¬");
 
-    const normalized = lines.map(line => {
-        const trimmed = line.trim();
+    value = value.replace(
+        /\b([A-Za-z])_\{?([A-Za-z0-9]+)\}?/g,
+        "$1$2"
+    );
 
-        if (trimmed === "$$") {
-            inBlockMath = !inBlockMath;
-            return line;
-        }
+    value = value.replace(
+        /\\text\{([^{}]*)\}/g,
+        "$1"
+    );
 
-        if (
-            inBlockMath
-            || !trimmed
-            || trimmed.includes("$")
-        ) {
-            return line;
-        }
+    value = value
+        .replace(/\$\$/g, "")
+        .replace(/\$/g, "")
+        .replace(/\\[;,!]/g, " ")
+        .replace(/\\\\/g, "\n");
 
-        const hasChinese = /[\u3400-\u9fff]/.test(
-            trimmed
-        );
+    // 最后移除仍残留的纯排版命令，保留正文。
+    value = value.replace(
+        /\\(?:left|right|displaystyle|quad|qquad)\b/g,
+        ""
+    );
 
-        const looksLikePureMath = (
-            !hasChinese
-            && (
-                /\\(?:to|rightarrow|Rightarrow|xrightarrow|in|notin|neq|leq|geq|le|ge|cdot|times|cup|cap)\b/.test(trimmed)
-                || /[A-Za-z]_\{?[A-Za-z0-9]+\}?/.test(trimmed)
-                || /[A-Za-z]\^\{?[0-9A-Za-z]+\}?/.test(trimmed)
-            )
-        );
+    value = value
+        .replace(/[ \t]{2,}/g, " ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
 
-        if (looksLikePureMath) {
-            return `$${trimmed}$`;
-        }
-
-        return line;
-    });
-
-    return normalized.join("\n");
+    return value;
 }
 
-function queueWrongQuestionSolution(id) {
+function queueWrongQuestionAnswer(id) {
     const entry = learningState.wrongQuestions.find(
         item => item.id === id
     );
 
     if (
         !entry
-        || entry.solution
-        || wrongSolutionLoadingIds.has(id)
-        || wrongSolutionQueue.includes(id)
+        || entry.referenceAnswer
+        || entry.answer
+        || wrongAnswerLoadingIds.has(id)
+        || wrongAnswerQueue.includes(id)
     ) {
         return;
     }
 
-    wrongSolutionQueue.push(id);
-    runWrongSolutionQueue();
+    wrongAnswerQueue.push(id);
+    runWrongAnswerQueue();
 }
 
-async function runWrongSolutionQueue() {
-    if (wrongSolutionQueueBusy) {
+async function runWrongAnswerQueue() {
+    if (wrongAnswerQueueBusy) {
         return;
     }
 
-    wrongSolutionQueueBusy = true;
+    wrongAnswerQueueBusy = true;
 
     try {
-        while (wrongSolutionQueue.length) {
-            const id = wrongSolutionQueue.shift();
+        while (wrongAnswerQueue.length) {
+            const id = wrongAnswerQueue.shift();
 
-            await generateWrongQuestionSolution(
+            await generateWrongQuestionAnswer(
                 id,
                 {
-                    expand: false,
                     silent: true
                 }
             );
         }
     } finally {
-        wrongSolutionQueueBusy = false;
+        wrongAnswerQueueBusy = false;
     }
 }
 
 
-function toggleWrongSolution(id) {
-    if (wrongSolutionExpandedIds.has(id)) {
-        wrongSolutionExpandedIds.delete(id);
+
+
+
+
+function toggleWrongAnalysis(id) {
+    if (wrongAnalysisExpandedIds.has(id)) {
+        wrongAnalysisExpandedIds.delete(id);
     } else {
-        wrongSolutionExpandedIds.add(id);
+        wrongAnalysisExpandedIds.add(id);
     }
 
     renderWrongBook();
 }
 
-async function generateWrongQuestionSolution(
+async function generateWrongQuestionAnswer(
     id,
     {
-        expand = false,
         silent = false
     } = {}
 ) {
@@ -2815,50 +2877,32 @@ async function generateWrongQuestionSolution(
         item => item.id === id
     );
 
-    if (!entry) {
-        return false;
-    }
+    if (!entry) return false;
 
-    if (entry.solution) {
-        if (expand) {
-            wrongSolutionExpandedIds.add(id);
-            renderWrongBook();
-        }
-
+    if (entry.referenceAnswer || entry.answer) {
         return true;
     }
 
-    if (wrongSolutionLoadingIds.has(id)) {
+    if (wrongAnswerLoadingIds.has(id)) {
         return false;
     }
 
-    wrongSolutionLoadingIds.add(id);
+    wrongAnswerLoadingIds.add(id);
     renderWrongBook();
 
-    const knownAnswer = entry.referenceAnswer
-        ? [
-            "",
-            `题库提供的参考答案：${entry.referenceAnswer}`,
-            "请先核对该答案。若参考答案有误，请在解析中明确指出并给出正确答案。"
-        ].join("\n")
-        : "";
-
     const prompt = [
-        "请直接为下面这道离散数学错题生成“答案与解析”。",
-        "不要反问学生，也不要只给提示。",
+        "请只给出下面这道离散数学题的最终答案，不要解析、不要提示、不要反问。",
         "",
-        "输出要求：",
-        "1. 第一部分标题写“## 答案”，直接给最终答案；",
-        "2. 第二部分标题写“## 解析”，给出清晰、不过度冗长的分步推理；",
-        "3. 最后可补一行“易错点”；",
-        "4. 所有行内数学表达式必须写在 $...$ 中；",
-        "5. 所有矩阵、cases、多行推导必须写在 $$...$$ 中；",
-        "6. 绝对不要输出裸露的 \\\\begin{bmatrix}、\\\\to、v_1 这类未被数学定界符包裹的 LaTeX；",
-        "7. 使用 Markdown，但不要使用 HTML。",
+        "显示兼容要求：",
+        "1. 不要使用任何 LaTeX 反斜杠命令；",
+        "2. 顶点写成 v1、v2，不要写 v_1；",
+        "3. 路径直接使用 Unicode 箭头 →；",
+        "4. ∈、≤、≥、≠、∧、∨、¬ 等直接使用 Unicode 符号；",
+        "5. 如果答案是矩阵，用普通文本逐行写，例如 [0 1 0]；",
+        "6. 可以使用 Markdown 列表，但不要使用 HTML。",
         "",
-        "【错题】",
-        entry.question,
-        knownAnswer
+        "【题目】",
+        entry.question
     ].join("\n");
 
     try {
@@ -2893,68 +2937,144 @@ async function generateWrongQuestionSolution(
             if (!silent) {
                 window.alert(
                     data.error
-                    || "答案与解析生成失败，请稍后重试。"
+                    || "答案生成失败，请稍后重试。"
                 );
             }
-
             return false;
         }
 
-        entry.solution = normalizeWrongSolutionMarkdown(
-            data.reply.trim()
-        ).slice(0, 8000);
+        entry.answer = formatWrongBookGeneratedText(
+            data.reply
+        ).slice(0, 3000);
 
-        entry.solutionUpdatedAt = Date.now();
+        entry.answerUpdatedAt = Date.now();
         entry.updatedAt = Date.now();
-
-        if (expand) {
-            wrongSolutionExpandedIds.add(id);
-        }
 
         saveLearningState();
         renderWrongBook();
-
         return true;
 
     } catch (error) {
-        console.error(
-            "错题答案与解析生成失败：",
-            error
-        );
+        console.error("错题答案生成失败：", error);
 
         if (!silent) {
             window.alert(
-                "网络连接失败，暂时无法生成答案与解析。"
+                "网络连接失败，暂时无法生成答案。"
             );
         }
 
         return false;
 
     } finally {
-        wrongSolutionLoadingIds.delete(id);
+        wrongAnswerLoadingIds.delete(id);
         renderWrongBook();
     }
 }
 
-async function requestWrongQuestionSolution(id) {
+async function generateWrongQuestionAnalysis(id) {
     const entry = learningState.wrongQuestions.find(
         item => item.id === id
     );
 
     if (!entry) return;
 
-    if (entry.solution) {
-        toggleWrongSolution(id);
+    if (entry.analysis) {
+        wrongAnalysisExpandedIds.add(id);
+        renderWrongBook();
         return;
     }
 
-    await generateWrongQuestionSolution(
-        id,
-        {
-            expand: true,
-            silent: false
-        }
+    if (wrongAnalysisLoadingIds.has(id)) {
+        return;
+    }
+
+    wrongAnalysisLoadingIds.add(id);
+    renderWrongBook();
+
+    const knownAnswer = (
+        entry.referenceAnswer
+        || entry.answer
+        || ""
     );
+
+    const prompt = [
+        "请为下面这道离散数学错题提供详细但不要啰嗦的解析。",
+        "不要反问学生。",
+        "",
+        "内容要求：",
+        "1. 直接解释为什么答案成立；",
+        "2. 分步骤写关键推理；",
+        "3. 最后给一条易错点；",
+        "4. 已知答案如下时，以它为参考并先核对：",
+        knownAnswer || "（暂无参考答案）",
+        "",
+        "显示兼容要求：",
+        "1. 不要使用任何 LaTeX 反斜杠命令；",
+        "2. 顶点写 v1、v2，路径用 →；",
+        "3. 数学关系优先用 Unicode：∈、≤、≥、≠、∧、∨、¬；",
+        "4. 矩阵使用普通文本逐行写，例如 [0 1 0]；",
+        "5. 使用 Markdown 标题和列表即可，不要使用 HTML。",
+        "",
+        "【错题】",
+        entry.question
+    ].join("\n");
+
+    try {
+        const response = await fetch(
+            "/chat",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    messages: [
+                        {
+                            role: "user",
+                            content: prompt
+                        }
+                    ]
+                })
+            }
+        );
+
+        const data = await parseResponseJson(
+            response
+        );
+
+        if (
+            !response.ok
+            || data.error
+            || typeof data.reply !== "string"
+            || !data.reply.trim()
+        ) {
+            window.alert(
+                data.error
+                || "解析生成失败，请稍后重试。"
+            );
+            return;
+        }
+
+        entry.analysis = formatWrongBookGeneratedText(
+            data.reply
+        ).slice(0, 8000);
+
+        entry.analysisUpdatedAt = Date.now();
+        entry.updatedAt = Date.now();
+
+        wrongAnalysisExpandedIds.add(id);
+        saveLearningState();
+        renderWrongBook();
+
+    } catch (error) {
+        console.error("错题解析生成失败：", error);
+        window.alert(
+            "网络连接失败，暂时无法生成解析。"
+        );
+    } finally {
+        wrongAnalysisLoadingIds.delete(id);
+        renderWrongBook();
+    }
 }
 
 
@@ -3141,89 +3261,122 @@ function renderWrongBook() {
             retest.textContent = resultText;
         }
 
-        const solutionDetails = document.createElement("details");
-        solutionDetails.className = "wrong-solution-details";
-        solutionDetails.open = wrongSolutionExpandedIds.has(
-            item.id
+        const answerDetails = document.createElement("details");
+        answerDetails.className = "wrong-answer-details";
+
+        const answerSummary = document.createElement("summary");
+        answerSummary.className = "wrong-answer-summary";
+
+        if (
+            item.referenceAnswer
+            || item.answer
+        ) {
+            answerSummary.textContent = "查看答案";
+        } else if (wrongAnswerLoadingIds.has(item.id)) {
+            answerSummary.textContent = "查看答案 · 正在准备";
+        } else {
+            answerSummary.textContent = "查看答案";
+        }
+
+        const answerInner = document.createElement("div");
+        answerInner.className = "wrong-answer-inner";
+
+        const visibleAnswer = (
+            item.referenceAnswer
+            || item.answer
+            || ""
         );
 
-        const solutionSummary = document.createElement("summary");
-        solutionSummary.className = "wrong-solution-summary";
-
-        if (wrongSolutionLoadingIds.has(item.id)) {
-            solutionSummary.textContent = "答案与解析 · 正在生成";
-        } else if (item.solution) {
-            solutionSummary.textContent = "答案与解析";
-        } else {
-            solutionSummary.textContent = "答案与解析 · 点击生成";
-        }
-
-        const solutionInner = document.createElement("div");
-        solutionInner.className = "wrong-solution-inner";
-
-        if (item.referenceAnswer) {
-            const answerBlock = document.createElement("div");
-            answerBlock.className = "wrong-answer-hidden";
-
-            const answerTitle = document.createElement("strong");
-            answerTitle.textContent = "参考答案";
-
-            const answerBody = document.createElement("div");
-            answerBody.className = "wrong-answer-body";
-            answerBody.innerHTML = markdownToHtml(
-                item.referenceAnswer
-            );
-
-            answerBlock.appendChild(answerTitle);
-            answerBlock.appendChild(answerBody);
-            solutionInner.appendChild(answerBlock);
-        }
-
-        if (item.solution) {
-            const solutionBlock = document.createElement("div");
-            solutionBlock.className = "wrong-solution-body";
-            solutionBlock.innerHTML = markdownToHtml(
-                normalizeWrongSolutionMarkdown(
-                    item.solution
+        if (visibleAnswer) {
+            answerInner.innerHTML = markdownToHtml(
+                formatWrongBookGeneratedText(
+                    visibleAnswer
                 )
             );
-
-            solutionInner.appendChild(solutionBlock);
         } else {
-            const waiting = document.createElement("div");
-            waiting.className = "wrong-solution-waiting";
-            waiting.textContent = wrongSolutionLoadingIds.has(item.id)
-                ? "正在后台生成答案与解析…"
-                : "展开后会自动生成答案与解析。";
-
-            solutionInner.appendChild(waiting);
+            answerInner.textContent = wrongAnswerLoadingIds.has(item.id)
+                ? "答案正在后台准备，请稍等。"
+                : "答案尚未准备，已重新加入生成队列。";
         }
 
-        solutionDetails.appendChild(solutionSummary);
-        solutionDetails.appendChild(solutionInner);
+        answerDetails.appendChild(answerSummary);
+        answerDetails.appendChild(answerInner);
 
-        solutionDetails.addEventListener(
+        answerDetails.addEventListener(
             "toggle",
             () => {
-                if (solutionDetails.open) {
-                    wrongSolutionExpandedIds.add(item.id);
-
-                    if (
-                        !item.solution
-                        && !wrongSolutionLoadingIds.has(item.id)
-                    ) {
-                        queueWrongQuestionSolution(
-                            item.id
-                        );
-                    }
-                } else {
-                    wrongSolutionExpandedIds.delete(item.id);
+                if (
+                    answerDetails.open
+                    && !item.referenceAnswer
+                    && !item.answer
+                ) {
+                    queueWrongQuestionAnswer(
+                        item.id
+                    );
                 }
             }
         );
 
+        const analysisBox = document.createElement("div");
+        analysisBox.className = "wrong-analysis-box";
+
+        if (item.analysis) {
+            const analysisDetails = document.createElement("details");
+            analysisDetails.className = "wrong-analysis-details";
+            analysisDetails.open = wrongAnalysisExpandedIds.has(
+                item.id
+            );
+
+            const analysisSummary = document.createElement("summary");
+            analysisSummary.className = "wrong-analysis-summary";
+            analysisSummary.textContent = "查看解析";
+
+            const analysisBody = document.createElement("div");
+            analysisBody.className = "wrong-analysis-body";
+            analysisBody.innerHTML = markdownToHtml(
+                formatWrongBookGeneratedText(
+                    item.analysis
+                )
+            );
+
+            analysisDetails.appendChild(analysisSummary);
+            analysisDetails.appendChild(analysisBody);
+
+            analysisDetails.addEventListener(
+                "toggle",
+                () => {
+                    if (analysisDetails.open) {
+                        wrongAnalysisExpandedIds.add(item.id);
+                    } else {
+                        wrongAnalysisExpandedIds.delete(item.id);
+                    }
+                }
+            );
+
+            analysisBox.appendChild(analysisDetails);
+        }
+
         const actions = document.createElement("div");
         actions.className = "wrong-actions";
+
+        if (!item.analysis) {
+            const analysisButton = document.createElement("button");
+            analysisButton.type = "button";
+            analysisButton.className = "secondary";
+
+            if (wrongAnalysisLoadingIds.has(item.id)) {
+                analysisButton.textContent = "正在生成解析…";
+                analysisButton.disabled = true;
+            } else {
+                analysisButton.textContent = "生成解析";
+            }
+
+            analysisButton.onclick = () => (
+                generateWrongQuestionAnalysis(item.id)
+            );
+
+            actions.appendChild(analysisButton);
+        }
 
         if (!item.corrected) {
             const correctedButton = document.createElement("button");
@@ -3323,7 +3476,11 @@ function renderWrongBook() {
             card.appendChild(retest);
         }
 
-        card.appendChild(solutionDetails);
+        card.appendChild(answerDetails);
+
+        if (analysisBox.childNodes.length) {
+            card.appendChild(analysisBox);
+        }
 
         card.appendChild(actions);
         list.appendChild(card);
@@ -3331,7 +3488,6 @@ function renderWrongBook() {
         renderMath(question);
         renderMath(feedback);
         renderMath(note);
-        renderMath(solutionDetails);
     }
 }
 
@@ -4223,29 +4379,79 @@ async function handleImageSelected(event) {
 }
 
 
-function looksLikeChatQuestionText(text) {
+function isClearlyNonQuestionWrongBookText(text) {
     const value = String(text || "").trim();
 
-    if (!value) return false;
+    if (!value) return true;
 
-    if (
-        /【题目文字】|\[图片识题\]|【图形信息】/.test(value)
-    ) {
-        return true;
-    }
+    const patterns = [
+        /这道题出现的是一份题库答案的片段/,
+        /并不是一道待求解的题目/,
+        /请问你希望我帮你做什么/,
+        /我可以帮你出题/,
+        /我先确认一下/,
+        /先确认一下你希望/,
+        /告诉我一个具体的.*(?:方向|章节|知识点)/,
+        /你(?:希望|想要).*(?:方向|章节|知识点)/,
+        /你选哪个/,
+        /可以从以下.*选/,
+        /从以下.*选择/,
+        /如果你是想让我.*(?:核对|整理|讲解)/
+    ];
 
-    if (splitQuestionBankText(value).length) {
-        return true;
-    }
+    return patterns.some(
+        pattern => pattern.test(value)
+    );
+}
 
-    if (isShortLearningFollowUp(value)) {
+function stripQuestionWrappers(text) {
+    return String(text || "")
+        .replace(/【题目文字】/g, "")
+        .replace(/【图形信息】/g, "")
+        .replace(/\[图片识题\]/g, "")
+        .trim();
+}
+
+function looksLikeChatQuestionText(text) {
+    const original = String(text || "").trim();
+
+    if (!original) return false;
+
+    if (isClearlyNonQuestionWrongBookText(original)) {
         return false;
     }
 
-    const strongSignals = [
+    if (splitQuestionBankText(original).length) {
+        return true;
+    }
+
+    const value = stripQuestionWrappers(
+        original
+    );
+
+    if (
+        !value
+        || isShortLearningFollowUp(value)
+        || isExerciseRequestText(value)
+    ) {
+        return false;
+    }
+
+    const numberedQuestion = (
+        /(?:^|\n)\s*\d{1,2}\s*[、.．]\s*\S{3,}/m.test(value)
+        && /[？?（(]|求|判断|写出|证明|计算|选择|填空/.test(value)
+    );
+
+    if (numberedQuestion) {
+        return true;
+    }
+
+    const strongStarts = [
         "已知",
         "给定",
-        "设",
+        "设 ",
+        "设：",
+        "设有",
         "求",
         "求解",
         "证明",
@@ -4253,31 +4459,24 @@ function looksLikeChatQuestionText(text) {
         "判断",
         "写出",
         "列出",
-        "下列",
-        "回答下列",
-        "选择题",
-        "填空题",
-        "证明题",
-        "计算题"
+        "下列"
     ];
 
+    const compact = value
+        .replace(/^[#>*\s]+/, "")
+        .trim();
+
     if (
-        strongSignals.some(signal => value.includes(signal))
-        && value.length >= 8
+        strongStarts.some(signal => compact.startsWith(signal))
+        && compact.length >= 10
     ) {
         return true;
     }
 
     if (
-        /[（(]\s*\d+\s*[)）]/.test(value)
-        && value.length >= 20
-    ) {
-        return true;
-    }
-
-    if (
-        /[？?]\s*$/.test(value)
-        && /(命题|公式|集合|关系|函数|图|矩阵|树|通路|回路|欧拉|哈密顿|递推|组合|群|环|域)/.test(value)
+        /[？?]\s*$/.test(compact)
+        && /(命题|公式|集合|关系|函数|图|矩阵|树|通路|回路|欧拉|哈密顿|递推|组合|群|环|域)/.test(compact)
+        && compact.length >= 8
     ) {
         return true;
     }
@@ -4291,32 +4490,25 @@ function looksLikeAiGeneratedQuestion(
 ) {
     const value = String(text || "").trim();
 
-    if (!value) return false;
-
-    const explicitHeading = /【题目】|【练习题】/.test(
-        value
-    );
-
-    const metaOnlyPatterns = [
-        /我可以帮你出题/,
-        /我先确认一下/,
-        /先确认一下/,
-        /告诉我.*(?:方向|章节|知识点)/,
-        /你(?:希望|想要).*(?:方向|章节|知识点)/,
-        /你选哪个/,
-        /可以从以下.*选/,
-        /从以下.*选择/
-    ];
-
     if (
-        !explicitHeading
-        && metaOnlyPatterns.some(pattern => pattern.test(value))
+        !value
+        || isClearlyNonQuestionWrongBookText(value)
     ) {
         return false;
     }
 
+    // AI 生成题必须有明确的“题目”标记。
+    // 这样普通讲解、让用户选方向、题库说明都不会误出现错题按钮。
+    const explicitHeading = Boolean(
+        /【题目】|【练习题】|(?:^|\n)#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)|(?:^|\n)\*\*(?:题目|练习题)[:：]?\*\*/m.test(value)
+    );
+
+    if (!explicitHeading) {
+        return false;
+    }
+
     if (
-        !explicitHeading
+        previousUserText
         && !isExerciseRequestText(previousUserText)
     ) {
         return false;
@@ -4326,9 +4518,8 @@ function looksLikeAiGeneratedQuestion(
         value
     );
 
-    return Boolean(
-        explicitHeading
-        || looksLikeChatQuestionText(extracted)
+    return looksLikeChatQuestionText(
+        extracted
     );
 }
 
@@ -4367,9 +4558,8 @@ function canMessageBeWrongQuestion(session, messageIndex, message) {
     }
 
     if (message.role === "user") {
-        return Boolean(
-            message.source === "ocr"
-            || looksLikeChatQuestionText(message.text)
+        return looksLikeChatQuestionText(
+            message.text
         );
     }
 
@@ -4967,15 +5157,15 @@ function renderSessions() {
             }
         };
 
-        const currentBadge = document.createElement("small");
-        currentBadge.className = "session-current";
-        currentBadge.textContent = "当前";
-
         const del = document.createElement("button");
         del.className = "del";
         del.type = "button";
-        del.textContent = "×";
+        del.textContent = "";
         del.title = "删除这个对话";
+        del.setAttribute(
+            "aria-label",
+            "删除这个对话"
+        );
 
         del.onclick = event => {
             event.stopPropagation();
@@ -5018,11 +5208,6 @@ function renderSessions() {
         };
 
         div.appendChild(span);
-
-        if (isCurrent) {
-            div.appendChild(currentBadge);
-        }
-
         div.appendChild(del);
         box.appendChild(div);
     }
