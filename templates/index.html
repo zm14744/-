@@ -7,6 +7,45 @@
 <style>
 * { box-sizing:border-box; }
 
+
+/* 统一使用低存在感滚动条，避免浏览器默认白色轨道/箭头。 */
+* {
+    scrollbar-width:thin;
+    scrollbar-color:rgba(148,163,184,.34) transparent;
+}
+
+*::-webkit-scrollbar {
+    width:8px;
+    height:8px;
+}
+
+*::-webkit-scrollbar-track {
+    background:transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background:rgba(148,163,184,.30);
+    border:2px solid transparent;
+    border-radius:999px;
+    background-clip:content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background:rgba(148,163,184,.52);
+    border:2px solid transparent;
+    background-clip:content-box;
+}
+
+*::-webkit-scrollbar-corner {
+    background:transparent;
+}
+
+*::-webkit-scrollbar-button {
+    display:none;
+    width:0;
+    height:0;
+}
+
 body {
     margin:0;
     font-family:Arial, sans-serif;
@@ -39,31 +78,71 @@ body {
 .session {
     display:flex;
     align-items:center;
-    justify-content:space-between;
+    gap:7px;
     padding:10px;
     background:#111827;
+    border:1px solid transparent;
     border-radius:8px;
     margin-bottom:8px;
+    transition:
+        background .15s ease,
+        border-color .15s ease,
+        box-shadow .15s ease;
+}
+
+.session:hover {
+    background:#162033;
+}
+
+.session.active {
+    background:#172554;
+    border-color:#3b82f6;
+    box-shadow:inset 3px 0 0 #60a5fa;
 }
 
 .session span {
     flex:1;
+    min-width:0;
     cursor:pointer;
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
 }
 
+.session.active span {
+    color:#eff6ff;
+    font-weight:600;
+}
+
+.session-current {
+    flex:0 0 auto;
+    padding:2px 5px;
+    border-radius:999px;
+    background:#1d4ed8;
+    color:#dbeafe;
+    font-size:10px;
+    line-height:1.4;
+}
+
 /* 删除按钮 */
 .session .del {
-    width:20px;
-    height:20px;
-    border-radius:50%;
-    border:none;
-    background:#ef4444;
+    flex:0 0 auto;
+    width:22px;
+    height:22px;
+    border-radius:6px;
+    border:1px solid transparent;
+    background:transparent;
+    color:#64748b;
     cursor:pointer;
     padding:0;
-    margin-left:8px;
+    font-size:17px;
+    line-height:18px;
+}
+
+.session .del:hover {
+    color:#fecaca;
+    background:#3f1d1d;
+    border-color:#7f1d1d;
 }
 
 .center {
@@ -605,6 +684,79 @@ body {
 .wrong-answer-body p,
 .wrong-solution-body p {
     margin:6px 0;
+}
+
+.wrong-solution-details {
+    margin-top:10px;
+    border:1px solid #263449;
+    border-radius:9px;
+    background:#0b1220;
+    overflow:hidden;
+}
+
+.wrong-solution-summary {
+    padding:10px 12px;
+    color:#cbd5e1;
+    cursor:pointer;
+    user-select:none;
+    list-style:none;
+    font-size:13px;
+    font-weight:600;
+}
+
+.wrong-solution-summary::-webkit-details-marker {
+    display:none;
+}
+
+.wrong-solution-summary::before {
+    content:"›";
+    display:inline-block;
+    margin-right:8px;
+    color:#60a5fa;
+    transform:rotate(0deg);
+    transition:transform .15s ease;
+}
+
+.wrong-solution-details[open] .wrong-solution-summary::before {
+    transform:rotate(90deg);
+}
+
+.wrong-solution-details[open] .wrong-solution-summary {
+    border-bottom:1px solid #1f2937;
+}
+
+.wrong-solution-inner {
+    padding:12px;
+    color:#cbd5e1;
+    font-size:13px;
+    line-height:1.68;
+}
+
+.wrong-answer-hidden {
+    margin-bottom:12px;
+    padding:9px 10px;
+    border-radius:7px;
+    background:#0f172a;
+}
+
+.wrong-answer-hidden strong {
+    color:#93c5fd;
+}
+
+.wrong-solution-waiting {
+    color:#64748b;
+}
+
+.wrong-solution-body p,
+.wrong-answer-body p {
+    margin:7px 0;
+}
+
+.wrong-solution-body mjx-container,
+.wrong-answer-body mjx-container {
+    max-width:100%;
+    overflow-x:auto;
+    overflow-y:hidden;
 }
 
 .wrong-edit-card {
