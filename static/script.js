@@ -16,6 +16,8 @@ let currentWrongEditId = null;
 let pendingWrongQuestionSelection = null;
 const wrongSolutionExpandedIds = new Set();
 const wrongSolutionLoadingIds = new Set();
+const wrongSolutionQueue = [];
+let wrongSolutionQueueBusy = false;
 
 let knowledgeGraphData = null;
 let knowledgeGraphFilter = "";
@@ -1305,6 +1307,10 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
 
         saveLearningState();
 
+        queueWrongQuestionSolution(
+            existing.id
+        );
+
         return {
             entry: existing,
             countAsMistake
@@ -1350,6 +1356,10 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
     }
 
     saveLearningState();
+
+    queueWrongQuestionSolution(
+        entry.id
+    );
 
     return {
         entry,
@@ -2373,7 +2383,9 @@ function buildWrongBookPdfExportElement(items) {
             block.appendChild(label);
 
             const body = document.createElement("div");
-            body.innerHTML = markdownToHtml(item.solution);
+            body.innerHTML = markdownToHtml(
+                normalizeWrongSolutionMarkdown(item.solution)
+            );
             block.appendChild(body);
 
             card.appendChild(block);
@@ -2667,6 +2679,121 @@ async function exportWrongBookPdf() {
 }
 
 
+function normalizeWrongSolutionMarkdown(text) {
+    let source = String(text || "").trim();
+
+    if (!source) return "";
+
+    // 裸 \begin{...} 环境统一放进块级公式。
+    source = source.replace(
+        /\\begin\{(bmatrix|pmatrix|matrix|cases|aligned|array)\}[\s\S]*?\\end\{\1\}/g,
+        (match, _env, offset, fullText) => {
+            const before = fullText.slice(
+                Math.max(0, offset - 4),
+                offset
+            );
+
+            const after = fullText.slice(
+                offset + match.length,
+                offset + match.length + 4
+            );
+
+            if (
+                /\$\$\s*$/.test(before)
+                && /^\s*\$\$/.test(after)
+            ) {
+                return match;
+            }
+
+            return `$$\n${match}\n$$`;
+        }
+    );
+
+    const lines = source.split(/\r?\n/);
+    let inBlockMath = false;
+
+    const normalized = lines.map(line => {
+        const trimmed = line.trim();
+
+        if (trimmed === "$$") {
+            inBlockMath = !inBlockMath;
+            return line;
+        }
+
+        if (
+            inBlockMath
+            || !trimmed
+            || trimmed.includes("$")
+        ) {
+            return line;
+        }
+
+        const hasChinese = /[\u3400-\u9fff]/.test(
+            trimmed
+        );
+
+        const looksLikePureMath = (
+            !hasChinese
+            && (
+                /\\(?:to|rightarrow|Rightarrow|xrightarrow|in|notin|neq|leq|geq|le|ge|cdot|times|cup|cap)\b/.test(trimmed)
+                || /[A-Za-z]_\{?[A-Za-z0-9]+\}?/.test(trimmed)
+                || /[A-Za-z]\^\{?[0-9A-Za-z]+\}?/.test(trimmed)
+            )
+        );
+
+        if (looksLikePureMath) {
+            return `$${trimmed}$`;
+        }
+
+        return line;
+    });
+
+    return normalized.join("\n");
+}
+
+function queueWrongQuestionSolution(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (
+        !entry
+        || entry.solution
+        || wrongSolutionLoadingIds.has(id)
+        || wrongSolutionQueue.includes(id)
+    ) {
+        return;
+    }
+
+    wrongSolutionQueue.push(id);
+    runWrongSolutionQueue();
+}
+
+async function runWrongSolutionQueue() {
+    if (wrongSolutionQueueBusy) {
+        return;
+    }
+
+    wrongSolutionQueueBusy = true;
+
+    try {
+        while (wrongSolutionQueue.length) {
+            const id = wrongSolutionQueue.shift();
+
+            await generateWrongQuestionSolution(
+                id,
+                {
+                    expand: false,
+                    silent: true
+                }
+            );
+        }
+    } finally {
+        wrongSolutionQueueBusy = false;
+    }
+}
+
+
 function toggleWrongSolution(id) {
     if (wrongSolutionExpandedIds.has(id)) {
         wrongSolutionExpandedIds.delete(id);
@@ -2677,18 +2804,32 @@ function toggleWrongSolution(id) {
     renderWrongBook();
 }
 
-async function requestWrongQuestionSolution(id) {
+async function generateWrongQuestionSolution(
+    id,
+    {
+        expand = false,
+        silent = false
+    } = {}
+) {
     const entry = learningState.wrongQuestions.find(
         item => item.id === id
     );
 
-    if (!entry || wrongSolutionLoadingIds.has(id)) {
-        return;
+    if (!entry) {
+        return false;
     }
 
     if (entry.solution) {
-        toggleWrongSolution(id);
-        return;
+        if (expand) {
+            wrongSolutionExpandedIds.add(id);
+            renderWrongBook();
+        }
+
+        return true;
+    }
+
+    if (wrongSolutionLoadingIds.has(id)) {
+        return false;
     }
 
     wrongSolutionLoadingIds.add(id);
@@ -2698,18 +2839,22 @@ async function requestWrongQuestionSolution(id) {
         ? [
             "",
             `题库提供的参考答案：${entry.referenceAnswer}`,
-            "请核对这个参考答案。如果它有问题，请明确指出；如果正确，请围绕它解释。"
+            "请先核对该答案。若参考答案有误，请在解析中明确指出并给出正确答案。"
         ].join("\n")
         : "";
 
     const prompt = [
-        "请为下面这道离散数学错题提供完整答案与解析。",
-        "要求：",
-        "1. 先给出明确答案；",
-        "2. 再分步骤解释关键推理；",
-        "3. 说明最容易出错的地方；",
-        "4. 数学公式使用规范 LaTeX；",
-        "5. 不要再反问学生，直接给完整解析。",
+        "请直接为下面这道离散数学错题生成“答案与解析”。",
+        "不要反问学生，也不要只给提示。",
+        "",
+        "输出要求：",
+        "1. 第一部分标题写“## 答案”，直接给最终答案；",
+        "2. 第二部分标题写“## 解析”，给出清晰、不过度冗长的分步推理；",
+        "3. 最后可补一行“易错点”；",
+        "4. 所有行内数学表达式必须写在 $...$ 中；",
+        "5. 所有矩阵、cases、多行推导必须写在 $$...$$ 中；",
+        "6. 绝对不要输出裸露的 \\\\begin{bmatrix}、\\\\to、v_1 这类未被数学定界符包裹的 LaTeX；",
+        "7. 使用 Markdown，但不要使用 HTML。",
         "",
         "【错题】",
         entry.question,
@@ -2745,20 +2890,31 @@ async function requestWrongQuestionSolution(id) {
             || typeof data.reply !== "string"
             || !data.reply.trim()
         ) {
-            window.alert(
-                data.error
-                || "答案与解析生成失败，请稍后重试。"
-            );
-            return;
+            if (!silent) {
+                window.alert(
+                    data.error
+                    || "答案与解析生成失败，请稍后重试。"
+                );
+            }
+
+            return false;
         }
 
-        entry.solution = data.reply.trim().slice(0, 8000);
+        entry.solution = normalizeWrongSolutionMarkdown(
+            data.reply.trim()
+        ).slice(0, 8000);
+
         entry.solutionUpdatedAt = Date.now();
         entry.updatedAt = Date.now();
 
-        wrongSolutionExpandedIds.add(id);
+        if (expand) {
+            wrongSolutionExpandedIds.add(id);
+        }
+
         saveLearningState();
         renderWrongBook();
+
+        return true;
 
     } catch (error) {
         console.error(
@@ -2766,14 +2922,39 @@ async function requestWrongQuestionSolution(id) {
             error
         );
 
-        window.alert(
-            "网络连接失败，暂时无法生成答案与解析。"
-        );
+        if (!silent) {
+            window.alert(
+                "网络连接失败，暂时无法生成答案与解析。"
+            );
+        }
+
+        return false;
 
     } finally {
         wrongSolutionLoadingIds.delete(id);
         renderWrongBook();
     }
+}
+
+async function requestWrongQuestionSolution(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry) return;
+
+    if (entry.solution) {
+        toggleWrongSolution(id);
+        return;
+    }
+
+    await generateWrongQuestionSolution(
+        id,
+        {
+            expand: true,
+            silent: false
+        }
+    );
 }
 
 
@@ -2960,10 +3141,30 @@ function renderWrongBook() {
             retest.textContent = resultText;
         }
 
-        const answerBox = document.createElement("div");
-        answerBox.className = "wrong-answer-box";
+        const solutionDetails = document.createElement("details");
+        solutionDetails.className = "wrong-solution-details";
+        solutionDetails.open = wrongSolutionExpandedIds.has(
+            item.id
+        );
+
+        const solutionSummary = document.createElement("summary");
+        solutionSummary.className = "wrong-solution-summary";
+
+        if (wrongSolutionLoadingIds.has(item.id)) {
+            solutionSummary.textContent = "答案与解析 · 正在生成";
+        } else if (item.solution) {
+            solutionSummary.textContent = "答案与解析";
+        } else {
+            solutionSummary.textContent = "答案与解析 · 点击生成";
+        }
+
+        const solutionInner = document.createElement("div");
+        solutionInner.className = "wrong-solution-inner";
 
         if (item.referenceAnswer) {
+            const answerBlock = document.createElement("div");
+            answerBlock.className = "wrong-answer-hidden";
+
             const answerTitle = document.createElement("strong");
             answerTitle.textContent = "参考答案";
 
@@ -2973,54 +3174,56 @@ function renderWrongBook() {
                 item.referenceAnswer
             );
 
-            answerBox.appendChild(answerTitle);
-            answerBox.appendChild(answerBody);
+            answerBlock.appendChild(answerTitle);
+            answerBlock.appendChild(answerBody);
+            solutionInner.appendChild(answerBlock);
         }
 
-        const solutionBox = document.createElement("div");
-        solutionBox.className = "wrong-solution-box";
-
-        if (
-            item.solution
-            && wrongSolutionExpandedIds.has(item.id)
-        ) {
-            const solutionTitle = document.createElement("strong");
-            solutionTitle.textContent = "答案与解析";
-
-            const solutionBody = document.createElement("div");
-            solutionBody.className = "wrong-solution-body";
-            solutionBody.innerHTML = markdownToHtml(
-                item.solution
+        if (item.solution) {
+            const solutionBlock = document.createElement("div");
+            solutionBlock.className = "wrong-solution-body";
+            solutionBlock.innerHTML = markdownToHtml(
+                normalizeWrongSolutionMarkdown(
+                    item.solution
+                )
             );
 
-            solutionBox.appendChild(solutionTitle);
-            solutionBox.appendChild(solutionBody);
+            solutionInner.appendChild(solutionBlock);
+        } else {
+            const waiting = document.createElement("div");
+            waiting.className = "wrong-solution-waiting";
+            waiting.textContent = wrongSolutionLoadingIds.has(item.id)
+                ? "正在后台生成答案与解析…"
+                : "展开后会自动生成答案与解析。";
+
+            solutionInner.appendChild(waiting);
         }
+
+        solutionDetails.appendChild(solutionSummary);
+        solutionDetails.appendChild(solutionInner);
+
+        solutionDetails.addEventListener(
+            "toggle",
+            () => {
+                if (solutionDetails.open) {
+                    wrongSolutionExpandedIds.add(item.id);
+
+                    if (
+                        !item.solution
+                        && !wrongSolutionLoadingIds.has(item.id)
+                    ) {
+                        queueWrongQuestionSolution(
+                            item.id
+                        );
+                    }
+                } else {
+                    wrongSolutionExpandedIds.delete(item.id);
+                }
+            }
+        );
 
         const actions = document.createElement("div");
         actions.className = "wrong-actions";
-
-        const solutionButton = document.createElement("button");
-        solutionButton.type = "button";
-        solutionButton.className = "secondary";
-
-        if (wrongSolutionLoadingIds.has(item.id)) {
-            solutionButton.textContent = "正在生成解析…";
-            solutionButton.disabled = true;
-        } else if (item.solution) {
-            solutionButton.textContent = wrongSolutionExpandedIds.has(item.id)
-                ? "收起解析"
-                : "查看答案与解析";
-        } else {
-            solutionButton.textContent = item.referenceAnswer
-                ? "生成详细解析"
-                : "生成答案与解析";
-        }
-
-        solutionButton.onclick = () => (
-            requestWrongQuestionSolution(item.id)
-        );
-        actions.appendChild(solutionButton);
 
         if (!item.corrected) {
             const correctedButton = document.createElement("button");
@@ -3120,13 +3323,7 @@ function renderWrongBook() {
             card.appendChild(retest);
         }
 
-        if (answerBox.textContent.trim()) {
-            card.appendChild(answerBox);
-        }
-
-        if (solutionBox.textContent.trim()) {
-            card.appendChild(solutionBox);
-        }
+        card.appendChild(solutionDetails);
 
         card.appendChild(actions);
         list.appendChild(card);
@@ -3134,8 +3331,7 @@ function renderWrongBook() {
         renderMath(question);
         renderMath(feedback);
         renderMath(note);
-        renderMath(answerBox);
-        renderMath(solutionBox);
+        renderMath(solutionDetails);
     }
 }
 
@@ -3469,6 +3665,105 @@ function handleChatScrollWhileTyping() {
 }
 
 
+function deriveSessionName(text, source = "text") {
+    let value = String(text || "")
+        .replace(/【题目文字】/g, "")
+        .replace(/【图形信息】/g, "")
+        .replace(/\[图片识题\]/g, "")
+        .replace(/[#*_`>]/g, "")
+        .trim();
+
+    const firstUsefulLine = value
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .find(line => (
+            line
+            && !/^[-—=]{2,}$/.test(line)
+        ));
+
+    value = firstUsefulLine || value;
+
+    if (!value) {
+        return source === "ocr"
+            ? "图片识题"
+            : "新对话";
+    }
+
+    value = value
+        .replace(/\s+/g, " ")
+        .replace(/^题目[:：]\s*/, "")
+        .trim();
+
+    const maxLength = 15;
+
+    return value.length > maxLength
+        ? `${value.slice(0, maxLength)}…`
+        : value;
+}
+
+function maybeAutoNameSession(
+    session,
+    text,
+    source = "text"
+) {
+    if (
+        !session
+        || session.name !== "新对话"
+    ) {
+        return false;
+    }
+
+    const name = deriveSessionName(
+        text,
+        source
+    );
+
+    if (!name || name === "新对话") {
+        return false;
+    }
+
+    session.name = name;
+    return true;
+}
+
+function refreshUnnamedSessionNames() {
+    let changed = false;
+
+    for (const session of sessions) {
+        if (
+            session.name !== "新对话"
+            || !Array.isArray(session.messages)
+        ) {
+            continue;
+        }
+
+        const firstUser = session.messages.find(
+            message => (
+                message
+                && message.role === "user"
+                && typeof message.text === "string"
+                && message.text.trim()
+            )
+        );
+
+        if (
+            firstUser
+            && maybeAutoNameSession(
+                session,
+                firstUser.text,
+                firstUser.source || "text"
+            )
+        ) {
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        saveState();
+    }
+}
+
+
 // -----------------------------
 // 新对话
 // -----------------------------
@@ -3690,6 +3985,12 @@ function send() {
 
     session.messages.push(message);
 
+    maybeAutoNameSession(
+        session,
+        text,
+        "text"
+    );
+
     input.value = "";
 
     saveState();
@@ -3880,6 +4181,12 @@ async function handleImageSelected(event) {
             source: "ocr"
         });
 
+        maybeAutoNameSession(
+            session,
+            text || visualText || "图片识题",
+            "ocr"
+        );
+
         if (
             typeof data.warning === "string"
             && data.warning.trim()
@@ -3913,6 +4220,116 @@ async function handleImageSelected(event) {
     // OCR 完成后自动把识别结果交给 AI。
     // 后端 SYSTEM_PROMPT 会把“图片识题”默认处理为提示优先。
     await requestAiReply(session);
+}
+
+
+function looksLikeChatQuestionText(text) {
+    const value = String(text || "").trim();
+
+    if (!value) return false;
+
+    if (
+        /【题目文字】|\[图片识题\]|【图形信息】/.test(value)
+    ) {
+        return true;
+    }
+
+    if (splitQuestionBankText(value).length) {
+        return true;
+    }
+
+    if (isShortLearningFollowUp(value)) {
+        return false;
+    }
+
+    const strongSignals = [
+        "已知",
+        "给定",
+        "设",
+        "求",
+        "求解",
+        "证明",
+        "计算",
+        "判断",
+        "写出",
+        "列出",
+        "下列",
+        "回答下列",
+        "选择题",
+        "填空题",
+        "证明题",
+        "计算题"
+    ];
+
+    if (
+        strongSignals.some(signal => value.includes(signal))
+        && value.length >= 8
+    ) {
+        return true;
+    }
+
+    if (
+        /[（(]\s*\d+\s*[)）]/.test(value)
+        && value.length >= 20
+    ) {
+        return true;
+    }
+
+    if (
+        /[？?]\s*$/.test(value)
+        && /(命题|公式|集合|关系|函数|图|矩阵|树|通路|回路|欧拉|哈密顿|递推|组合|群|环|域)/.test(value)
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+function looksLikeAiGeneratedQuestion(
+    text,
+    previousUserText = ""
+) {
+    const value = String(text || "").trim();
+
+    if (!value) return false;
+
+    const explicitHeading = /【题目】|【练习题】/.test(
+        value
+    );
+
+    const metaOnlyPatterns = [
+        /我可以帮你出题/,
+        /我先确认一下/,
+        /先确认一下/,
+        /告诉我.*(?:方向|章节|知识点)/,
+        /你(?:希望|想要).*(?:方向|章节|知识点)/,
+        /你选哪个/,
+        /可以从以下.*选/,
+        /从以下.*选择/
+    ];
+
+    if (
+        !explicitHeading
+        && metaOnlyPatterns.some(pattern => pattern.test(value))
+    ) {
+        return false;
+    }
+
+    if (
+        !explicitHeading
+        && !isExerciseRequestText(previousUserText)
+    ) {
+        return false;
+    }
+
+    const extracted = extractAiGeneratedExerciseText(
+        value
+    );
+
+    return Boolean(
+        explicitHeading
+        || looksLikeChatQuestionText(extracted)
+    );
 }
 
 
@@ -3952,24 +4369,19 @@ function canMessageBeWrongQuestion(session, messageIndex, message) {
     if (message.role === "user") {
         return Boolean(
             message.source === "ocr"
-            || splitQuestionBankText(message.text).length
-            || looksLikeActualLearningProblem(message)
+            || looksLikeChatQuestionText(message.text)
         );
     }
 
     if (message.role === "ai") {
-        if (/【题目】|【练习题】/.test(message.text)) {
-            return true;
-        }
-
         const previousUser = previousUserMessageBefore(
             session,
             messageIndex
         );
 
-        return Boolean(
-            previousUser
-            && isExerciseRequestText(previousUser.text)
+        return looksLikeAiGeneratedQuestion(
+            message.text,
+            previousUser?.text || ""
         );
     }
 
@@ -4500,14 +4912,29 @@ function renderSessions() {
     const box = document.getElementById("sessions");
     if (!box) return;
 
+    refreshUnnamedSessionNames();
     box.innerHTML = "";
 
     for (const session of sessions) {
+        const isCurrent = (
+            String(session.id) === String(currentId)
+        );
+
         const div = document.createElement("div");
-        div.className = "session";
+        div.className = isCurrent
+            ? "session active"
+            : "session";
+
+        if (isCurrent) {
+            div.setAttribute(
+                "aria-current",
+                "true"
+            );
+        }
 
         const span = document.createElement("span");
         span.innerText = session.name;
+        span.title = session.name;
 
         span.onclick = () => {
             if (typingTimer) {
@@ -4540,8 +4967,15 @@ function renderSessions() {
             }
         };
 
+        const currentBadge = document.createElement("small");
+        currentBadge.className = "session-current";
+        currentBadge.textContent = "当前";
+
         const del = document.createElement("button");
         del.className = "del";
+        del.type = "button";
+        del.textContent = "×";
+        del.title = "删除这个对话";
 
         del.onclick = event => {
             event.stopPropagation();
@@ -4584,6 +5018,11 @@ function renderSessions() {
         };
 
         div.appendChild(span);
+
+        if (isCurrent) {
+            div.appendChild(currentBadge);
+        }
+
         div.appendChild(del);
         box.appendChild(div);
     }
