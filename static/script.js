@@ -2466,17 +2466,7 @@ function renderLearningSummary() {
         .filter(item => item.retestPassed)
         .length;
 
-    const recentFocus = pendingWrong.find(
-        item => Array.isArray(item.focusPoints) && item.focusPoints.length
-    );
-
     const lines = [];
-
-    if (recentFocus) {
-        lines.push(
-            `当前主要卡点：${recentFocus.focusPoints.join("、")}`
-        );
-    }
 
     lines.push(
         `错题本：${wrongCount} 道，待订正 ${pendingCount} 道，已通过复测 ${passedCount} 道`
@@ -3135,7 +3125,7 @@ function buildWrongBookPdfExportElement(items) {
 
         if (item.focusPoints?.length) {
             metaParts.push(
-                `本次主要卡在：${item.focusPoints.join("、")}`
+                `本题难点：${item.focusPoints.join("、")}`
             );
         }
 
@@ -4028,7 +4018,7 @@ function renderWrongBook() {
 
         if (item.focusPoints.length) {
             appendMetaRow(
-                "本次主要卡在",
+                "本题难点",
                 item.focusPoints.join("、"),
                 "focus"
             );
@@ -7952,7 +7942,7 @@ function knowledgeGraphFocusedNodes(category, context) {
         }
     }
 
-    // 当前“主要卡点”再补一层直接后续，帮助学生知道学会后会接到哪里。
+    // 当前“本题难点”再补一层直接后续，帮助学生知道掌握后会接到哪里。
     const focusNames = (
         context?.focusPoints?.length
             ? context.focusPoints
@@ -8767,7 +8757,7 @@ function renderInfo() {
 
         if (teaching.focus_points.length) {
             lines.push(
-                `本次重点：${teaching.focus_points.join("、")}`
+                `本题难点：${teaching.focus_points.join("、")}`
             );
         }
 
