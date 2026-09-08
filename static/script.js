@@ -13,6 +13,10 @@ let wrongBookSearch = "";
 let wrongBookSort = "recent";
 let currentWrongEditId = null;
 
+let pendingWrongQuestionSelection = null;
+const wrongSolutionExpandedIds = new Set();
+const wrongSolutionLoadingIds = new Set();
+
 let knowledgeGraphData = null;
 let knowledgeGraphFilter = "";
 let knowledgeGraphViewMode = "focus";
@@ -143,7 +147,7 @@ function normalizeRetestSession(value) {
 
 function createEmptyLearningState() {
     return {
-        version: 4,
+        version: 5,
         knowledge: {},
         events: [],
         wrongQuestions: []
@@ -191,6 +195,9 @@ function normalizeLearningQuestion(value) {
                     ? "ai"
                     : "text"
             ),
+        referenceAnswer: typeof value.referenceAnswer === "string"
+            ? value.referenceAnswer.trim().slice(0, 1200)
+            : "",
         sessionId: (
             typeof value.sessionId === "number"
             || typeof value.sessionId === "string"
@@ -288,6 +295,15 @@ function normalizeLearningState(value) {
                     feedback: typeof item.feedback === "string"
                         ? item.feedback.trim().slice(0, 1000)
                         : "",
+                    referenceAnswer: typeof item.referenceAnswer === "string"
+                        ? item.referenceAnswer.trim().slice(0, 1200)
+                        : "",
+                    solution: typeof item.solution === "string"
+                        ? item.solution.trim().slice(0, 8000)
+                        : "",
+                    solutionUpdatedAt: Number.isFinite(item.solutionUpdatedAt)
+                        ? item.solutionUpdatedAt
+                        : null,
                     note: typeof item.note === "string"
                         ? item.note.trim().slice(0, 1500)
                         : "",
@@ -415,6 +431,15 @@ function normalizeLearningState(value) {
 
             if (!newer.note && older.note) {
                 newer.note = older.note;
+            }
+
+            if (!newer.referenceAnswer && older.referenceAnswer) {
+                newer.referenceAnswer = older.referenceAnswer;
+            }
+
+            if (!newer.solution && older.solution) {
+                newer.solution = older.solution;
+                newer.solutionUpdatedAt = older.solutionUpdatedAt;
             }
 
             newer.retestCount = (
@@ -839,6 +864,295 @@ function buildLearningQuestionFromSession(session, teaching, excludeLatest = fal
     return null;
 }
 
+function splitQuestionBankText(text) {
+    const source = String(text || "").trim();
+
+    if (!source) return [];
+
+    const lines = source.split(/\r?\n/);
+    const blocks = [];
+    let current = null;
+
+    const pushCurrent = () => {
+        if (!current) return;
+
+        const raw = current.lines
+            .join("\n")
+            .trim();
+
+        if (!raw) {
+            current = null;
+            return;
+        }
+
+        const answerMatch = raw.match(
+            /(?:^|\n)\s*答\s*[:：]\s*([^\n]*)/m
+        );
+
+        const referenceAnswer = answerMatch
+            ? answerMatch[1].trim()
+            : "";
+
+        const question = raw
+            .replace(
+                /(?:^|\n)\s*答\s*[:：]\s*[^\n]*/m,
+                ""
+            )
+            .trim();
+
+        blocks.push({
+            number: current.number,
+            question,
+            referenceAnswer
+        });
+
+        current = null;
+    };
+
+    for (const line of lines) {
+        const match = line.match(
+            /^\s*(\d{1,2})\s*[、.．]\s*(.*)$/
+        );
+
+        if (match) {
+            pushCurrent();
+
+            current = {
+                number: match[1],
+                lines: [
+                    `${match[1]}、${match[2]}`
+                ]
+            };
+
+            continue;
+        }
+
+        if (current) {
+            current.lines.push(line);
+        }
+    }
+
+    pushCurrent();
+
+    if (blocks.length < 2) {
+        return [];
+    }
+
+    const answerCount = blocks.filter(
+        item => item.referenceAnswer
+    ).length;
+
+    const bankSignal = /题库答案|题库|选择或填空|练习答案|习题答案/.test(
+        source
+    );
+
+    // 避免把“一个大题里的 1/2 两个小问”错误拆开：
+    // 只有多个独立答案，或明显是题库且至少 3 题时才判为题组。
+    const isQuestionBank = (
+        answerCount >= 2
+        || (
+            bankSignal
+            && blocks.length >= 3
+        )
+    );
+
+    if (!isQuestionBank) {
+        return [];
+    }
+
+    return blocks
+        .filter(item => item.question)
+        .slice(0, 30);
+}
+
+function isExerciseRequestText(text) {
+    const value = String(text || "")
+        .replace(/\s+/g, "");
+
+    if (!value) return false;
+
+    return /(?:给我|帮我|请|再|重新)?(?:出|来)(?:一道|一题|几道|几题)?[^，。！？]{0,10}(?:题|练习)|(?:练习题|测试题|例题).{0,8}(?:来一道|出一道|出一题|给一道)/.test(
+        value
+    );
+}
+
+function extractAiGeneratedExerciseText(reply) {
+    let text = String(reply || "").trim();
+
+    if (!text) return "";
+
+    const headingPatterns = [
+        /【题目】/,
+        /【练习题】/,
+        /(?:^|\n)#{1,4}\s*题目\s*(?:\n|$)/m,
+        /(?:^|\n)\*\*题目[:：]?\*\*\s*/m
+    ];
+
+    let bestIndex = -1;
+    let bestLength = 0;
+
+    for (const pattern of headingPatterns) {
+        const match = pattern.exec(text);
+
+        if (
+            match
+            && (
+                bestIndex < 0
+                || match.index < bestIndex
+            )
+        ) {
+            bestIndex = match.index;
+            bestLength = match[0].length;
+        }
+    }
+
+    if (bestIndex >= 0) {
+        text = text.slice(
+            bestIndex + bestLength
+        ).trim();
+    }
+
+    // 练习题回答通常在题目后附“提示”。错题本只保存题目正文。
+    const hintMatch = text.match(
+        /\n\s*(?:---+\s*\n\s*)?(?:\*\*)?提示[:：]?(?:\*\*)?\s*\n/i
+    );
+
+    if (hintMatch && typeof hintMatch.index === "number") {
+        text = text.slice(0, hintMatch.index).trim();
+    }
+
+    return text.slice(0, 3000);
+}
+
+function openWrongQuestionPicker(questionInfo, choices) {
+    const modal = document.getElementById(
+        "wrongQuestionPickerModal"
+    );
+    const list = document.getElementById(
+        "wrongQuestionPickerList"
+    );
+
+    if (!modal || !list || !choices.length) {
+        return false;
+    }
+
+    pendingWrongQuestionSelection = {
+        questionInfo,
+        choices
+    };
+
+    list.innerHTML = "";
+
+    choices.forEach((choice, index) => {
+        const label = document.createElement("label");
+        label.className = "wrong-picker-item";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = String(index);
+
+        const content = document.createElement("div");
+        content.className = "wrong-picker-content";
+
+        const title = document.createElement("div");
+        title.className = "wrong-picker-title";
+        title.textContent = `第 ${choice.number} 题`;
+
+        const preview = document.createElement("div");
+        preview.className = "wrong-picker-preview";
+        preview.textContent = choice.question
+            .replace(/\s+/g, " ")
+            .slice(0, 180);
+
+        content.appendChild(title);
+        content.appendChild(preview);
+
+        if (choice.referenceAnswer) {
+            const answer = document.createElement("div");
+            answer.className = "wrong-picker-answer";
+            answer.textContent = `题库参考答案：${choice.referenceAnswer}`;
+            content.appendChild(answer);
+        }
+
+        label.appendChild(checkbox);
+        label.appendChild(content);
+        list.appendChild(label);
+    });
+
+    modal.classList.remove("hidden");
+    return true;
+}
+
+function closeWrongQuestionPicker() {
+    const modal = document.getElementById(
+        "wrongQuestionPickerModal"
+    );
+
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+
+    pendingWrongQuestionSelection = null;
+}
+
+function addQuestionInfoToWrongBook(questionInfo) {
+    const result = addWrongQuestion(
+        questionInfo,
+        "这道题已加入错题本。",
+        "manual"
+    );
+
+    saveState();
+    renderLearningSummary();
+    renderWrongBook();
+
+    return result;
+}
+
+function confirmWrongQuestionPicker() {
+    const pending = pendingWrongQuestionSelection;
+
+    if (!pending) return;
+
+    const checked = [
+        ...document.querySelectorAll(
+            "#wrongQuestionPickerList input[type='checkbox']:checked"
+        )
+    ];
+
+    if (!checked.length) {
+        window.alert("请至少选择一道题。");
+        return;
+    }
+
+    for (const checkbox of checked) {
+        const index = Number(checkbox.value);
+        const choice = pending.choices[index];
+
+        if (!choice) continue;
+
+        addQuestionInfoToWrongBook({
+            ...pending.questionInfo,
+            text: choice.question,
+            referenceAnswer: choice.referenceAnswer || ""
+        });
+    }
+
+    closeWrongQuestionPicker();
+
+    const button = document.getElementById("markWrongBtn");
+    if (button) {
+        const previous = button.textContent;
+        button.textContent = `已记录 ${checked.length} 道`;
+
+        setTimeout(() => {
+            button.textContent = previous;
+            renderLearningSummary();
+        }, 1000);
+    }
+}
+
+
 function inferAnswerAssessment(reply) {
     let text = String(reply || "").replace(/\s+/g, " ").trim();
 
@@ -938,6 +1252,10 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
 
         existing.feedback = compactFeedback(feedback) || existing.feedback;
 
+        if (info.referenceAnswer) {
+            existing.referenceAnswer = info.referenceAnswer;
+        }
+
         existing.knowledgePoints = [
             ...new Set([
                 ...existing.knowledgePoints,
@@ -997,6 +1315,9 @@ function addWrongQuestion(questionInfo, feedback, source = "auto") {
         focusPoints: info.focusPoints,
         category: info.category,
         feedback: compactFeedback(feedback),
+        referenceAnswer: info.referenceAnswer || "",
+        solution: "",
+        solutionUpdatedAt: null,
         note: "",
         source: source === "auto" ? "auto" : "manual",
         corrected: false,
@@ -1092,16 +1413,24 @@ function processLearningFromReply(session, teaching, reply) {
     // 用户明确让 AI 出练习题时，AI 返回的题目本身就是当前学习题。
     // “记为错题”应保存模型生成的题目，而不是“给我一道题”这句请求。
     if (
-        normalized.mode === "exercise"
+        (
+            normalized.mode === "exercise"
+            || isExerciseRequestText(latestText)
+        )
         && typeof reply === "string"
         && reply.trim()
     ) {
+        const generatedExercise = extractAiGeneratedExerciseText(
+            reply
+        );
+
         session.learningQuestion = {
-            text: reply.trim().slice(0, 3000),
+            text: generatedExercise || reply.trim().slice(0, 3000),
             knowledgePoints: points.slice(0, 4),
             focusPoints: normalized.focus_points.slice(0, 2),
             category: normalized.category,
             source: "ai",
+            referenceAnswer: "",
             sessionId: session.id,
             updatedAt: Date.now()
         };
@@ -1205,28 +1534,41 @@ function processLearningFromReply(session, teaching, reply) {
 
 function manualMarkCurrentWrong() {
     const session = getCurrent();
-    const teaching = normalizeTeaching(session?.teaching);
+    if (!session) return;
 
-    if (!session || !teaching) return;
+    const teaching = normalizeTeaching(
+        session.teaching
+    );
 
     const questionInfo = currentLearningQuestion(
         session,
         teaching
     );
 
-    if (!questionInfo) return;
+    if (!questionInfo) {
+        window.alert(
+            "当前还没有可加入错题本的题目。"
+        );
+        return;
+    }
 
-    const result = addWrongQuestion(
-        questionInfo,
-        "这道题已加入错题本。完成订正后，可以标记为“已订正”。",
-        "manual"
+    const choices = splitQuestionBankText(
+        questionInfo.text
     );
 
-    // “记为错题”只是收录动作，不等于系统确认学生答错。
-    // 只有 AI 检查为错误、学生明确自报错误、复测失败才累计错误作答。
-    saveState();
-    renderLearningSummary();
-    renderWrongBook();
+    if (
+        choices.length
+        && openWrongQuestionPicker(
+            questionInfo,
+            choices
+        )
+    ) {
+        return;
+    }
+
+    addQuestionInfoToWrongBook(
+        questionInfo
+    );
 
     const button = document.getElementById("markWrongBtn");
     if (button) {
@@ -1239,6 +1581,7 @@ function manualMarkCurrentWrong() {
         }, 900);
     }
 }
+
 
 function formatLearningDate(timestamp) {
     const date = new Date(timestamp);
@@ -1303,7 +1646,6 @@ function renderLearningSummary() {
 
         markButton.disabled = !(
             session
-            && teaching
             && currentLearningQuestion(session, teaching)
         );
     }
@@ -1383,6 +1725,8 @@ function wrongBookSearchText(item) {
         ...(item.knowledgePoints || []),
         ...(item.focusPoints || []),
         item.feedback,
+        item.referenceAnswer,
+        item.solution,
         item.note,
         item.lastRetestQuestion,
         item.lastRetestFeedback
@@ -1990,6 +2334,48 @@ function buildWrongBookPdfExportElement(items) {
             card.appendChild(block);
         }
 
+        if (item.referenceAnswer) {
+            const block = document.createElement("div");
+            block.style.marginTop = "10px";
+            block.style.padding = "10px 12px";
+            block.style.borderRadius = "8px";
+            block.style.background = "#f8fafc";
+            block.style.fontSize = "13px";
+
+            const label = document.createElement("div");
+            label.style.fontWeight = "700";
+            label.style.marginBottom = "4px";
+            label.textContent = "参考答案";
+            block.appendChild(label);
+
+            const body = document.createElement("div");
+            body.innerHTML = markdownToHtml(item.referenceAnswer);
+            block.appendChild(body);
+
+            card.appendChild(block);
+        }
+
+        if (item.solution) {
+            const block = document.createElement("div");
+            block.style.marginTop = "10px";
+            block.style.padding = "10px 12px";
+            block.style.borderRadius = "8px";
+            block.style.background = "#f8fafc";
+            block.style.fontSize = "13px";
+
+            const label = document.createElement("div");
+            label.style.fontWeight = "700";
+            label.style.marginBottom = "4px";
+            label.textContent = "答案与解析";
+            block.appendChild(label);
+
+            const body = document.createElement("div");
+            body.innerHTML = markdownToHtml(item.solution);
+            block.appendChild(body);
+
+            card.appendChild(block);
+        }
+
         if (item.note) {
             const block = document.createElement("div");
             block.style.marginTop = "10px";
@@ -2278,6 +2664,116 @@ async function exportWrongBookPdf() {
 }
 
 
+function toggleWrongSolution(id) {
+    if (wrongSolutionExpandedIds.has(id)) {
+        wrongSolutionExpandedIds.delete(id);
+    } else {
+        wrongSolutionExpandedIds.add(id);
+    }
+
+    renderWrongBook();
+}
+
+async function requestWrongQuestionSolution(id) {
+    const entry = learningState.wrongQuestions.find(
+        item => item.id === id
+    );
+
+    if (!entry || wrongSolutionLoadingIds.has(id)) {
+        return;
+    }
+
+    if (entry.solution) {
+        toggleWrongSolution(id);
+        return;
+    }
+
+    wrongSolutionLoadingIds.add(id);
+    renderWrongBook();
+
+    const knownAnswer = entry.referenceAnswer
+        ? [
+            "",
+            `题库提供的参考答案：${entry.referenceAnswer}`,
+            "请核对这个参考答案。如果它有问题，请明确指出；如果正确，请围绕它解释。"
+        ].join("\n")
+        : "";
+
+    const prompt = [
+        "请为下面这道离散数学错题提供完整答案与解析。",
+        "要求：",
+        "1. 先给出明确答案；",
+        "2. 再分步骤解释关键推理；",
+        "3. 说明最容易出错的地方；",
+        "4. 数学公式使用规范 LaTeX；",
+        "5. 不要再反问学生，直接给完整解析。",
+        "",
+        "【错题】",
+        entry.question,
+        knownAnswer
+    ].join("\n");
+
+    try {
+        const response = await fetch(
+            "/chat",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    messages: [
+                        {
+                            role: "user",
+                            content: prompt
+                        }
+                    ]
+                })
+            }
+        );
+
+        const data = await parseResponseJson(
+            response
+        );
+
+        if (
+            !response.ok
+            || data.error
+            || typeof data.reply !== "string"
+            || !data.reply.trim()
+        ) {
+            window.alert(
+                data.error
+                || "答案与解析生成失败，请稍后重试。"
+            );
+            return;
+        }
+
+        entry.solution = data.reply.trim().slice(0, 8000);
+        entry.solutionUpdatedAt = Date.now();
+        entry.updatedAt = Date.now();
+
+        wrongSolutionExpandedIds.add(id);
+        saveLearningState();
+        renderWrongBook();
+
+    } catch (error) {
+        console.error(
+            "错题答案与解析生成失败：",
+            error
+        );
+
+        window.alert(
+            "网络连接失败，暂时无法生成答案与解析。"
+        );
+
+    } finally {
+        wrongSolutionLoadingIds.delete(id);
+        renderWrongBook();
+    }
+}
+
+
 function shouldShowWrongBookFeedback(item) {
     const text = String(item?.feedback || "").trim();
 
@@ -2461,8 +2957,67 @@ function renderWrongBook() {
             retest.textContent = resultText;
         }
 
+        const answerBox = document.createElement("div");
+        answerBox.className = "wrong-answer-box";
+
+        if (item.referenceAnswer) {
+            const answerTitle = document.createElement("strong");
+            answerTitle.textContent = "参考答案";
+
+            const answerBody = document.createElement("div");
+            answerBody.className = "wrong-answer-body";
+            answerBody.innerHTML = markdownToHtml(
+                item.referenceAnswer
+            );
+
+            answerBox.appendChild(answerTitle);
+            answerBox.appendChild(answerBody);
+        }
+
+        const solutionBox = document.createElement("div");
+        solutionBox.className = "wrong-solution-box";
+
+        if (
+            item.solution
+            && wrongSolutionExpandedIds.has(item.id)
+        ) {
+            const solutionTitle = document.createElement("strong");
+            solutionTitle.textContent = "答案与解析";
+
+            const solutionBody = document.createElement("div");
+            solutionBody.className = "wrong-solution-body";
+            solutionBody.innerHTML = markdownToHtml(
+                item.solution
+            );
+
+            solutionBox.appendChild(solutionTitle);
+            solutionBox.appendChild(solutionBody);
+        }
+
         const actions = document.createElement("div");
         actions.className = "wrong-actions";
+
+        const solutionButton = document.createElement("button");
+        solutionButton.type = "button";
+        solutionButton.className = "secondary";
+
+        if (wrongSolutionLoadingIds.has(item.id)) {
+            solutionButton.textContent = "正在生成解析…";
+            solutionButton.disabled = true;
+        } else if (item.solution) {
+            solutionButton.textContent = wrongSolutionExpandedIds.has(item.id)
+                ? "收起解析"
+                : "查看答案与解析";
+        } else {
+            solutionButton.textContent = item.referenceAnswer
+                ? "生成详细解析"
+                : "生成答案与解析";
+        }
+
+        solutionButton.onclick = () => (
+            requestWrongQuestionSolution(item.id)
+        );
+        actions.appendChild(solutionButton);
 
         if (!item.corrected) {
             const correctedButton = document.createElement("button");
@@ -2562,12 +3117,22 @@ function renderWrongBook() {
             card.appendChild(retest);
         }
 
+        if (answerBox.textContent.trim()) {
+            card.appendChild(answerBox);
+        }
+
+        if (solutionBox.textContent.trim()) {
+            card.appendChild(solutionBox);
+        }
+
         card.appendChild(actions);
         list.appendChild(card);
 
         renderMath(question);
         renderMath(feedback);
         renderMath(note);
+        renderMath(answerBox);
+        renderMath(solutionBox);
     }
 }
 
@@ -4836,6 +5401,10 @@ document.addEventListener(
         const wrongEditCancel = document.getElementById("wrongEditCancel");
         const wrongEditSave = document.getElementById("wrongEditSave");
         const wrongEditModal = document.getElementById("wrongEditModal");
+        const wrongQuestionPickerClose = document.getElementById("wrongQuestionPickerClose");
+        const wrongQuestionPickerCancel = document.getElementById("wrongQuestionPickerCancel");
+        const wrongQuestionPickerConfirm = document.getElementById("wrongQuestionPickerConfirm");
+        const wrongQuestionPickerModal = document.getElementById("wrongQuestionPickerModal");
         const knowledgeGraphBtn = document.getElementById("knowledgeGraphBtn");
         const knowledgeGraphClose = document.getElementById("knowledgeGraphClose");
         const knowledgeGraphModal = document.getElementById("knowledgeGraphModal");
@@ -4961,6 +5530,38 @@ document.addEventListener(
                 event => {
                     if (event.target === wrongEditModal) {
                         closeWrongEdit();
+                    }
+                }
+            );
+        }
+
+        if (wrongQuestionPickerClose) {
+            wrongQuestionPickerClose.addEventListener(
+                "click",
+                closeWrongQuestionPicker
+            );
+        }
+
+        if (wrongQuestionPickerCancel) {
+            wrongQuestionPickerCancel.addEventListener(
+                "click",
+                closeWrongQuestionPicker
+            );
+        }
+
+        if (wrongQuestionPickerConfirm) {
+            wrongQuestionPickerConfirm.addEventListener(
+                "click",
+                confirmWrongQuestionPicker
+            );
+        }
+
+        if (wrongQuestionPickerModal) {
+            wrongQuestionPickerModal.addEventListener(
+                "click",
+                event => {
+                    if (event.target === wrongQuestionPickerModal) {
+                        closeWrongQuestionPicker();
                     }
                 }
             );
