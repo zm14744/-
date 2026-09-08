@@ -1286,7 +1286,61 @@ function extractQuestionOnlyFromMessage(message) {
     return "";
 }
 
-function shouldOfferWrongBookAction(message) {
+function hasExplicitQuestionHeading(text) {
+    const value = String(text || "");
+
+    return Boolean(
+        /【(?:题目|练习题)】/.test(value)
+        || /(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)/m.test(value)
+        || /(?:^|\n)\s*#{1,4}\s*(?:题目|练习题)\s*(?:\n|$)/m.test(value)
+        || /(?:^|\n)\s*\*\*(?:题目|练习题)[:：]?\*\*/m.test(value)
+    );
+}
+
+function looksLikeStandaloneAiQuestion(text) {
+    const value = String(text || "").trim();
+
+    if (
+        !value
+        || isClearlyNonQuestionWrongBookText(value)
+    ) {
+        return false;
+    }
+
+    const question = sanitizeStoredWrongQuestionText(
+        extractAiQuestionPayload(value)
+    );
+
+    if (!question) {
+        return false;
+    }
+
+    if (hasExplicitQuestionHeading(value)) {
+        return looksLikeQuestionPayload(question);
+    }
+
+    // 没有“题目”标题时：
+    // 多小问综合题可以认；单题则必须从明确题干开头起步。
+    if (countTopLevelQuestionParts(question) >= 2) {
+        return looksLikeQuestionPayload(question);
+    }
+
+    const compact = question
+        .replace(/^[#>*\s]+/, "")
+        .trim();
+
+    return Boolean(
+        /^(?:设|已知|给定|下列|求|证明|计算|判断|写出|列出|选择|填空)/.test(compact)
+        && looksLikeQuestionPayload(question)
+    );
+}
+
+
+function shouldOfferWrongBookAction(
+    message,
+    session = null,
+    messageIndex = -1
+) {
     if (
         !message
         || message.isError
@@ -1306,41 +1360,73 @@ function shouldOfferWrongBookAction(message) {
             return false;
         }
 
-        // 这里不看知识点、不看题型、不看离散数学分类。
-        // 只做通用“这条内容里是否有一个问题”的轻量判断。
+        // 用户自己发来的题，不依赖学科分类/知识点。
         return looksLikeQuestionPayload(
             extractQuestionOnlyFromMessage(message)
         );
     }
 
     if (message.role === "ai") {
-        if (
-            message.generatedExercise
-            || message.generatedQuestion
-        ) {
-            return Boolean(
-                extractQuestionOnlyFromMessage(message)
-            );
+        // 先过滤“讲解、分步骤辅导、测试说明”等明显非题目。
+        if (isClearlyNonQuestionWrongBookText(message.text)) {
+            return false;
         }
 
-        const candidate = extractAiQuestionPayload(
-            message.text
+        const extracted = extractQuestionOnlyFromMessage(
+            message
         );
 
-        // AI 普通讲解里经常有反问句，因此这里更保守：
-        // 只有明确题目标题或多个独立小问才主动显示按钮。
-        return Boolean(
-            candidate
-            && (
-                /【(?:题目|练习题)】/.test(message.text)
-                || /(?:^|\n)\s*(?:题目|练习题)\s*[:：]?\s*(?:\n|$)/m.test(message.text)
-                || countTopLevelQuestionParts(candidate) >= 2
+        // 新版本真正的 AI 生成题由后端明确打 generatedQuestion 标记。
+        if (
+            message.generatedExercise
+            && message.generatedQuestion
+            && looksLikeQuestionPayload(extracted)
+        ) {
+            return true;
+        }
+
+        if (
+            message.generatedQuestion
+            && looksLikeStandaloneAiQuestion(
+                message.generatedQuestion
             )
+        ) {
+            return true;
+        }
+
+        // 兼容旧聊天记录：如果上一条用户消息明确要求出题，
+        // 即使旧消息没有 generatedQuestion 元数据，也允许真正题干进入错题本。
+        let previousUserText = "";
+
+        if (
+            session
+            && Array.isArray(session.messages)
+            && Number.isInteger(messageIndex)
+        ) {
+            const previous = previousUserMessageBefore(
+                session,
+                messageIndex
+            );
+
+            previousUserText = previous?.text || "";
+        }
+
+        if (
+            previousUserText
+            && isExerciseRequestText(previousUserText)
+            && looksLikeStandaloneAiQuestion(message.text)
+        ) {
+            return true;
+        }
+
+        return looksLikeStandaloneAiQuestion(
+            message.text
         );
     }
 
     return false;
 }
+
 
 
 function splitQuestionBankText(text) {
@@ -4745,35 +4831,25 @@ async function requestAiReply(session) {
         }
 
         const localGeneratedQuestion = sanitizeStoredWrongQuestionText(
-            data.generated_question
-            || extractAiQuestionPayload(
-                data.reply
-            )
-            || ""
+            data.generated_question || ""
         );
 
         const assistantMeta = {
+            // 只有后端明确返回 generated_question，才标记为“AI 生成题”。
+            // 普通讲解里出现编号、反问、步骤，不再被误判。
             generatedExercise: Boolean(
                 localGeneratedQuestion
-                && (
-                    data.generated_teaching
-                    || isExerciseRequestText(
-                        getLatestUserMessage(session)?.text || ""
-                    )
-                    || countTopLevelQuestionParts(
-                        localGeneratedQuestion
-                    ) >= 1
-                    || /【(?:题目|练习题)】/.test(data.reply)
-                )
             ),
             generatedQuestion: localGeneratedQuestion,
             generatedAnswer: data.generated_answer || "",
-            generatedTeaching: data.generated_teaching
-                || (
-                    localGeneratedQuestion
-                        ? returnedTeaching
-                        : null
-                )
+            generatedTeaching: (
+                localGeneratedQuestion
+                    ? (
+                        data.generated_teaching
+                        || returnedTeaching
+                    )
+                    : null
+            )
         };
 
         if (currentId === session.id) {
@@ -5120,7 +5196,11 @@ function isClearlyNonQuestionWrongBookText(text) {
         /^(?:思路提示|解题提示|关键提示)[：:\s]/,
         /^做这道题[，,。\s]/,
         /^没关系[，,。\s].*(?:一步一步|一点一点)/,
-        /^第(?:一|二|三|1|2|3)步[：:\s].*(?:先|看|理解|弄清)/
+        /^第(?:一|二|三|1|2|3)步[：:\s].*(?:先|看|理解|弄清)/,
+        /以上是一个.*(?:测试文本|测试内容)/,
+        /如果你要检测的是.*(?:渲染|格式|显示)/,
+        /可以对照这些段落查看/,
+        /这只是.*(?:示例|演示|测试)/
     ];
 
     return patterns.some(
@@ -5278,7 +5358,11 @@ function previousUserMessageBefore(session, messageIndex) {
 }
 
 function canMessageBeWrongQuestion(session, messageIndex, message) {
-    return shouldOfferWrongBookAction(message);
+    return shouldOfferWrongBookAction(
+        message,
+        session,
+        messageIndex
+    );
 }
 
 
@@ -5816,7 +5900,9 @@ function renderChat() {
 
         if (
             shouldOfferWrongBookAction(
-                message
+                message,
+                session,
+                messageIndex
             )
         ) {
             const wrongButton = document.createElement("button");
@@ -6510,18 +6596,10 @@ function focusKnowledgeGraphOnCurrent() {
 
 
 function knowledgeGraphNodeState(nodeName, context) {
-    if (context?.focusPoints?.includes(nodeName)) {
-        return {
-            key: "focus",
-            label: "当前卡点",
-            fill: "#1d4ed8",
-            stroke: "#93c5fd",
-            text: "#ffffff",
-            badge: "卡点"
-        };
-    }
-
-    if (context?.knowledgePoints?.includes(nodeName)) {
+    if (
+        context?.focusPoints?.includes(nodeName)
+        || context?.knowledgePoints?.includes(nodeName)
+    ) {
         return {
             key: "current",
             label: "本题相关",
@@ -6963,19 +7041,10 @@ function renderKnowledgeGraphSummary(context) {
         context.category || knowledgeGraphFilter || "暂未识别"
     );
 
-    if (context.focusPoints.length) {
-        addItem(
-            "主要卡点",
-            context.focusPoints.join("、"),
-            "focus"
-        );
-    }
-
-    const related = context.knowledgePoints
-        .filter(
-            point => !context.focusPoints.includes(point)
-        )
-        .slice(0, 4);
+    const related = uniqueTextList([
+        ...(context.focusPoints || []),
+        ...(context.knowledgePoints || [])
+    ], 6);
 
     if (related.length) {
         addItem(
@@ -6984,10 +7053,7 @@ function renderKnowledgeGraphSummary(context) {
         );
     }
 
-    if (
-        !context.focusPoints.length
-        && !related.length
-    ) {
+    if (!related.length) {
         addItem(
             "当前视图",
             knowledgeGraphViewMode === "focus"
