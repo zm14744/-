@@ -628,12 +628,45 @@ def analyze_messages(messages):
 
     # 如果本轮只是短跟进且没有可靠主题，则向前继承最近一个可识别题目。
     if latest_classified["score"] < 3:
+        inherited = False
+
+        # 先找最近一个用户自己发过的明确题目。
         for previous in reversed(user_messages[:-1]):
             previous_classified = _classify_content(previous)
             if previous_classified["score"] >= 3:
                 classification_text = previous
                 classified = previous_classified
+                inherited = True
                 break
+
+        # 如果这段对话是“AI 刚出题 -> 学生说不会做/继续”，
+        # 用户历史里只有“出一道题”这种请求，真正题干在 assistant 消息里。
+        # 这时允许从最近一条带明确【题目】标题的 AI 练习题继承主题。
+        if not inherited:
+            for item in reversed(messages[:-1]):
+                if not isinstance(item, dict) or item.get("role") != "assistant":
+                    continue
+
+                content = item.get("content", "")
+                if not isinstance(content, str):
+                    content = str(content)
+
+                content = content.strip()
+                if not content:
+                    continue
+
+                if (
+                    "【题目】" not in content
+                    and "【练习题】" not in content
+                ):
+                    continue
+
+                assistant_classified = _classify_content(content)
+
+                if assistant_classified["score"] >= 3:
+                    classification_text = content
+                    classified = assistant_classified
+                    break
 
     input_source = (
         "图片识题"
@@ -696,7 +729,14 @@ def teaching_prompt(context):
             "这是概念理解请求，可以直接解释概念，并配一个简短例子；不必强行使用提示模式。"
         ),
         "exercise": (
-            "学生要求生成练习，只给题目，不附答案和解析；除非本轮同时明确要求答案。"
+            "学生要求生成练习。用户可见部分只给题目，不附答案和解析。"
+            "题目必须明确使用“【题目】”作为题干标题。"
+            "在整条回答的最后，额外追加一个仅供系统读取的隐藏答案块，格式必须严格为："
+            "[[WRONGBOOK_ANSWER]]最终答案[[/WRONGBOOK_ANSWER]]。"
+            "隐藏答案块里只写最终答案本身，绝对不要写理由、计算过程、解析、提示、"
+            "‘因为/所以/由……可得’等说明。"
+            "如果有多个小问，只按(1)(2)(3)分别给最终结果。"
+            "隐藏答案块会在返回给学生前被程序删除，所以不要在用户可见正文里泄露答案。"
         ),
         "check_answer": (
             "学生在检查自己的作答。开头先用一句自然中文明确判断："
