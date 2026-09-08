@@ -33,6 +33,9 @@ let typingDiv = null;
 let typingSessionId = null;
 let typingMeta = null;
 
+let typingAutoFollow = true;
+let preserveChatScrollOnce = null;
+
 let requestBusy = false;
 
 
@@ -1014,7 +1017,7 @@ function extractAiGeneratedExerciseText(reply) {
 
     // 练习题回答通常在题目后附“提示”。错题本只保存题目正文。
     const hintMatch = text.match(
-        /\n\s*(?:---+\s*\n\s*)?(?:\*\*)?提示[:：]?(?:\*\*)?\s*\n/i
+        /\n\s*(?:---+\s*\n\s*)?(?:\*\*)?提示[:：]?(?:\*\*)?/i
     );
 
     if (hintMatch && typeof hintMatch.index === "number") {
@@ -3433,11 +3436,36 @@ function renderMath(target) {
     });
 }
 
+function isChatNearBottom(chat, threshold = 90) {
+    if (!chat) return true;
+
+    const distance = (
+        chat.scrollHeight
+        - chat.scrollTop
+        - chat.clientHeight
+    );
+
+    return distance <= threshold;
+}
+
 function scrollChatToBottom() {
     const chat = document.getElementById("chat");
+
     if (chat) {
         chat.scrollTop = chat.scrollHeight;
     }
+}
+
+function handleChatScrollWhileTyping() {
+    if (!typingTimer) return;
+
+    const chat = document.getElementById("chat");
+    if (!chat) return;
+
+    typingAutoFollow = isChatNearBottom(
+        chat,
+        90
+    );
 }
 
 
@@ -3888,6 +3916,242 @@ async function handleImageSelected(event) {
 }
 
 
+function previousUserMessageBefore(session, messageIndex) {
+    if (!session || !Array.isArray(session.messages)) {
+        return null;
+    }
+
+    for (let index = messageIndex - 1; index >= 0; index -= 1) {
+        const message = session.messages[index];
+
+        if (
+            message
+            && message.role === "user"
+            && typeof message.text === "string"
+            && message.text.trim()
+        ) {
+            return message;
+        }
+    }
+
+    return null;
+}
+
+function canMessageBeWrongQuestion(session, messageIndex, message) {
+    if (
+        !session
+        || !message
+        || message.isError
+        || message.isNotice
+        || typeof message.text !== "string"
+        || !message.text.trim()
+    ) {
+        return false;
+    }
+
+    if (message.role === "user") {
+        return Boolean(
+            message.source === "ocr"
+            || splitQuestionBankText(message.text).length
+            || looksLikeActualLearningProblem(message)
+        );
+    }
+
+    if (message.role === "ai") {
+        if (/【题目】|【练习题】/.test(message.text)) {
+            return true;
+        }
+
+        const previousUser = previousUserMessageBefore(
+            session,
+            messageIndex
+        );
+
+        return Boolean(
+            previousUser
+            && isExerciseRequestText(previousUser.text)
+        );
+    }
+
+    return false;
+}
+
+function questionInfoFromChatMessage(session, messageIndex) {
+    if (!session || !Array.isArray(session.messages)) {
+        return null;
+    }
+
+    const message = session.messages[messageIndex];
+
+    if (
+        !message
+        || !canMessageBeWrongQuestion(
+            session,
+            messageIndex,
+            message
+        )
+    ) {
+        return null;
+    }
+
+    const teaching = normalizeTeaching(session.teaching);
+    const saved = normalizeLearningQuestion(
+        session.learningQuestion
+    );
+
+    let text = message.text.trim();
+    let source = message.source === "ocr"
+        ? "ocr"
+        : "text";
+
+    if (message.role === "ai") {
+        text = extractAiGeneratedExerciseText(
+            message.text
+        ) || message.text.trim();
+
+        source = "ai";
+    }
+
+    const savedMatches = Boolean(
+        saved
+        && (
+            wrongQuestionFingerprint(saved.text)
+            === wrongQuestionFingerprint(text)
+        )
+    );
+
+    const isRecent = (
+        messageIndex >= session.messages.length - 2
+    );
+
+    return {
+        text,
+        knowledgePoints: savedMatches
+            ? saved.knowledgePoints
+            : (
+                isRecent
+                    ? (teaching?.knowledge_points || []).slice(0, 4)
+                    : []
+            ),
+        focusPoints: savedMatches
+            ? saved.focusPoints
+            : (
+                isRecent
+                    ? (teaching?.focus_points || []).slice(0, 2)
+                    : []
+            ),
+        category: savedMatches
+            ? saved.category
+            : (
+                isRecent
+                    ? (teaching?.category || "")
+                    : ""
+            ),
+        source,
+        referenceAnswer: savedMatches
+            ? saved.referenceAnswer
+            : "",
+        sessionId: session.id,
+        updatedAt: Date.now()
+    };
+}
+
+function markChatMessageAsWrong(sessionId, messageIndex) {
+    const session = sessions.find(
+        item => String(item.id) === String(sessionId)
+    );
+
+    if (!session) return;
+
+    const questionInfo = questionInfoFromChatMessage(
+        session,
+        messageIndex
+    );
+
+    if (!questionInfo) {
+        window.alert("这条消息不像一道可记录的题目。");
+        return;
+    }
+
+    const choices = splitQuestionBankText(
+        questionInfo.text
+    );
+
+    if (
+        choices.length
+        && openWrongQuestionPicker(
+            questionInfo,
+            choices
+        )
+    ) {
+        return;
+    }
+
+    addQuestionInfoToWrongBook(questionInfo);
+    renderLearningSummary();
+}
+
+function deleteChatMessage(sessionId, messageIndex) {
+    const session = sessions.find(
+        item => String(item.id) === String(sessionId)
+    );
+
+    if (
+        !session
+        || !Array.isArray(session.messages)
+        || !session.messages[messageIndex]
+    ) {
+        return;
+    }
+
+    const confirmed = window.confirm(
+        "删除这条消息吗？\n\n只删除聊天中的这条消息；已经加入错题本的内容不会被删除。"
+    );
+
+    if (!confirmed) return;
+
+    const chat = document.getElementById("chat");
+
+    if (chat) {
+        preserveChatScrollOnce = chat.scrollTop;
+    }
+
+    const removed = session.messages[messageIndex];
+
+    session.messages.splice(
+        messageIndex,
+        1
+    );
+
+    const learningQuestion = normalizeLearningQuestion(
+        session.learningQuestion
+    );
+
+    if (learningQuestion) {
+        const removedText = removed.role === "ai"
+            ? (
+                extractAiGeneratedExerciseText(
+                    removed.text
+                ) || removed.text
+            )
+            : removed.text;
+
+        if (
+            wrongQuestionFingerprint(learningQuestion.text)
+            === wrongQuestionFingerprint(removedText)
+        ) {
+            session.learningQuestion = null;
+        }
+    }
+
+    saveState();
+    renderChat();
+    renderSessions();
+    renderInfo();
+    renderLearningSummary();
+}
+
+
 // -----------------------------
 // AI 消息与打字效果
 // -----------------------------
@@ -3974,6 +4238,11 @@ function startTyping(
     const chat = document.getElementById("chat");
     if (!chat) return;
 
+    typingAutoFollow = isChatNearBottom(
+        chat,
+        90
+    );
+
     const div = document.createElement("div");
     div.className = "msg ai";
     chat.appendChild(div);
@@ -3994,7 +4263,11 @@ function startTyping(
         if (index < text.length) {
             typingDiv.textContent += text[index];
             index += 1;
-            scrollChatToBottom();
+
+            if (typingAutoFollow) {
+                scrollChatToBottom();
+            }
+
             return;
         }
 
@@ -4047,7 +4320,11 @@ function finishTyping() {
         renderMath(finishedDiv);
     }
 
-    scrollChatToBottom();
+    if (typingAutoFollow) {
+        scrollChatToBottom();
+    }
+
+    typingAutoFollow = true;
 }
 
 // 强制完成当前打字动画
@@ -4096,7 +4373,11 @@ function forceCompleteTyping() {
         renderMath(finishedDiv);
     }
 
-    scrollChatToBottom();
+    if (typingAutoFollow) {
+        scrollChatToBottom();
+    }
+
+    typingAutoFollow = true;
 }
 
 
@@ -4128,7 +4409,13 @@ function renderChat() {
         return;
     }
 
-    for (const message of session.messages) {
+    for (
+        let messageIndex = 0;
+        messageIndex < session.messages.length;
+        messageIndex += 1
+    ) {
+        const message = session.messages[messageIndex];
+
         const div = document.createElement("div");
         div.className =
             "msg " + (
@@ -4137,19 +4424,71 @@ function renderChat() {
                     : "ai"
             );
 
+        const content = document.createElement("div");
+        content.className = "msg-content";
+
         if (message.role === "user") {
-            // 用户文本绝不直接写入 innerHTML，避免 HTML 注入。
-            div.textContent = message.text;
-            div.style.whiteSpace = "pre-wrap";
+            content.textContent = message.text;
+            content.style.whiteSpace = "pre-wrap";
         } else {
-            div.innerHTML =
+            content.innerHTML =
                 `<div class="ai-content">${markdownToHtml(message.text)}</div>`;
         }
 
+        div.appendChild(content);
+
+        const actions = document.createElement("div");
+        actions.className = "msg-actions";
+
+        if (
+            canMessageBeWrongQuestion(
+                session,
+                messageIndex,
+                message
+            )
+        ) {
+            const wrongButton = document.createElement("button");
+            wrongButton.type = "button";
+            wrongButton.textContent = "记为错题";
+            wrongButton.title = "把这一条题目加入错题本";
+            wrongButton.onclick = () => (
+                markChatMessageAsWrong(
+                    session.id,
+                    messageIndex
+                )
+            );
+
+            actions.appendChild(wrongButton);
+        }
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "danger";
+        deleteButton.textContent = "删除";
+        deleteButton.title = "删除这一条聊天消息";
+        deleteButton.onclick = () => (
+            deleteChatMessage(
+                session.id,
+                messageIndex
+            )
+        );
+
+        actions.appendChild(deleteButton);
+
+        div.appendChild(actions);
         chat.appendChild(div);
     }
 
-    scrollChatToBottom();
+    if (
+        preserveChatScrollOnce !== null
+        && Number.isFinite(preserveChatScrollOnce)
+    ) {
+        chat.scrollTop = preserveChatScrollOnce;
+        preserveChatScrollOnce = null;
+    } else {
+        scrollChatToBottom();
+    }
+
     renderMath(chat);
 }
 
@@ -5387,6 +5726,7 @@ document.addEventListener(
     "DOMContentLoaded",
     () => {
         const input = document.getElementById("text");
+        const chat = document.getElementById("chat");
         const imageBtn = document.getElementById("imageBtn");
         const imageInput = document.getElementById("imageInput");
         const markWrongBtn = document.getElementById("markWrongBtn");
@@ -5413,6 +5753,14 @@ document.addEventListener(
         const wrongFilterButtons = document.querySelectorAll(
             "[data-wrong-filter]"
         );
+
+        if (chat) {
+            chat.addEventListener(
+                "scroll",
+                handleChatScrollWhileTyping,
+                { passive: true }
+            );
+        }
 
         if (input) {
             input.addEventListener(
