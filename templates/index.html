@@ -1145,6 +1145,175 @@ body {
     color:#f8fafc;
 }
 
+.graph-side-tabs {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:6px;
+    padding:10px 10px 8px;
+    border-bottom:1px solid #1f2937;
+}
+
+.graph-side-tab {
+    padding:8px 9px;
+    border:1px solid #334155;
+    border-radius:8px;
+    background:#111827;
+    color:#94a3b8;
+    cursor:pointer;
+    font:inherit;
+}
+
+.graph-side-tab.active {
+    border-color:#3b82f6;
+    background:#172554;
+    color:#dbeafe;
+}
+
+.graph-side-page {
+    min-height:0;
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+}
+
+.knowledge-graph-side > .graph-side-page.hidden {
+    display:none;
+}
+
+.graph-history-list {
+    min-height:0;
+    flex:1;
+    overflow:auto;
+    padding:12px;
+    scrollbar-width:thin;
+    scrollbar-color:#475569 transparent;
+}
+
+.graph-history-list::-webkit-scrollbar {
+    width:8px;
+}
+
+.graph-history-list::-webkit-scrollbar-track {
+    background:transparent;
+}
+
+.graph-history-list::-webkit-scrollbar-thumb {
+    background:#475569;
+    border-radius:999px;
+}
+
+.kg-history-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    margin-bottom:10px;
+}
+
+.kg-history-head-text {
+    color:#94a3b8;
+    font-size:12px;
+    line-height:1.5;
+}
+
+.kg-history-refresh {
+    flex:none;
+    padding:6px 9px;
+    border:1px solid #334155;
+    border-radius:7px;
+    background:#111827;
+    color:#cbd5e1;
+    cursor:pointer;
+}
+
+.kg-history-item {
+    margin-bottom:10px;
+    padding:11px;
+    border:1px solid #263449;
+    border-radius:10px;
+    background:#0f172a;
+}
+
+.kg-history-item.active {
+    border-color:#3b82f6;
+    box-shadow:0 0 0 1px rgba(59,130,246,.18);
+}
+
+.kg-history-item-top {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+}
+
+.kg-history-number {
+    color:#e2e8f0;
+    font-weight:700;
+}
+
+.kg-history-source {
+    padding:3px 7px;
+    border-radius:999px;
+    background:#1f2937;
+    color:#94a3b8;
+    font-size:11px;
+}
+
+.kg-history-category {
+    margin-top:7px;
+    color:#93c5fd;
+    font-size:12px;
+}
+
+.kg-history-preview {
+    margin-top:7px;
+    color:#cbd5e1;
+    font-size:13px;
+    line-height:1.55;
+}
+
+.kg-history-points {
+    margin-top:7px;
+    color:#64748b;
+    font-size:11px;
+    line-height:1.45;
+}
+
+.kg-history-actions {
+    display:flex;
+    gap:7px;
+    margin-top:9px;
+}
+
+.kg-history-actions button {
+    padding:6px 9px;
+    border:1px solid #2563eb;
+    border-radius:7px;
+    background:#1d4ed8;
+    color:#eff6ff;
+    cursor:pointer;
+}
+
+.kg-history-actions button.secondary {
+    border-color:#334155;
+    background:#111827;
+    color:#cbd5e1;
+}
+
+.msg.history-locate-flash {
+    animation:historyLocateFlash 1.5s ease;
+}
+
+@keyframes historyLocateFlash {
+    0%, 100% {
+        box-shadow:none;
+    }
+    20%, 70% {
+        box-shadow:0 0 0 2px rgba(59,130,246,.8);
+    }
+}
+
 .graph-detail-body {
     min-height:0;
     padding:0 16px 16px;
@@ -1520,9 +1689,24 @@ window.MathJax = {
             </div>
 
             <div class="knowledge-graph-side">
-                <div id="knowledgeGraphDetailTitle" class="graph-detail-title">节点详情</div>
-                <div id="knowledgeGraphDetail" class="graph-detail-body">
-                    点击左侧知识点查看它与其它知识点的直接关系。
+                <div class="graph-side-tabs">
+                    <button id="knowledgeGraphDetailTab" type="button" class="graph-side-tab active">
+                        节点详情
+                    </button>
+                    <button id="knowledgeGraphHistoryTab" type="button" class="graph-side-tab">
+                        题目历史
+                    </button>
+                </div>
+
+                <div id="knowledgeGraphDetailWrap" class="graph-side-page">
+                    <div id="knowledgeGraphDetailTitle" class="graph-detail-title">节点详情</div>
+                    <div id="knowledgeGraphDetail" class="graph-detail-body">
+                        点击左侧知识点查看它与其它知识点的直接关系。
+                    </div>
+                </div>
+
+                <div id="knowledgeGraphHistoryWrap" class="graph-side-page hidden">
+                    <div id="knowledgeGraphHistory" class="graph-history-list"></div>
                 </div>
             </div>
         </div>
