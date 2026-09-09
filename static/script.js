@@ -2665,6 +2665,269 @@ function manualMarkCurrentWrong() {
 }
 
 
+
+function learningReviewItemLabel(item) {
+    if (!item || typeof item !== "object") {
+        return "";
+    }
+
+    const candidates = [
+        ...(Array.isArray(item.focusPoints) ? item.focusPoints : []),
+        ...(Array.isArray(item.knowledgePoints) ? item.knowledgePoints : []),
+        item.category
+    ];
+
+    return candidates.find(
+        value => (
+            typeof value === "string"
+            && value.trim()
+            && value.trim() !== "待识别"
+        )
+    )?.trim() || "这道题";
+}
+
+function collectLearningReviewPoints() {
+    const points = [];
+
+    const events = [...(
+        Array.isArray(learningState.events)
+            ? learningState.events
+            : []
+    )].sort(
+        (a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)
+    );
+
+    for (const event of events.slice(0, 18)) {
+        points.push(...(
+            Array.isArray(event.points)
+                ? event.points
+                : []
+        ));
+    }
+
+    // 事件记录可能很少。用各会话当前仍保存的题目作为轻量兜底，
+    // 但不把整个聊天历史硬统计进来，避免碎片对话导致报告失真。
+    const recentQuestions = sessions
+        .map(session => normalizeLearningQuestion(session?.learningQuestion))
+        .filter(Boolean)
+        .sort(
+            (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
+        );
+
+    for (const question of recentQuestions.slice(0, 6)) {
+        points.push(
+            ...question.focusPoints,
+            ...question.knowledgePoints
+        );
+    }
+
+    const recentWrong = [...(
+        Array.isArray(learningState.wrongQuestions)
+            ? learningState.wrongQuestions
+            : []
+    )].sort(
+        (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
+    );
+
+    for (const item of recentWrong.slice(0, 5)) {
+        points.push(
+            ...(item.focusPoints || []),
+            ...(item.knowledgePoints || [])
+        );
+    }
+
+    return uniqueTextList(points, 5);
+}
+
+function buildLearningReviewSnapshot() {
+    const recentPoints = collectLearningReviewPoints();
+    const wrongItems = Array.isArray(learningState.wrongQuestions)
+        ? learningState.wrongQuestions
+        : [];
+
+    const pending = wrongItems
+        .filter(item => !item.corrected)
+        .sort(
+            (a, b) => (
+                (Number(b.lastWrongAt) || Number(b.updatedAt) || 0)
+                - (Number(a.lastWrongAt) || Number(a.updatedAt) || 0)
+            )
+        );
+
+    const needsRetest = wrongItems
+        .filter(item => item.corrected && !item.retestPassed)
+        .sort(
+            (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
+        );
+
+    const failedRetest = wrongItems
+        .filter(item => (
+            !item.retestPassed
+            && (Number(item.retestFailCount) || 0) > 0
+        ))
+        .sort(
+            (a, b) => (Number(b.lastRetestAt) || 0) - (Number(a.lastRetestAt) || 0)
+        );
+
+    const sections = [];
+
+    if (recentPoints.length) {
+        let recentText = "";
+
+        if (recentPoints.length === 1) {
+            recentText = `从现有记录看，最近主要围绕“${recentPoints[0]}”进行了学习。`;
+        } else if (recentPoints.length === 2) {
+            recentText = `从现有记录看，最近主要接触了“${recentPoints[0]}”和“${recentPoints[1]}”。`;
+        } else {
+            recentText = (
+                `最近的学习比较分散，记录中出现了“${recentPoints[0]}”“${recentPoints[1]}”“${recentPoints[2]}”`
+                + (recentPoints.length > 3 ? "等内容。" : "。")
+            );
+        }
+
+        sections.push({
+            title: "最近学习",
+            text: recentText
+        });
+    }
+
+    const attentionLines = [];
+    const usedLabels = new Set();
+
+    const addAttention = (item, kind) => {
+        const label = learningReviewItemLabel(item);
+        if (!label || usedLabels.has(label)) return;
+
+        usedLabels.add(label);
+
+        if (kind === "failed") {
+            attentionLines.push(
+                `“${label}”有复测未通过的记录，之后如果还想继续，可以再回看一次。`
+            );
+            return;
+        }
+
+        if (kind === "pending") {
+            attentionLines.push(
+                `“${label}”相关题目还留在错题本中，尚未完成订正。`
+            );
+            return;
+        }
+
+        attentionLines.push(
+            `“${label}”已经有订正记录，但目前还没有通过复测。`
+        );
+    };
+
+    failedRetest.slice(0, 2).forEach(
+        item => addAttention(item, "failed")
+    );
+
+    pending.slice(0, 2).forEach(
+        item => addAttention(item, "pending")
+    );
+
+    needsRetest.slice(0, 2).forEach(
+        item => addAttention(item, "retest")
+    );
+
+    if (attentionLines.length) {
+        sections.push({
+            title: "值得再看看",
+            text: attentionLines.slice(0, 2).join("\n")
+        });
+    }
+
+    let nextText = "";
+
+    if (pending.length) {
+        nextText = "如果想继续，可以先从错题本里挑一道尚未订正的题重新做，不必一次处理很多。";
+    } else if (needsRetest.length) {
+        nextText = "如果想继续，可以从已经订正但还没有通过复测的题里挑一道，再测一次。";
+    } else if (recentPoints.length) {
+        nextText = `如果想继续，可以围绕“${recentPoints[0]}”再问一个具体问题，或者让 AI 出一道同类题。`;
+    }
+
+    if (nextText) {
+        sections.push({
+            title: "接下来可以做",
+            text: nextText
+        });
+    }
+
+    const hasAnyRecord = Boolean(
+        recentPoints.length
+        || wrongItems.length
+        || (Array.isArray(learningState.events) && learningState.events.length)
+    );
+
+    return {
+        hasAnyRecord,
+        sections
+    };
+}
+
+function renderLearningReview() {
+    const body = document.getElementById("learningReviewBody");
+    if (!body) return;
+
+    body.innerHTML = "";
+
+    const intro = document.createElement("div");
+    intro.className = "learning-review-intro";
+    intro.textContent = (
+        "根据当前浏览器中已经留下的学习记录做一个简短回顾。"
+        + "这里只总结现有痕迹，不做成绩、掌握度或能力评分。"
+    );
+    body.appendChild(intro);
+
+    const snapshot = buildLearningReviewSnapshot();
+
+    if (!snapshot.hasAnyRecord || !snapshot.sections.length) {
+        const empty = document.createElement("div");
+        empty.className = "learning-review-empty";
+        empty.textContent = (
+            "当前留下的学习记录还比较少，暂时没有必要生成复杂结论。"
+            + "继续正常问题、做题或使用错题本即可，之后这里会自然变得更具体。"
+        );
+        body.appendChild(empty);
+        return;
+    }
+
+    for (const section of snapshot.sections) {
+        const card = document.createElement("section");
+        card.className = "learning-review-section";
+
+        const title = document.createElement("div");
+        title.className = "learning-review-section-title";
+        title.textContent = section.title;
+
+        const text = document.createElement("p");
+        text.className = "learning-review-section-text";
+        text.textContent = section.text;
+
+        card.appendChild(title);
+        card.appendChild(text);
+        body.appendChild(card);
+    }
+}
+
+function openLearningReview() {
+    const modal = document.getElementById("learningReviewModal");
+    if (!modal) return;
+
+    renderLearningReview();
+    modal.classList.remove("hidden");
+}
+
+function closeLearningReview() {
+    const modal = document.getElementById("learningReviewModal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+}
+
+
 function formatLearningDate(timestamp) {
     const date = new Date(timestamp);
 
@@ -10275,6 +10538,10 @@ document.addEventListener(
         const imageInput = document.getElementById("imageInput");
         const markWrongBtn = document.getElementById("markWrongBtn");
         const wrongBookBtn = document.getElementById("wrongBookBtn");
+        const learningReviewBtn = document.getElementById("learningReviewBtn");
+        const learningReviewClose = document.getElementById("learningReviewClose");
+        const learningReviewDone = document.getElementById("learningReviewDone");
+        const learningReviewModal = document.getElementById("learningReviewModal");
         const wrongBookClose = document.getElementById("wrongBookClose");
         const wrongBookModal = document.getElementById("wrongBookModal");
         const wrongBookSearchBox = document.getElementById("wrongBookSearch");
@@ -10371,6 +10638,38 @@ document.addEventListener(
             wrongBookBtn.addEventListener(
                 "click",
                 openWrongBook
+            );
+        }
+
+        if (learningReviewBtn) {
+            learningReviewBtn.addEventListener(
+                "click",
+                openLearningReview
+            );
+        }
+
+        if (learningReviewClose) {
+            learningReviewClose.addEventListener(
+                "click",
+                closeLearningReview
+            );
+        }
+
+        if (learningReviewDone) {
+            learningReviewDone.addEventListener(
+                "click",
+                closeLearningReview
+            );
+        }
+
+        if (learningReviewModal) {
+            learningReviewModal.addEventListener(
+                "click",
+                event => {
+                    if (event.target === learningReviewModal) {
+                        closeLearningReview();
+                    }
+                }
             );
         }
 
