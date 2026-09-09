@@ -54,22 +54,6 @@ const APPEARANCE_ACCENTS = Object.freeze({
         deeper: "#0f766e",
         soft: "#5eead4",
         pale: "#99f6e4"
-    },
-    orange: {
-        main: "#f59e0b",
-        rgb: "245,158,11",
-        deep: "#d97706",
-        deeper: "#b45309",
-        soft: "#fbbf24",
-        pale: "#fde68a"
-    },
-    rose: {
-        main: "#f43f5e",
-        rgb: "244,63,94",
-        deep: "#e11d48",
-        deeper: "#be123c",
-        soft: "#fb7185",
-        pale: "#fda4af"
     }
 });
 
