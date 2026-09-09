@@ -222,28 +222,35 @@ def _looks_like_exercise_request(text):
     value = str(text or "").strip()
     value = re.sub(r"\s+", "", value)
 
-    if not value or len(value) > 90:
+    if not value or len(value) > 120:
         return False
 
-    return bool(
+    if re.search(
+        r"^(?:不要|别|不用|无需).{0,18}(?:出|生成|来|给).{0,8}(?:题目|题|练习)",
+        value
+    ):
+        return False
+
+    has_generate_action = bool(
+        re.search(r"(?:出|生成|来|给我|给个|来个|安排|准备)", value)
+    )
+    has_exercise_target = bool(
+        re.search(r"(?:题目|题|练习)", value)
+    )
+    wants_practice = bool(
         re.search(
-            r"^(?:请|麻烦|能不能|可以)?"
-            r"(?:再|重新|随机|随便)?"
-            r"(?:给我|帮我)?"
-            r"(?:出|来)"
-            r"(?:一道|一题|几道|几题)?"
-            r"[^，。！？!?]{0,28}"
-            r"(?:题目|题|练习)"
-            r"(?:吧|。|！|!)?$",
+            r"(?:想|要|想要|可以|能不能).{0,8}(?:做|练|刷).{0,16}(?:题目|题|练习)",
             value
         )
-        or re.search(
-            r"^(?:请|麻烦|能不能|可以)?"
-            r"(?:给我)?"
-            r"(?:出题|来一道|再来一道|练习一下)"
-            r"(?:吧|。|！|!)?$",
-            value
-        )
+    )
+    short_repeat = bool(
+        re.search(r"(?:再来一个|再来一道|换一道|换一题|下一题)$", value)
+    )
+
+    return bool(
+        (has_generate_action and has_exercise_target)
+        or wants_practice
+        or short_repeat
     )
 
 
@@ -467,6 +474,8 @@ def chat():
         }), 400
 
     messages = data.get("messages")
+    request_kind = str(data.get("request_kind", "") or "").strip().lower()
+    client_requires_exercise = request_kind == "exercise"
 
     if not isinstance(messages, list):
         return jsonify({
@@ -518,6 +527,14 @@ def chat():
 
     teaching = analyze_messages(cleaned)
 
+    # 前端明确声明本轮是“出题”时，模式以该结构化信号为准，
+    # 不再依赖自然语言分类是否恰好命中。这样 AI 一定收到练习出题提示词。
+    if client_requires_exercise:
+        teaching = dict(teaching or {})
+        teaching["mode"] = "exercise"
+        teaching["mode_label"] = "练习出题"
+        teaching["question_type"] = teaching.get("question_type") or "出题请求"
+
     try:
         result = ask_ai(
             cleaned,
@@ -559,7 +576,8 @@ def chat():
                 break
 
         is_exercise_request = (
-            teaching.get("mode") == "exercise"
+            client_requires_exercise
+            or teaching.get("mode") == "exercise"
             or _looks_like_exercise_request(
                 latest_user_text
             )
@@ -568,7 +586,7 @@ def chat():
         generated_question = ""
 
         if is_exercise_request:
-            reply, generated_answer = _split_exercise_answer(
+            visible_reply, generated_answer = _split_exercise_answer(
                 reply
             )
 
@@ -577,24 +595,48 @@ def chat():
             )
 
             generated_question = _extract_generated_question(
-                reply
+                visible_reply
             )
 
-            # 无论模型有没有附带开场白/提示，真正显示给学生的都只保留题目。
-            if generated_question:
-                reply = (
-                    "【题目】\n\n"
-                    + generated_question
-                )
+            # 强元数据兜底：本轮既然明确是出题请求，就不允许出现
+            # “题目已经显示，但 generated_question 没登记”的状态。
+            # 如果模型没有按标题格式输出，直接把清理后的可见正文登记为题干。
+            if not generated_question:
+                generated_question = str(visible_reply or "").strip()[:6000]
 
-        if generated_question:
-            generated_teaching = analyze_question(
-                generated_question
+            if not generated_question:
+                return jsonify({
+                    "error": "练习题生成结果缺少有效题干，请重新出题。",
+                    "teaching": teaching
+                }), 502
+
+            try:
+                generated_teaching = analyze_question(
+                    generated_question
+                )
+            except Exception as exc:
+                print("AI 生成题知识识别失败：", repr(exc))
+                return jsonify({
+                    "error": "练习题已经生成，但题目登记失败，请重新出题。",
+                    "teaching": teaching
+                }), 500
+
+            if not isinstance(generated_teaching, dict):
+                return jsonify({
+                    "error": "练习题已经生成，但题目分类无效，请重新出题。",
+                    "teaching": teaching
+                }), 500
+
+            # 只有题干和题目分类都完成登记后，才把题目展示给前端。
+            reply = (
+                "【题目】\n\n"
+                + generated_question
             )
 
         response = {
             "reply": reply,
-            "teaching": teaching
+            "teaching": teaching,
+            "generated_exercise": bool(is_exercise_request and generated_question)
         }
 
         if generated_teaching:
