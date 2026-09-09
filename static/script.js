@@ -7,6 +7,7 @@ const STORAGE_KEY = "discrete_math_ai_sessions_v1";
 const LEARNING_STORAGE_KEY = "discrete_math_ai_learning_v1";
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_WRONG_QUESTIONS = 80;
+const FALLBACK_API_CONTEXT_MESSAGES = 12;
 
 
 // =========================================================
@@ -6663,9 +6664,10 @@ function buildApiMessages(session, targetCandidate = null) {
         }];
     }
 
-    // 兼容无法识别题目锚点的旧会话，才退回一个很小的最近窗口。
+    // 兼容无法识别题目锚点的旧会话，退回有限的最近窗口。
+    // 正常题目追问仍优先使用显式题目状态，不会把整段历史无差别塞给模型。
     return valid
-        .slice(-6)
+        .slice(-FALLBACK_API_CONTEXT_MESSAGES)
         .map(({ message }) => ({
             role: mapRole(message.role),
             content: messageContent(message)
