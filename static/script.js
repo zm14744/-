@@ -853,10 +853,36 @@ function isOrdinalQuestionFollowUp(text) {
     );
 }
 
+function namedQuestionTopicReference(text) {
+    const value = String(text || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+    if (!value || value.length > 60) {
+        return "";
+    }
+
+    const match = value.match(
+        /(?:还记得|回到|返回|刚才|之前|前面)?(?:关于)?(.{1,12}?)(?:的)?(?:那道题|那题)(?:呢|吗|吧|再讲一下|讲一下|不会做|不会|不懂|没懂|还是不会|怎么做|如何做)?$/
+    );
+
+    if (!match) return "";
+
+    return String(match[1] || "")
+        .replace(/^(?:关于|刚才|之前|前面)/, "")
+        .replace(/(?:相关|方面)$/, "")
+        .trim();
+}
+
+function isNamedQuestionFollowUp(text) {
+    return Boolean(namedQuestionTopicReference(text));
+}
+
 function isQuestionNavigationFollowUp(text) {
     return (
         isPreviousQuestionFollowUp(text)
         || isOrdinalQuestionFollowUp(text)
+        || isNamedQuestionFollowUp(text)
     );
 }
 
@@ -1557,18 +1583,27 @@ function shouldOfferWrongBookAction(
     }
 
     if (message.role === "ai") {
-        // AI 普通讲解、题目回顾、分步提示永远不提供“记为错题”。
-        // 只有后端明确标记的 generatedQuestion 才是可加入错题本的 AI 题。
-        const generated = sanitizeStoredWrongQuestionText(
+        // 新版本 AI 出题使用强元数据。只要后端已经登记 generatedQuestion，
+        // 就无条件允许加入错题本，不再让题型启发式有机会把真题挡掉。
+        const trustedGenerated = sanitizeStoredWrongQuestionText(
             message.generatedQuestion || ""
+        );
+
+        if (trustedGenerated) {
+            // generatedQuestion 本身就是强元数据。只要题干已经登记，
+            // 就必须允许加入错题本；不再依赖 generatedExercise 布尔位。
+            return true;
+        }
+
+        // 兼容旧记录：只有上一条用户明确要求出题时，才从 AI 回复恢复题干。
+        const generated = recoverGeneratedQuestionFromAssistant(
+            session,
+            messageIndex,
+            message
         );
 
         return Boolean(
             generated
-            && (
-                message.generatedExercise
-                || message.generatedQuestion
-            )
             && looksLikeQuestionPayload(generated)
         );
     }
@@ -1685,14 +1720,23 @@ function isExerciseRequestText(text) {
 
     if (
         !value
-        || value.length > 90
+        || value.length > 120
+        || /^(?:不要|别|不用|无需).{0,18}(?:出|生成|来|给).{0,8}(?:题目|题|练习)/.test(value)
     ) {
         return false;
     }
 
+    // 出题属于结构化动作，宁可多覆盖自然说法，也不要让 AI 已经出了题
+    // 但前端没有把它登记成 generatedQuestion。只要同时出现“生成动作”
+    // 和“题/练习”目标，就视为明确出题请求。
+    const hasGenerateAction = /(?:出|生成|来|给我|给个|来个|安排|准备)/.test(value);
+    const hasExerciseTarget = /(?:题目|题|练习)/.test(value);
+    const wantsPractice = /(?:想|要|想要|可以|能不能).{0,8}(?:做|练|刷).{0,16}(?:题目|题|练习)/.test(value);
+
     return Boolean(
-        /^(?:请|麻烦|能不能|可以)?(?:再|重新|随机|随便)?(?:给我|帮我)?(?:出|来)(?:一道|一题|几道|几题)?[^，。！？!?]{0,28}(?:题目|题|练习)(?:吧|。|！|!)?$/.test(value)
-        || /^(?:请|麻烦|能不能|可以)?(?:给我)?(?:出题|来一道|再来一道|练习一下)(?:吧|。|！|!)?$/.test(value)
+        (hasGenerateAction && hasExerciseTarget)
+        || wantsPractice
+        || /(?:再来一个|再来一道|换一道|换一题|下一题)$/.test(value)
     );
 }
 
@@ -1743,6 +1787,58 @@ function extractAiGeneratedExerciseText(reply) {
     }
 
     return text.slice(0, 3000);
+}
+
+function recoverGeneratedQuestionFromAssistant(
+    session,
+    messageIndex,
+    message
+) {
+    if (
+        !message
+        || message.role !== "ai"
+        || typeof message.text !== "string"
+    ) {
+        return "";
+    }
+
+    let generated = sanitizeStoredWrongQuestionText(
+        message.generatedQuestion || ""
+    );
+
+    if (generated) {
+        return generated;
+    }
+
+    const previous = previousUserMessageBefore(
+        session,
+        messageIndex
+    );
+
+    if (
+        !previous
+        || !isExerciseRequestText(previous.text)
+    ) {
+        return "";
+    }
+
+    generated = sanitizeStoredWrongQuestionText(
+        extractAiGeneratedExerciseText(message.text)
+    );
+
+    if (
+        !generated
+        || !looksLikeQuestionPayload(generated)
+    ) {
+        return "";
+    }
+
+    // 兼容旧记录 / 后端没有返回 generated_question 的情况。
+    // 只在上一条用户消息明确要求“出题”时恢复，避免把普通讲解误判成题目。
+    message.generatedExercise = true;
+    message.generatedQuestion = generated;
+
+    return generated;
 }
 
 function openWrongQuestionPicker(questionInfo, choices) {
@@ -3596,6 +3692,121 @@ function canvasSlice(sourceCanvas, startY, sliceHeight) {
     return slice;
 }
 
+function findPdfSafeSliceHeight(
+    canvas,
+    startY,
+    maxHeight
+) {
+    const remaining = canvas.height - startY;
+
+    if (remaining <= maxHeight) {
+        return remaining;
+    }
+
+    const target = Math.min(
+        canvas.height - 1,
+        startY + maxHeight
+    );
+    // 宁可上一页底部多留一点空白，也不要把一整行公式 / 矩阵 / 路径
+    // 从中间切成两页。旧版最多只向前找 320px，数学块稍高就找不到
+    // 段落间隙。现在允许回看约半页，优先在真正的空白带分页。
+    const searchBack = Math.min(
+        Math.floor(maxHeight * 0.52),
+        1100
+    );
+    const searchStart = Math.max(
+        startY + Math.floor(maxHeight * 0.34),
+        target - searchBack
+    );
+
+    const context = canvas.getContext(
+        "2d",
+        { willReadFrequently: true }
+    );
+
+    if (!context) {
+        return maxHeight;
+    }
+
+    let imageData;
+
+    try {
+        imageData = context.getImageData(
+            0,
+            searchStart,
+            canvas.width,
+            target - searchStart + 1
+        );
+    } catch (_error) {
+        return maxHeight;
+    }
+
+    const { data, width, height } = imageData;
+    const sampleStep = Math.max(2, Math.floor(width / 260));
+    const blankRows = [];
+
+    for (let y = 0; y < height; y += 1) {
+        let ink = 0;
+        let samples = 0;
+
+        for (let x = 0; x < width; x += sampleStep) {
+            const offset = (y * width + x) * 4;
+            const r = data[offset];
+            const g = data[offset + 1];
+            const b = data[offset + 2];
+            const a = data[offset + 3];
+
+            if (a > 20) {
+                samples += 1;
+
+                // 白色 / #f8fafc 等浅背景都视为空白；真正文字和公式会
+                // 至少有一个通道明显变暗。
+                if (Math.min(r, g, b) < 218) {
+                    ink += 1;
+                }
+            }
+        }
+
+        const ratio = samples ? ink / samples : 0;
+        blankRows.push(ratio < 0.008);
+    }
+
+    let bestEnd = -1;
+    let runStart = -1;
+
+    for (let y = 0; y <= blankRows.length; y += 1) {
+        const blank = y < blankRows.length
+            ? blankRows[y]
+            : false;
+
+        if (blank && runStart < 0) {
+            runStart = y;
+            continue;
+        }
+
+        if (!blank && runStart >= 0) {
+            const runLength = y - runStart;
+
+            if (runLength >= 8) {
+                bestEnd = y - 1;
+            }
+
+            runStart = -1;
+        }
+    }
+
+    if (bestEnd >= 0) {
+        const safeGlobalY = searchStart + bestEnd;
+        const safeHeight = safeGlobalY - startY + 1;
+
+        if (safeHeight >= maxHeight * 0.34) {
+            return Math.max(1, safeHeight);
+        }
+    }
+
+    return maxHeight;
+}
+
 async function exportWrongBookPdf() {
     const items = getFilteredWrongBookItems();
 
@@ -3746,7 +3957,11 @@ async function exportWrongBookPdf() {
                 }
 
                 const sliceHeight = Math.min(
-                    fullPagePixels,
+                    findPdfSafeSliceHeight(
+                        canvas,
+                        startY,
+                        fullPagePixels
+                    ),
                     canvas.height - startY
                 );
 
@@ -5315,6 +5530,69 @@ function resolveOrdinalQuestionCandidate(session, text) {
     return candidates[ordinal - 1] || null;
 }
 
+function resolveNamedQuestionCandidate(session, text) {
+    const topic = namedQuestionTopicReference(text);
+    if (!topic) return null;
+
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+
+    if (!candidates.length) return null;
+
+    const aliases = {
+        图论: ["图论", "图", "顶点", "边", "欧拉", "邻接", "路径"],
+        集合: ["集合", "全集", "子集", "补集", "并集", "交集"],
+        关系: ["关系", "自反", "对称", "传递", "偏序", "等价"],
+        逻辑: ["逻辑", "命题", "真值", "范式", "量词"],
+        组合: ["组合", "排列", "鸽巢", "容斥", "递推"],
+        代数: ["代数", "群", "子群", "同态", "同构"]
+    };
+
+    let terms = [topic];
+
+    for (const [name, values] of Object.entries(aliases)) {
+        if (topic.includes(name) || name.includes(topic)) {
+            terms = [...new Set([...terms, ...values])];
+        }
+    }
+
+    let best = null;
+    let bestScore = 0;
+
+    for (const candidate of candidates) {
+        const teaching = candidateTeachingSnapshot(
+            session,
+            candidate
+        );
+
+        const haystack = [
+            candidate.text,
+            teaching?.category || "",
+            ...(teaching?.knowledge_points || []),
+            ...(teaching?.focus_points || [])
+        ].join(" ");
+
+        let score = 0;
+
+        for (const term of terms) {
+            if (term && haystack.includes(term)) {
+                score += term === topic ? 5 : 1;
+            }
+        }
+
+        if (
+            score > bestScore
+            || (score === bestScore && score > 0 && best && candidate.index > best.index)
+        ) {
+            best = candidate;
+            bestScore = score;
+        }
+    }
+
+    return bestScore > 0 ? best : null;
+}
+
 function resolveQuestionNavigationCandidate(session, text) {
     const ordinal = resolveOrdinalQuestionCandidate(
         session,
@@ -5322,6 +5600,13 @@ function resolveQuestionNavigationCandidate(session, text) {
     );
 
     if (ordinal) return ordinal;
+
+    const named = resolveNamedQuestionCandidate(
+        session,
+        text
+    );
+
+    if (named) return named;
 
     if (isPreviousQuestionFollowUp(text)) {
         return resolvePreviousQuestionCandidate(session);
@@ -5340,9 +5625,9 @@ function buildTargetQuestionApiText(userText, candidate) {
     // 把它与“本轮唯一请求”合并成同一个 user 消息，避免模型把
     // 连续两条用户话语都当作本轮任务一起回答。
     return [
-        "【当前题目定位信息，仅供理解，不是待执行请求】",
+        "【当前指向题目】",
         question,
-        "【当前题目定位信息结束】",
+        "【当前指向题目结束】",
         "",
         "【本轮唯一需要执行的用户请求】",
         latestRequest,
@@ -5404,6 +5689,28 @@ function buildApiMessages(session, targetCandidate = null) {
 
         return content;
     };
+
+    // “出一道集合题 / 再来一道图论题”是一个新的出题请求，不属于
+    // 当前旧题的追问。必须原样作为唯一 user 请求发给后端，否则把旧题
+    // 锚点一起包进去会让 app.py 无法识别 exercise 模式。
+    if (isExerciseRequestText(latestUser.text)) {
+        return [{
+            role: "user",
+            content: messageContent(latestUser)
+        }];
+    }
+
+    // 真正的新自包含题也优先独立发送，不要因为会话中已有 target 就
+    // 被错误包装成“上一题的追问”。
+    if (
+        looksLikeActualLearningProblem(latestUser)
+        && !isQuestionNavigationFollowUp(latestUser.text)
+    ) {
+        return [{
+            role: "user",
+            content: messageContent(latestUser)
+        }];
+    }
 
     if (target) {
         const targetFingerprint = questionCandidateFingerprint(
@@ -5574,10 +5881,31 @@ function attachTeachingSnapshotToLatestQuestion(
 async function requestAiReply(session) {
     if (!session) return;
 
-    const requestTargetCandidate = (
-        activeQuestionCandidateFromHistory(session)
-        || currentQuestionCandidateFromLearningState(session)
+    const latestUserBeforeRequest = getLatestUserMessage(
+        session
     );
+    const latestIsExerciseRequest = isExerciseRequestText(
+        latestUserBeforeRequest?.text || ""
+    );
+    const latestIsFreshQuestion = Boolean(
+        latestUserBeforeRequest
+        && looksLikeActualLearningProblem(
+            latestUserBeforeRequest
+        )
+        && !isQuestionNavigationFollowUp(
+            latestUserBeforeRequest.text
+        )
+    );
+
+    const requestTargetCandidate = (
+        latestIsExerciseRequest
+        || latestIsFreshQuestion
+    )
+        ? null
+        : (
+            activeQuestionCandidateFromHistory(session)
+            || currentQuestionCandidateFromLearningState(session)
+        );
     const requestTargetFingerprint = questionCandidateFingerprint(
         requestTargetCandidate
     );
@@ -5585,6 +5913,31 @@ async function requestAiReply(session) {
     setSessionBusy(session.id, true);
 
     try {
+        // 导航到历史 AI 生成题时，旧记录可能还没有教学快照。先用
+        // 规则分类补齐，这样右侧“学习内容 / 本题难点”会和目标题同步。
+        if (
+            requestTargetCandidate
+            && !candidateTeachingSnapshot(
+                session,
+                requestTargetCandidate
+            )
+        ) {
+            const targetTeaching = await analyzeSingleQuestionTeaching(
+                requestTargetCandidate.text,
+                requestTargetCandidate.key
+            );
+
+            if (targetTeaching) {
+                applyQuestionCandidateAsCurrent(
+                    session,
+                    requestTargetCandidate,
+                    targetTeaching
+                );
+                saveState();
+                renderInfo();
+            }
+        }
+
         const response = await fetch("/chat", {
             method: "POST",
             headers: {
@@ -5594,14 +5947,79 @@ async function requestAiReply(session) {
                 messages: buildApiMessages(
                     session,
                     requestTargetCandidate
-                )
+                ),
+                // 强约束：明确出题请求由前端直接告诉后端。
+                // 后端据此必须返回 generated_question + generated_teaching，
+                // 不再只靠自然语言二次猜测“这是不是出题”。
+                request_kind: latestIsExerciseRequest
+                    ? "exercise"
+                    : "chat"
             })
         });
 
         const data = await parseResponseJson(response);
 
-        const returnedTeaching = (
+        let localGeneratedQuestion = sanitizeStoredWrongQuestionText(
+            data.generated_question || ""
+        );
+
+        // 后端旧版本或异常输出没有 generated_question 时，前端仍可根据
+        // “本轮明确出题请求”从回复中恢复真正题干。只在 exercise 请求下做，
+        // 不会把普通讲解误判为题目。
+        if (
+            !localGeneratedQuestion
+            && latestIsExerciseRequest
+            && typeof data.reply === "string"
+        ) {
+            const recovered = sanitizeStoredWrongQuestionText(
+                extractAiGeneratedExerciseText(data.reply)
+            );
+
+            if (
+                recovered
+                && looksLikeQuestionPayload(recovered)
+            ) {
+                localGeneratedQuestion = recovered;
+            }
+        }
+
+        let localGeneratedTeaching = normalizeTeaching(
             data.generated_teaching
+        );
+
+        if (
+            localGeneratedQuestion
+            && !localGeneratedTeaching
+        ) {
+            localGeneratedTeaching = await analyzeSingleQuestionTeaching(
+                localGeneratedQuestion,
+                "generated-current"
+            );
+        }
+
+        // 系统不变量：明确“出题”的本轮请求，只有在题干与题目分类都拿到后
+        // 才允许把 AI 回复写进聊天历史。否则宁可提示重试，也不能留下一个
+        // “看得见但错题本/题目历史都不认识”的孤儿题目。
+        if (
+            response.ok
+            && !data.error
+            && latestIsExerciseRequest
+            && (
+                !localGeneratedQuestion
+                || !localGeneratedTeaching
+            )
+        ) {
+            rollbackRetestAfterRequestFailure(session);
+            showAssistantMessage(
+                session,
+                "练习题生成结果未完成题目登记，请重新出题。",
+                { isError: true }
+            );
+            return;
+        }
+
+        const returnedTeaching = (
+            localGeneratedTeaching
             || data.teaching
         );
 
@@ -5617,7 +6035,7 @@ async function requestAiReply(session) {
             // “上一道题/继续/再讲一下”不是新题。返回的教学分析必须写回
             // 当前指向题，而不是重新覆盖到时间上最新的另一道题。
             if (
-                !data.generated_question
+                !localGeneratedQuestion
                 && latestUser
                 && isShortLearningFollowUp(latestUser.text)
                 && activeCandidate
@@ -5630,7 +6048,7 @@ async function requestAiReply(session) {
             } else {
                 session.teaching = normalizedReturnedTeaching;
 
-                if (!data.generated_question) {
+                if (!localGeneratedQuestion) {
                     attachTeachingSnapshotToLatestQuestion(
                         session,
                         normalizedReturnedTeaching
@@ -5698,29 +6116,27 @@ async function requestAiReply(session) {
         if (!retestHandled) {
             processLearningFromReply(
                 session,
-                session.teaching,
+                localGeneratedTeaching
+                    || session.teaching,
                 data.reply,
                 data.generated_answer || "",
-                data.generated_question || ""
+                localGeneratedQuestion
             );
         }
-
-        const localGeneratedQuestion = sanitizeStoredWrongQuestionText(
-            data.generated_question || ""
-        );
 
         const assistantMeta = {
             // 只有后端明确返回 generated_question，才标记为“AI 生成题”。
             // 普通讲解里出现编号、反问、步骤，不再被误判。
             generatedExercise: Boolean(
                 localGeneratedQuestion
+                || data.generated_exercise
             ),
             generatedQuestion: localGeneratedQuestion,
             generatedAnswer: data.generated_answer || "",
             generatedTeaching: (
                 localGeneratedQuestion
                     ? (
-                        data.generated_teaching
+                        localGeneratedTeaching
                         || returnedTeaching
                     )
                     : null
@@ -6293,6 +6709,14 @@ function questionInfoFromChatMessage(session, messageIndex) {
     const saved = normalizeLearningQuestion(
         session.learningQuestion
     );
+
+    if (message.role === "ai") {
+        recoverGeneratedQuestionFromAssistant(
+            session,
+            messageIndex,
+            message
+        );
+    }
 
     let text = sanitizeStoredWrongQuestionText(
         extractQuestionOnlyFromMessage(
@@ -7438,20 +7862,32 @@ function collectConversationQuestionCandidates(session) {
                 continue;
             }
         } else if (message.role === "ai") {
-            // 历史图谱不再从普通 AI 讲解里猜“可能是一道题”。
-            // 只有后端明确保存的 generatedQuestion 才作为 AI 历史题。
-            question = sanitizeStoredWrongQuestionText(
+            const trustedGenerated = sanitizeStoredWrongQuestionText(
                 message.generatedQuestion || ""
             );
 
-            if (
-                !question
-                || !looksLikeFormalStudyQuestionForHistory(
-                    question,
+            if (trustedGenerated) {
+                // generatedQuestion 是题目身份的唯一强标记。只要存在，
+                // 就直接进入题目历史，保证后续 AI 能再次定位到自己出的题。
+                message.generatedExercise = true;
+                question = trustedGenerated;
+            } else {
+                // 兼容旧记录：仅在上一条用户明确要求“出题”时恢复 AI 生成题。
+                question = recoverGeneratedQuestionFromAssistant(
+                    session,
+                    index,
                     message
-                )
-            ) {
-                continue;
+                );
+
+                if (
+                    !question
+                    || !looksLikeFormalStudyQuestionForHistory(
+                        question,
+                        message
+                    )
+                ) {
+                    continue;
+                }
             }
         } else {
             continue;
@@ -7550,6 +7986,17 @@ function activeQuestionCandidateFromHistory(session) {
     );
 
     if (savedCandidate) {
+        const latestCandidate = candidates[candidates.length - 1];
+
+        // 旧版本可能没有把 AI 生成题写进 learningQuestion。恢复出一个
+        // 时间上更新的真实题目后，应让它成为当前题，而不是继续锁死旧题。
+        if (
+            latestCandidate
+            && latestCandidate.index > savedCandidate.index
+        ) {
+            return latestCandidate;
+        }
+
         return savedCandidate;
     }
 
@@ -7747,6 +8194,51 @@ function applyQuestionCandidateAsCurrent(
     return Boolean(teaching);
 }
 
+
+async function analyzeSingleQuestionTeaching(
+    question,
+    key = "current"
+) {
+    const text = String(question || "").trim();
+    if (!text) return null;
+
+    try {
+        const response = await fetch(
+            "/analyze-questions",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    questions: [{
+                        key,
+                        text
+                    }]
+                })
+            }
+        );
+
+        const payload = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                payload?.error
+                || "题目知识识别失败。"
+            );
+        }
+
+        return normalizeTeaching(
+            payload?.results?.[0]?.teaching
+        );
+    } catch (error) {
+        console.warn(
+            "题目知识识别失败：",
+            error
+        );
+        return null;
+    }
+}
 
 async function ensureActiveQuestionAfterHistoryChange(
     session
@@ -10143,5 +10635,19 @@ document.addEventListener(
 
         renderAll();
         refreshInputAvailability();
+
+        // 兼容旧会话：如果之前 AI 出过题但没有保存 generatedQuestion /
+        // generatedTeaching，启动后自动恢复最近真实题目并补分类。
+        const activeSession = getCurrent();
+
+        if (activeSession) {
+            ensureActiveQuestionAfterHistoryChange(
+                activeSession
+            ).then(() => {
+                saveState();
+                renderInfo();
+                renderLearningSummary();
+            });
+        }
     }
 );
