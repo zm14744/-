@@ -4728,24 +4728,6 @@ function renderWrongBook() {
         );
         actions.appendChild(retestButton);
 
-        const hasOriginalSession = (
-            item.sessionId !== null
-            && sessions.some(
-                session => String(session.id) === String(item.sessionId)
-            )
-        );
-
-        if (hasOriginalSession) {
-            const backButton = document.createElement("button");
-            backButton.type = "button";
-            backButton.className = "secondary";
-            backButton.textContent = "回到原题";
-            backButton.onclick = () => (
-                openWrongQuestionSession(item.id)
-            );
-            actions.appendChild(backButton);
-        }
-
         const hasRetestSession = (
             item.lastRetestSessionId !== null
             && sessions.some(
