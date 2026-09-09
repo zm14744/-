@@ -214,7 +214,12 @@ def request_too_large(_error):
 
 @app.route("/")
 def home():
-    return render_template("index.html")
+    # 首页直接注入与 teaching.py / app.py 共用的 knowledge_graph.json，
+    # 避免前端再维护一份硬编码图谱而产生不同步。
+    return render_template(
+        "index.html",
+        knowledge_graph_data=KNOWLEDGE_GRAPH_DATA,
+    )
 
 
 
