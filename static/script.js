@@ -2705,22 +2705,6 @@ function collectLearningReviewPoints() {
         ));
     }
 
-    // 事件记录可能很少。用各会话当前仍保存的题目作为轻量兜底，
-    // 但不把整个聊天历史硬统计进来，避免碎片对话导致报告失真。
-    const recentQuestions = sessions
-        .map(session => normalizeLearningQuestion(session?.learningQuestion))
-        .filter(Boolean)
-        .sort(
-            (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
-        );
-
-    for (const question of recentQuestions.slice(0, 6)) {
-        points.push(
-            ...question.focusPoints,
-            ...question.knowledgePoints
-        );
-    }
-
     const recentWrong = [...(
         Array.isArray(learningState.wrongQuestions)
             ? learningState.wrongQuestions
