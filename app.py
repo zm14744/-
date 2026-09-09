@@ -88,7 +88,7 @@ KNOWLEDGE_GRAPH_DATA = _load_knowledge_graph()
 # 基础限制
 # -----------------------------
 MAX_MESSAGE_CHARS = 6000
-MAX_MESSAGES_PER_REQUEST = 16
+MAX_MESSAGES_PER_REQUEST = 32
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 单张图片最大 8MB
 
