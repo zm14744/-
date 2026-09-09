@@ -543,7 +543,7 @@ body {
 
 .wrong-search-wrap input {
     width:100%;
-    padding-right:40px;
+    padding-right:46px;
     -webkit-appearance:none;
     appearance:none;
 }
@@ -554,13 +554,20 @@ body {
     display:none;
 }
 
+/* 只有存在搜索内容时才显示自定义清除按钮。 */
+.wrong-tools .wrong-search-clear.hidden {
+    display:none;
+}
+
 .wrong-tools .wrong-search-clear {
     position:absolute;
-    top:50%;
-    right:10px;
+    top:0;
+    bottom:0;
+    right:14px;
     width:20px;
     height:20px;
-    transform:translateY(-50%);
+    margin:auto 0;
+    transform:none;
     border:none;
     border-radius:50%;
     background:#ef4444;
