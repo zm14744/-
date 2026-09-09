@@ -326,12 +326,24 @@ body {
     border-bottom:1px solid var(--surface-3);
 }
 
-.modal-head button {
+.modal-head .modal-close-dot {
+    flex:0 0 auto;
+    width:20px;
+    height:20px;
     border:none;
-    background:transparent;
-    color:var(--text-muted);
+    border-radius:50%;
+    background:#ef4444;
     cursor:pointer;
-    font-size:22px;
+    padding:0;
+}
+
+.modal-head .modal-close-dot:hover {
+    background:#dc2626;
+}
+
+.modal-head .modal-close-dot:focus-visible {
+    outline:2px solid rgba(239,68,68,.32);
+    outline-offset:3px;
 }
 
 #wrongBookList {
@@ -522,6 +534,47 @@ body {
     padding:10px 14px;
     border-bottom:1px solid var(--surface-3);
     background:var(--surface-1);
+}
+
+.wrong-search-wrap {
+    position:relative;
+    min-width:0;
+}
+
+.wrong-search-wrap input {
+    width:100%;
+    padding-right:40px;
+    -webkit-appearance:none;
+    appearance:none;
+}
+
+.wrong-search-wrap input::-webkit-search-cancel-button {
+    -webkit-appearance:none;
+    appearance:none;
+    display:none;
+}
+
+.wrong-tools .wrong-search-clear {
+    position:absolute;
+    top:50%;
+    right:10px;
+    width:20px;
+    height:20px;
+    transform:translateY(-50%);
+    border:none;
+    border-radius:50%;
+    background:#ef4444;
+    padding:0;
+    cursor:pointer;
+}
+
+.wrong-tools .wrong-search-clear:hover {
+    background:#dc2626;
+}
+
+.wrong-tools .wrong-search-clear:focus-visible {
+    outline:2px solid rgba(239,68,68,.32);
+    outline-offset:2px;
 }
 
 .wrong-tools input,
@@ -1568,7 +1621,7 @@ body {
         grid-template-columns:1fr 1fr;
     }
 
-    .wrong-tools input {
+    .wrong-search-wrap {
         grid-column:1 / -1;
     }
 
@@ -2082,7 +2135,7 @@ window.MathJax = {
     <div class="modal-card appearance-card">
         <div class="modal-head">
             <div>外观</div>
-            <button id="appearanceClose" type="button" aria-label="关闭">×</button>
+            <button id="appearanceClose" class="modal-close-dot" type="button" aria-label="关闭" title="关闭"></button>
         </div>
 
         <div class="appearance-body">
@@ -2173,7 +2226,7 @@ window.MathJax = {
     <div class="modal-card learning-review-card">
         <div class="modal-head">
             <div>学习回顾</div>
-            <button id="learningReviewClose" type="button" aria-label="关闭">×</button>
+            <button id="learningReviewClose" class="modal-close-dot" type="button" aria-label="关闭" title="关闭"></button>
         </div>
 
         <div id="learningReviewBody" class="learning-review-body"></div>
@@ -2188,7 +2241,7 @@ window.MathJax = {
     <div class="modal-card">
         <div class="modal-head">
             <div>错题本</div>
-            <button id="wrongBookClose" type="button" aria-label="关闭">×</button>
+            <button id="wrongBookClose" class="modal-close-dot" type="button" aria-label="关闭" title="关闭"></button>
         </div>
         <div class="wrong-toolbar">
             <div id="wrongBookStats" class="wrong-stats"></div>
@@ -2203,7 +2256,10 @@ window.MathJax = {
         </div>
 
         <div class="wrong-tools">
-            <input id="wrongBookSearch" type="search" placeholder="搜索题目、知识点、难点或笔记">
+            <div class="wrong-search-wrap">
+                <input id="wrongBookSearch" type="search" placeholder="搜索题目、知识点、难点或笔记" autocomplete="off">
+                <button id="wrongBookSearchClear" class="wrong-search-clear hidden" type="button" aria-label="清空搜索" title="清空搜索"></button>
+            </div>
             <select id="wrongBookSort" aria-label="错题排序">
                 <option value="recent">最近更新</option>
                 <option value="mistakes">错误次数最多</option>
@@ -2221,7 +2277,7 @@ window.MathJax = {
     <div class="modal-card wrong-picker-card">
         <div class="modal-head">
             <div>选择要加入错题本的题目</div>
-            <button id="wrongQuestionPickerClose" type="button" aria-label="关闭">×</button>
+            <button id="wrongQuestionPickerClose" class="modal-close-dot" type="button" aria-label="关闭" title="关闭"></button>
         </div>
 
         <div class="wrong-picker-intro">
@@ -2241,7 +2297,7 @@ window.MathJax = {
     <div class="modal-card wrong-safe-card">
         <div class="modal-head">
             <div>确认加入错题本</div>
-            <button id="wrongSafeClose" type="button" aria-label="关闭">×</button>
+            <button id="wrongSafeClose" class="modal-close-dot" type="button" aria-label="关闭" title="关闭"></button>
         </div>
 
         <div class="wrong-safe-body">
@@ -2271,7 +2327,7 @@ window.MathJax = {
     <div class="modal-card wrong-edit-card">
         <div class="modal-head">
             <div>编辑错题 / 学习笔记</div>
-            <button id="wrongEditClose" type="button" aria-label="关闭">×</button>
+            <button id="wrongEditClose" class="modal-close-dot" type="button" aria-label="关闭" title="关闭"></button>
         </div>
 
         <div class="wrong-edit-body">
@@ -2297,7 +2353,7 @@ window.MathJax = {
     <div class="modal-card graph-modal-card">
         <div class="modal-head">
             <div>可视化知识图谱</div>
-            <button id="knowledgeGraphClose" type="button" aria-label="关闭">×</button>
+            <button id="knowledgeGraphClose" class="modal-close-dot" type="button" aria-label="关闭" title="关闭"></button>
         </div>
 
         <div class="graph-toolbar">
