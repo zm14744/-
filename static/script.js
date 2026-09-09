@@ -2686,14 +2686,30 @@ function learningReviewItemLabel(item) {
     )?.trim() || "这道题";
 }
 
+function validLearningReviewEvents() {
+    const liveSessionIds = new Set(
+        (Array.isArray(sessions) ? sessions : [])
+            .map(session => String(session?.id ?? ""))
+            .filter(Boolean)
+    );
+
+    // 学习回顾只使用仍能对应到现存会话的事件。
+    // 旧版本可能留下 sessionId 为空或原会话已删除的孤立事件，
+    // 这些事件不能继续出现在“最近学习”里。
+    return (Array.isArray(learningState.events) ? learningState.events : [])
+        .filter(event => {
+            if (!event || typeof event !== "object") return false;
+            if (event.sessionId === null || event.sessionId === undefined) {
+                return false;
+            }
+            return liveSessionIds.has(String(event.sessionId));
+        });
+}
+
 function collectLearningReviewPoints() {
     const points = [];
 
-    const events = [...(
-        Array.isArray(learningState.events)
-            ? learningState.events
-            : []
-    )].sort(
+    const events = [...validLearningReviewEvents()].sort(
         (a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)
     );
 
@@ -2842,7 +2858,7 @@ function buildLearningReviewSnapshot() {
     const hasAnyRecord = Boolean(
         recentPoints.length
         || wrongItems.length
-        || (Array.isArray(learningState.events) && learningState.events.length)
+        || validLearningReviewEvents().length
     );
 
     return {
