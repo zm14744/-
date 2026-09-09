@@ -1,7 +1,21 @@
 {
-  "version": 1,
+  "version": 2,
   "title": "离散数学知识脉络",
-  "description": "用于教学提示、前置知识提醒和后续学习状态记录的轻量知识图谱。当前版本只描述知识结构，不记录学生掌握度。",
+  "description": "用于教学提示、建议前置知识提醒和后续学习状态记录的轻量知识图谱。prerequisites 表示建议学习前置/依赖关系，不等同于严格数学逻辑蕴含；当前版本不记录学生掌握度。",
+  "basis": [
+    {
+      "name": "高等教育出版社《离散数学（第3版）》",
+      "url": "https://xuanshu.hep.com.cn/front/book/findBookDetails?bookId=658daaba74ce561611bd9a4f"
+    },
+    {
+      "name": "MIT Mathematics for Computer Science",
+      "url": "https://ocw.mit.edu/courses/6-1200j-mathematics-for-computer-science-spring-2024/"
+    },
+    {
+      "name": "Rosen, Discrete Mathematics and Its Applications",
+      "url": "https://www.mheducation.com/highered/product/discrete-mathematics-and-its-applications-rosen.html"
+    }
+  ],
   "nodes": [
     {
       "id": "logic_truth",
@@ -84,6 +98,38 @@
       ]
     },
     {
+      "id": "predicate_prenex",
+      "name": "前束范式",
+      "category": "谓词逻辑",
+      "prerequisites": [
+        "量词推理与否定"
+      ]
+    },
+    {
+      "id": "proof_direct_contradiction",
+      "name": "直接证明与反证法",
+      "category": "证明与归纳",
+      "prerequisites": [
+        "命题推理"
+      ]
+    },
+    {
+      "id": "proof_induction",
+      "name": "数学归纳法",
+      "category": "证明与归纳",
+      "prerequisites": [
+        "命题推理"
+      ]
+    },
+    {
+      "id": "proof_strong_induction",
+      "name": "强归纳法",
+      "category": "证明与归纳",
+      "prerequisites": [
+        "数学归纳法"
+      ]
+    },
+    {
       "id": "set_operation",
       "name": "集合运算",
       "category": "集合与关系",
@@ -95,6 +141,14 @@
       "category": "集合与关系",
       "prerequisites": [
         "集合运算"
+      ]
+    },
+    {
+      "id": "relation_operation",
+      "name": "关系运算",
+      "category": "集合与关系",
+      "prerequisites": [
+        "笛卡尔积与关系"
       ]
     },
     {
@@ -126,6 +180,7 @@
       "name": "关系闭包",
       "category": "集合与关系",
       "prerequisites": [
+        "关系运算",
         "关系性质"
       ]
     },
@@ -161,6 +216,56 @@
         "单射满射双射",
         "复合函数"
       ]
+    },
+    {
+      "id": "number_prime",
+      "name": "整除与素数",
+      "category": "初等数论",
+      "prerequisites": []
+    },
+    {
+      "id": "number_gcd",
+      "name": "最大公因数与欧几里得算法",
+      "category": "初等数论",
+      "prerequisites": [
+        "整除与素数"
+      ]
+    },
+    {
+      "id": "number_congruence",
+      "name": "同余与模运算",
+      "category": "初等数论",
+      "prerequisites": [
+        "整除与素数"
+      ]
+    },
+    {
+      "id": "number_linear_congruence",
+      "name": "线性同余方程",
+      "category": "初等数论",
+      "prerequisites": [
+        "同余与模运算",
+        "最大公因数与欧几里得算法"
+      ]
+    },
+    {
+      "id": "number_euler_fermat",
+      "name": "欧拉定理与费马小定理",
+      "category": "初等数论",
+      "prerequisites": [
+        "同余与模运算",
+        "整除与素数"
+      ]
+    },
+    {
+      "id": "number_rsa",
+      "name": "RSA公钥密码",
+      "category": "初等数论",
+      "prerequisites": [
+        "线性同余方程",
+        "欧拉定理与费马小定理"
+      ],
+      "level": "拓展"
     },
     {
       "id": "count_basic",
@@ -206,6 +311,7 @@
       "name": "生成函数",
       "category": "计数与组合",
       "prerequisites": [
+        "递推关系建模",
         "排列与组合"
       ]
     },
@@ -213,9 +319,7 @@
       "id": "recurrence_model",
       "name": "递推关系建模",
       "category": "递推关系",
-      "prerequisites": [
-        "基本计数原理"
-      ]
+      "prerequisites": []
     },
     {
       "id": "recurrence_homogeneous",
@@ -262,11 +366,28 @@
       "prerequisites": [
         "图的基本概念",
         "邻接矩阵"
-      ]
+      ],
+      "note": "当前主要覆盖关联矩阵、度矩阵与拉普拉斯矩阵"
     },
     {
       "id": "graph_connectivity",
       "name": "路径与连通性",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念"
+      ]
+    },
+    {
+      "id": "graph_cut",
+      "name": "割点与割边",
+      "category": "图论",
+      "prerequisites": [
+        "路径与连通性"
+      ]
+    },
+    {
+      "id": "graph_weighted",
+      "name": "带权图",
       "category": "图论",
       "prerequisites": [
         "图的基本概念"
@@ -293,7 +414,8 @@
       "name": "最短路",
       "category": "图论",
       "prerequisites": [
-        "路径与连通性"
+        "路径与连通性",
+        "带权图"
       ]
     },
     {
@@ -307,6 +429,14 @@
     {
       "id": "graph_planar",
       "name": "平面图",
+      "category": "图论",
+      "prerequisites": [
+        "图的基本概念"
+      ]
+    },
+    {
+      "id": "graph_domination",
+      "name": "支配集、覆盖集与独立集",
       "category": "图论",
       "prerequisites": [
         "图的基本概念"
@@ -330,6 +460,14 @@
       ]
     },
     {
+      "id": "tree_rooted",
+      "name": "根树",
+      "category": "图论",
+      "prerequisites": [
+        "树的基本性质"
+      ]
+    },
+    {
       "id": "tree_spanning",
       "name": "生成树",
       "category": "图论",
@@ -343,7 +481,8 @@
       "name": "最小生成树",
       "category": "图论",
       "prerequisites": [
-        "生成树"
+        "生成树",
+        "带权图"
       ]
     },
     {
@@ -353,7 +492,8 @@
       "prerequisites": [
         "图的矩阵表示",
         "生成树"
-      ]
+      ],
+      "level": "拓展"
     },
     {
       "id": "algebra_system",
