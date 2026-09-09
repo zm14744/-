@@ -8383,7 +8383,13 @@ function normalizeKnowledgeGraphData(data) {
                 category: typeof node.category === "string" && node.category.trim()
                     ? node.category.trim()
                     : "未分类",
-                prerequisites: uniqueTextList(node.prerequisites, 8)
+                prerequisites: uniqueTextList(node.prerequisites, 8),
+                level: typeof node.level === "string"
+                    ? node.level.trim()
+                    : "",
+                note: typeof node.note === "string"
+                    ? node.note.trim()
+                    : ""
             }))
             .filter(node => node.id && node.name)
         : [];
@@ -10596,14 +10602,16 @@ function renderKnowledgeGraphSection(container, nodes, title, description, conte
 
         group.appendChild(text);
 
-        if (state.badge) {
+        const nodeBadge = state.badge || node.level;
+
+        if (nodeBadge) {
             const badge = createSvgElement("text", {
                 class: "kg-node-badge",
                 x: nodeWidth / 2,
                 y: nodeHeight - 10,
                 "text-anchor": "middle"
             });
-            badge.textContent = state.badge;
+            badge.textContent = nodeBadge;
             group.appendChild(badge);
         }
 
@@ -10953,13 +10961,6 @@ function renderKnowledgeGraphDetail() {
         .filter(item => item.prerequisites.includes(node.name))
         .map(item => item.name);
 
-    const relatedNodes = [
-        ...new Set([
-            ...node.prerequisites,
-            ...nextNodes
-        ])
-    ];
-
     title.textContent = node.name;
     detail.innerHTML = "";
 
@@ -10970,6 +10971,13 @@ function renderKnowledgeGraphDetail() {
     category.textContent = node.category;
     subline.appendChild(category);
 
+    if (node.level) {
+        const level = document.createElement("span");
+        level.className = "graph-level-pill";
+        level.textContent = node.level;
+        subline.appendChild(level);
+    }
+
     if (state.label) {
         const pill = document.createElement("span");
         pill.className = `graph-status-pill ${state.key}`;
@@ -10979,22 +10987,44 @@ function renderKnowledgeGraphDetail() {
 
     detail.appendChild(subline);
 
-    const field = document.createElement("div");
-    field.className = "graph-detail-field";
+    const addDetailField = (labelText, values, emptyText) => {
+        const field = document.createElement("div");
+        field.className = "graph-detail-field";
 
-    const label = document.createElement("div");
-    label.className = "graph-detail-field-label";
-    label.textContent = "直接相关知识";
+        const label = document.createElement("div");
+        label.className = "graph-detail-field-label";
+        label.textContent = labelText;
 
-    const value = document.createElement("div");
-    value.className = "graph-detail-field-value";
-    value.textContent = relatedNodes.length
-        ? relatedNodes.join("、")
-        : "暂无直接关联";
+        const value = document.createElement("div");
+        value.className = "graph-detail-field-value";
+        value.textContent = values.length
+            ? values.join("、")
+            : emptyText;
 
-    field.appendChild(label);
-    field.appendChild(value);
-    detail.appendChild(field);
+        field.appendChild(label);
+        field.appendChild(value);
+        detail.appendChild(field);
+    };
+
+    addDetailField(
+        "建议前置知识",
+        node.prerequisites,
+        "暂无建议前置"
+    );
+
+    addDetailField(
+        "直接后续知识",
+        nextNodes,
+        "暂无直接后续"
+    );
+
+    if (node.note) {
+        addDetailField(
+            "说明",
+            [node.note],
+            ""
+        );
+    }
 }
 
 
