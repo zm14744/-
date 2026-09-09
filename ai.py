@@ -15,7 +15,8 @@ API_URL = "https://api.deepseek.com/chat/completions"
 ASK_AI_MOCK = False
 
 # 控制单次请求规模，避免上下文无限增长和费用失控
-MAX_HISTORY_MESSAGES = 16
+MAX_HISTORY_MESSAGES = 32
+MAX_HISTORY_CHARS = 60000
 MAX_MESSAGE_CHARS = 6000
 MAX_OUTPUT_TOKENS = max(2000, min(6000, int(os.environ.get("DEEPSEEK_MAX_OUTPUT_TOKENS", "5000"))))
 MAX_CONTINUATION_ROUNDS = 1
@@ -148,11 +149,11 @@ def _failure(error):
 
 
 def _trim_messages(messages):
-    """限制历史消息数量和单条长度，降低上下文成本。"""
+    """限制历史消息数量、单条长度和总字符量，优先保留最近上下文。"""
     if not isinstance(messages, list):
         return []
 
-    trimmed = []
+    normalized = []
     for item in messages[-MAX_HISTORY_MESSAGES:]:
         if not isinstance(item, dict):
             continue
@@ -173,12 +174,26 @@ def _trim_messages(messages):
         if len(content) > MAX_MESSAGE_CHARS:
             content = content[:MAX_MESSAGE_CHARS] + "\n[内容过长，已截断]"
 
-        trimmed.append({
+        normalized.append({
             "role": role,
             "content": content
         })
 
-    return trimmed
+    # 32 条只是数量上限。为了避免极端情况下 32 条都接近 6000 字符，
+    # 再加一层总字符预算；从最近消息向前保留，保证最新请求优先。
+    trimmed_reversed = []
+    total_chars = 0
+
+    for item in reversed(normalized):
+        content_len = len(item["content"])
+
+        if trimmed_reversed and total_chars + content_len > MAX_HISTORY_CHARS:
+            break
+
+        trimmed_reversed.append(item)
+        total_chars += content_len
+
+    return list(reversed(trimmed_reversed))
 
 
 
