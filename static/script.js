@@ -192,9 +192,25 @@ function applyAppearanceSettings(options = {}) {
         "--accent-bg",
         `rgba(${accent.rgb},.22)`
     );
+    const panelAlpha = appearanceSettings.panelOpacity / 100;
+
     root.style.setProperty(
         "--panel-alpha",
-        String(appearanceSettings.panelOpacity / 100)
+        String(panelAlpha)
+    );
+    // 全屏壁纸模式下的三层透明度。显式算成数字写入 CSS，
+    // 避免依赖浏览器对 calc() 乘法的支持。
+    root.style.setProperty(
+        "--workspace-alpha",
+        String(Math.max(0.08, Math.min(0.18, panelAlpha * 0.14)))
+    );
+    root.style.setProperty(
+        "--shell-alpha",
+        String(Math.max(0.30, Math.min(0.48, panelAlpha * 0.44)))
+    );
+    root.style.setProperty(
+        "--composer-alpha",
+        String(Math.max(0.38, Math.min(0.58, panelAlpha * 0.52)))
     );
     root.style.setProperty(
         "--bubble-alpha",
