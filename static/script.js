@@ -2873,23 +2873,12 @@ function renderLearningReview() {
 
     body.innerHTML = "";
 
-    const intro = document.createElement("div");
-    intro.className = "learning-review-intro";
-    intro.textContent = (
-        "根据当前浏览器中已经留下的学习记录做一个简短回顾。"
-        + "这里只总结现有痕迹，不做成绩、掌握度或能力评分。"
-    );
-    body.appendChild(intro);
-
     const snapshot = buildLearningReviewSnapshot();
 
     if (!snapshot.hasAnyRecord || !snapshot.sections.length) {
         const empty = document.createElement("div");
         empty.className = "learning-review-empty";
-        empty.textContent = (
-            "当前留下的学习记录还比较少，暂时没有必要生成复杂结论。"
-            + "继续正常问题、做题或使用错题本即可，之后这里会自然变得更具体。"
-        );
+        empty.textContent = "无";
         body.appendChild(empty);
         return;
     }
