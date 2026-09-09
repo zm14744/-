@@ -793,6 +793,73 @@ function isPreviousQuestionFollowUp(text) {
     );
 }
 
+function questionOrdinalReference(text) {
+    const value = String(text || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+    if (!value || value.length > 60) {
+        return null;
+    }
+
+    const match = value.match(
+        /第(一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题/
+    );
+
+    if (!match) return null;
+
+    const chinese = {
+        一: 1,
+        二: 2,
+        三: 3,
+        四: 4,
+        五: 5,
+        六: 6,
+        七: 7,
+        八: 8,
+        九: 9,
+        十: 10
+    };
+
+    const number = Object.prototype.hasOwnProperty.call(
+        chinese,
+        match[1]
+    )
+        ? chinese[match[1]]
+        : Number(match[1]);
+
+    if (!Number.isInteger(number) || number < 1) {
+        return null;
+    }
+
+    return number;
+}
+
+function isOrdinalQuestionFollowUp(text) {
+    const value = String(text || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+    const ordinal = questionOrdinalReference(value);
+    if (!ordinal) return false;
+
+    // “第2题：已知……”这种完整题干不是导航命令；只有短句式的
+    // “第一道题再讲一下 / 第二道题不会做”才切换当前题。
+    if (value.length > 42) return false;
+
+    return Boolean(
+        /(?:还记得|回到|返回|再讲|讲一下|解释|提示|不会|不懂|没懂|还是不会|继续|完整解析|答案|怎么做|如何做|看一下)/.test(value)
+        || /第(?:一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题(?:呢|吗)?$/.test(value)
+    );
+}
+
+function isQuestionNavigationFollowUp(text) {
+    return (
+        isPreviousQuestionFollowUp(text)
+        || isOrdinalQuestionFollowUp(text)
+    );
+}
+
 
 function isShortLearningFollowUp(text) {
     const value = String(text || "")
@@ -801,7 +868,7 @@ function isShortLearningFollowUp(text) {
 
     if (!value) return true;
 
-    if (isPreviousQuestionFollowUp(value)) {
+    if (isQuestionNavigationFollowUp(value)) {
         return true;
     }
 
@@ -1226,7 +1293,7 @@ function isConversationControlOnly(text) {
 
     if (!value) return true;
 
-    if (isPreviousQuestionFollowUp(value)) {
+    if (isQuestionNavigationFollowUp(value)) {
         return true;
     }
 
@@ -3389,11 +3456,21 @@ async function typesetWrongBookPdfElement(container) {
 async function rasterizeMathJaxSvgForPdf(container) {
     if (!container) return;
 
-    const svgs = [
-        ...container.querySelectorAll("mjx-container svg")
+    // MathJax SVG 输出旁边通常还带一份“辅助 MathML”。浏览器里它被
+    // CSS 隐藏，但 html2canvas 在克隆 DOM 时可能把这份无障碍文本也画出来，
+    // 于是出现矩阵/公式重影。导出副本里先彻底移除这些隐藏节点。
+    container.querySelectorAll(
+        "mjx-assistive-mml, .MJX_Assistive_MathML, [data-mjx-assistive-mml]"
+    ).forEach(node => node.remove());
+
+    const mathContainers = [
+        ...container.querySelectorAll("mjx-container")
     ];
 
-    for (const svg of svgs) {
+    for (const mathContainer of mathContainers) {
+        const svg = mathContainer.querySelector("svg");
+        if (!svg) continue;
+
         const rect = svg.getBoundingClientRect();
         const width = Math.max(1, rect.width);
         const height = Math.max(1, rect.height);
@@ -3405,6 +3482,14 @@ async function rasterizeMathJaxSvgForPdf(container) {
         );
         clone.setAttribute("width", `${width}px`);
         clone.setAttribute("height", `${height}px`);
+        clone.style.color = "#111827";
+
+        clone.querySelectorAll('[fill="currentColor"]').forEach(
+            node => node.setAttribute("fill", "#111827")
+        );
+        clone.querySelectorAll('[stroke="currentColor"]').forEach(
+            node => node.setAttribute("stroke", "#111827")
+        );
 
         const serialized = new XMLSerializer()
             .serializeToString(clone);
@@ -3423,7 +3508,7 @@ async function rasterizeMathJaxSvgForPdf(container) {
                 image.src = url;
             });
 
-            const scale = 2;
+            const scale = 2.5;
             const canvas = document.createElement("canvas");
             canvas.width = Math.max(
                 1,
@@ -3435,8 +3520,20 @@ async function rasterizeMathJaxSvgForPdf(container) {
             );
             canvas.style.width = `${width}px`;
             canvas.style.height = `${height}px`;
-            canvas.style.display = svg.style.display || "inline-block";
+
+            const isDisplay = (
+                mathContainer.getAttribute("display") === "true"
+                || mathContainer.style.display === "block"
+            );
+
+            canvas.style.display = isDisplay
+                ? "block"
+                : "inline-block";
             canvas.style.verticalAlign = "middle";
+
+            if (isDisplay) {
+                canvas.style.margin = "0.65em auto";
+            }
 
             const context = canvas.getContext("2d");
             context.setTransform(
@@ -3455,22 +3552,26 @@ async function rasterizeMathJaxSvgForPdf(container) {
                 height
             );
 
-            // html2canvas 对 MathJax SVG 的 <path>/<use> 在部分浏览器会
-            // 重复绘制。先把每个公式变成普通 canvas，再截图即可彻底
-            // 绕开这条 SVG 渲染路径。
-            svg.replaceWith(canvas);
+            // 关键：替换整个 mjx-container，而不是只替换里面的 svg。
+            // 这样 SVG、辅助 MathML、MathJax 包装层不会同时残留在截图 DOM 中。
+            mathContainer.replaceWith(canvas);
         } catch (error) {
             console.warn(
                 "PDF 数学公式栅格化失败：",
                 error
             );
+
+            // 即使某个 SVG 转换失败，也至少移除无障碍 MathML，防止重影。
+            mathContainer.querySelectorAll(
+                "mjx-assistive-mml, .MJX_Assistive_MathML"
+            ).forEach(node => node.remove());
         } finally {
             URL.revokeObjectURL(url);
         }
     }
 
     await new Promise(resolve => {
-        requestAnimationFrame(resolve);
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
     });
 }
 
@@ -5201,47 +5302,194 @@ function resolvePreviousQuestionCandidate(session) {
         : candidates[0];
 }
 
+function resolveOrdinalQuestionCandidate(session, text) {
+    const ordinal = questionOrdinalReference(text);
+    if (!ordinal) return null;
+
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+
+    if (!candidates.length) return null;
+
+    return candidates[ordinal - 1] || null;
+}
+
+function resolveQuestionNavigationCandidate(session, text) {
+    const ordinal = resolveOrdinalQuestionCandidate(
+        session,
+        text
+    );
+
+    if (ordinal) return ordinal;
+
+    if (isPreviousQuestionFollowUp(text)) {
+        return resolvePreviousQuestionCandidate(session);
+    }
+
+    return null;
+}
+
 function buildTargetQuestionApiText(userText, candidate) {
     const question = String(candidate?.text || "").trim();
+    const latestRequest = String(userText || "").trim();
 
-    if (!question) return String(userText || "");
+    if (!question) return latestRequest;
 
+    // 题目正文只是定位上下文，不是另一条待执行的用户请求。
+    // 把它与“本轮唯一请求”合并成同一个 user 消息，避免模型把
+    // 连续两条用户话语都当作本轮任务一起回答。
     return [
-        String(userText || "").trim(),
-        "",
-        "【当前指向题目】",
+        "【当前题目定位信息，仅供理解，不是待执行请求】",
         question,
-        "【当前指向题目结束】"
+        "【当前题目定位信息结束】",
+        "",
+        "【本轮唯一需要执行的用户请求】",
+        latestRequest,
+        "【本轮请求结束】",
+        "",
+        "只回答上面的本轮最新请求。不要重新执行、补答、总结或继续处理更早的用户请求；",
+        "更早的内容只能用于理解指代和题目背景。"
     ].join("\n");
 }
 
-function buildApiMessages(session) {
-    return session.messages
-        .filter(message => !message.isError && !message.isNotice)
-        .slice(-16)
-        .map(message => {
-            let content = (
-                message.role === "user"
-                && typeof message.apiText === "string"
-                && message.apiText.trim()
-            )
-                ? message.apiText
-                : message.text;
+function buildApiMessages(session, targetCandidate = null) {
+    if (!session || !Array.isArray(session.messages)) {
+        return [];
+    }
 
-            if (
-                message.role === "user"
-                && message.source === "ocr"
-            ) {
-                content = `[图片识题]\n${content}`;
+    const valid = session.messages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message }) => (
+            message
+            && !message.isError
+            && !message.isNotice
+            && typeof message.text === "string"
+            && message.text.trim()
+        ));
+
+    if (!valid.length) return [];
+
+    const latestUserEntry = [...valid]
+        .reverse()
+        .find(({ message }) => message.role === "user");
+
+    if (!latestUserEntry) return [];
+
+    const latestUser = latestUserEntry.message;
+    const latestIndex = latestUserEntry.index;
+    const target = targetCandidate
+        || activeQuestionCandidateFromHistory(session)
+        || currentQuestionCandidateFromLearningState(session);
+
+    const mapRole = role => (
+        role === "user" ? "user" : "assistant"
+    );
+
+    const messageContent = message => {
+        let content = (
+            message.role === "user"
+            && typeof message.apiText === "string"
+            && message.apiText.trim()
+        )
+            ? message.apiText
+            : message.text;
+
+        if (
+            message.role === "user"
+            && message.source === "ocr"
+        ) {
+            content = `[图片识题]\n${content}`;
+        }
+
+        return content;
+    };
+
+    if (target) {
+        const targetFingerprint = questionCandidateFingerprint(
+            target
+        );
+
+        // 对“上一题 / 第一题 / 继续 / 为什么 / 我不会”等追问，
+        // 请求中只允许存在一个“当前 user 指令”。题目正文是定位信息，
+        // 不能再单独伪装成另一条 user 消息，否则模型可能把两条都执行。
+        if (
+            target.index < latestIndex
+            || isShortLearningFollowUp(latestUser.text)
+            || latestUser.targetQuestionFingerprint
+        ) {
+            const scoped = [];
+
+            // 只有真正依赖上一段讲解位置的短追问，才保留最近一次相关
+            // assistant 回复作为背景。明确的“第一题/第二题/上一题”导航
+            // 不需要旧回答，直接围绕目标题处理最新一句即可。
+            const needsAssistantContext = (
+                !isQuestionNavigationFollowUp(latestUser.text)
+                && /(?:继续|为什么|然后呢|下一步|这一步|这里|这个|再解释|再讲一下)/.test(
+                    String(latestUser.text || "").replace(/\s+/g, "")
+                )
+            );
+
+            if (needsAssistantContext) {
+                let lastRelatedAssistant = null;
+
+                for (let index = latestIndex - 1; index >= 0; index -= 1) {
+                    const message = session.messages[index];
+
+                    if (!message || message.role !== "ai") {
+                        continue;
+                    }
+
+                    if (
+                        targetFingerprint
+                        && message.targetQuestionFingerprint === targetFingerprint
+                        && !message.isError
+                        && !message.isNotice
+                    ) {
+                        lastRelatedAssistant = message;
+                        break;
+                    }
+                }
+
+                if (lastRelatedAssistant) {
+                    scoped.push({
+                        role: "assistant",
+                        content: lastRelatedAssistant.text
+                    });
+                }
             }
 
-            return {
-                role: message.role === "user"
-                    ? "user"
-                    : "assistant",
-                content
-            };
-        });
+            const latestContent = latestUser.isRetestAnswer
+                ? messageContent(latestUser)
+                : buildTargetQuestionApiText(
+                    latestUser.text,
+                    target
+                );
+
+            scoped.push({
+                role: "user",
+                content: latestContent
+            });
+
+            return scoped;
+        }
+    }
+
+    // 一道全新的自包含题目，不需要把上一道题的完整回答继续塞进请求。
+    if (looksLikeActualLearningProblem(latestUser)) {
+        return [{
+            role: "user",
+            content: messageContent(latestUser)
+        }];
+    }
+
+    // 兼容无法识别题目锚点的旧会话，才退回一个很小的最近窗口。
+    return valid
+        .slice(-6)
+        .map(({ message }) => ({
+            role: mapRole(message.role),
+            content: messageContent(message)
+        }));
 }
 
 async function parseResponseJson(response) {
@@ -5326,6 +5574,14 @@ function attachTeachingSnapshotToLatestQuestion(
 async function requestAiReply(session) {
     if (!session) return;
 
+    const requestTargetCandidate = (
+        activeQuestionCandidateFromHistory(session)
+        || currentQuestionCandidateFromLearningState(session)
+    );
+    const requestTargetFingerprint = questionCandidateFingerprint(
+        requestTargetCandidate
+    );
+
     setSessionBusy(session.id, true);
 
     try {
@@ -5335,7 +5591,10 @@ async function requestAiReply(session) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                messages: buildApiMessages(session)
+                messages: buildApiMessages(
+                    session,
+                    requestTargetCandidate
+                )
             })
         });
 
@@ -5465,7 +5724,8 @@ async function requestAiReply(session) {
                         || returnedTeaching
                     )
                     : null
-            )
+            ),
+            targetQuestionFingerprint: requestTargetFingerprint
         };
 
         if (currentId === session.id) {
@@ -5546,12 +5806,13 @@ function send() {
 
     session.messages.push(message);
 
-    // “上一道题/上一题”是明确的上下文切换。
-    // 这里不再只靠后端从最近 16 条消息里猜，而是先由前端根据当前
-    // learningQuestion 精确找到上一题，并把目标题干通过 apiText 显式告诉后端。
-    if (isPreviousQuestionFollowUp(text)) {
-        const targetCandidate = resolvePreviousQuestionCandidate(
-            session
+    // “上一道题 / 第一题 / 第二题”都属于明确的题目导航。
+    // 在请求发出前先切换 current learningQuestion，右侧信息和后端上下文
+    // 都围绕同一道目标题，避免旧题/新题一起被回答。
+    if (isQuestionNavigationFollowUp(text)) {
+        const targetCandidate = resolveQuestionNavigationCandidate(
+            session,
+            text
         );
 
         if (targetCandidate) {
@@ -6243,6 +6504,9 @@ function addAssistantMessage(
         generatedTeaching: normalizeTeaching(
             meta.generatedTeaching
         ),
+        targetQuestionFingerprint: typeof meta.targetQuestionFingerprint === "string"
+            ? meta.targetQuestionFingerprint
+            : "",
         isError: Boolean(meta.isError),
         isNotice: Boolean(meta.isNotice)
     });
@@ -6339,6 +6603,9 @@ function startTyping(
         generatedTeaching: normalizeTeaching(
             meta.generatedTeaching
         ),
+        targetQuestionFingerprint: typeof meta.targetQuestionFingerprint === "string"
+            ? meta.targetQuestionFingerprint
+            : "",
         isError: Boolean(meta.isError),
         isNotice: Boolean(meta.isNotice)
     };
@@ -6427,23 +6694,21 @@ function finishTyping() {
 
     saveState();
 
-    renderSessions();
-    renderInfo();
-
-    refreshInputAvailability();
-
-    const mathDone = finishedDiv
-        ? renderMath(finishedDiv)
-        : Promise.resolve();
-
     if (
         typingAutoFollow
         && !typingScrollLockedByUser
     ) {
-        mathDone.then(() => {
-            scrollChatToBottom();
-        });
+        forceChatBottomOnce = true;
     }
+
+    // 重新渲染已落盘的最后一条 AI 消息，立即补上“删除”等消息操作。
+    // 旧版只把 typingDiv 换成最终 HTML，没有重新生成 msg-actions，
+    // 所以最新一条回答在下一次刷新前看不到删除按钮。
+    renderChat();
+    renderSessions();
+    renderInfo();
+
+    refreshInputAvailability();
 
     typingAutoFollow = true;
     typingScrollLockedByUser = false;
@@ -6487,23 +6752,21 @@ function forceCompleteTyping() {
 
     saveState();
 
-    renderSessions();
-    renderInfo();
-
-    refreshInputAvailability();
-
-    const mathDone = finishedDiv
-        ? renderMath(finishedDiv)
-        : Promise.resolve();
-
     if (
         typingAutoFollow
         && !typingScrollLockedByUser
     ) {
-        mathDone.then(() => {
-            scrollChatToBottom();
-        });
+        forceChatBottomOnce = true;
     }
+
+    // 重新渲染已落盘的最后一条 AI 消息，立即补上“删除”等消息操作。
+    // 旧版只把 typingDiv 换成最终 HTML，没有重新生成 msg-actions，
+    // 所以最新一条回答在下一次刷新前看不到删除按钮。
+    renderChat();
+    renderSessions();
+    renderInfo();
+
+    refreshInputAvailability();
 
     typingAutoFollow = true;
     typingScrollLockedByUser = false;
@@ -7250,7 +7513,7 @@ function activeQuestionCandidateFromHistory(session) {
         }
 
         if (
-            isPreviousQuestionFollowUp(message.text)
+            isQuestionNavigationFollowUp(message.text)
             && message.targetQuestionFingerprint
         ) {
             const target = candidates.find(candidate => (
@@ -7312,19 +7575,30 @@ function activeQuestionCandidateFromHistory(session) {
 
         if (
             message.role === "user"
-            && isPreviousQuestionFollowUp(
+            && isQuestionNavigationFollowUp(
                 message.text
             )
         ) {
             if (history.length) {
-                if (activePos === null) {
-                    activePos = history.length - 1;
-                }
-
-                activePos = Math.max(
-                    0,
-                    activePos - 1
+                const ordinal = questionOrdinalReference(
+                    message.text
                 );
+
+                if (ordinal) {
+                    activePos = Math.min(
+                        history.length - 1,
+                        Math.max(0, ordinal - 1)
+                    );
+                } else {
+                    if (activePos === null) {
+                        activePos = history.length - 1;
+                    }
+
+                    activePos = Math.max(
+                        0,
+                        activePos - 1
+                    );
+                }
             }
 
             continue;
