@@ -4025,7 +4025,10 @@ function buildRetestPrompt(entry) {
 }
 
 function startWrongQuestionRetest(id) {
-    if (typingTimer || requestBusy) {
+    if (
+        isCurrentSessionTyping()
+        || isSessionBusy(currentId)
+    ) {
         return;
     }
 
@@ -11207,6 +11210,7 @@ document.addEventListener(
         const wrongBookClose = document.getElementById("wrongBookClose");
         const wrongBookModal = document.getElementById("wrongBookModal");
         const wrongBookSearchBox = document.getElementById("wrongBookSearch");
+        const wrongBookSearchClear = document.getElementById("wrongBookSearchClear");
         const wrongBookSortBox = document.getElementById("wrongBookSort");
         const wrongPdfBtn = document.getElementById("wrongPdfBtn");
         const wrongClearCompletedBtn = document.getElementById("wrongClearCompletedBtn");
@@ -11354,10 +11358,38 @@ document.addEventListener(
         }
 
         if (wrongBookSearchBox) {
+            const syncWrongBookSearchClear = () => {
+                if (!wrongBookSearchClear) {
+                    return;
+                }
+
+                wrongBookSearchClear.classList.toggle(
+                    "hidden",
+                    !wrongBookSearchBox.value
+                );
+            };
+
             wrongBookSearchBox.addEventListener(
                 "input",
-                event => setWrongBookSearch(event.target.value)
+                event => {
+                    setWrongBookSearch(event.target.value);
+                    syncWrongBookSearchClear();
+                }
             );
+
+            if (wrongBookSearchClear) {
+                wrongBookSearchClear.addEventListener(
+                    "click",
+                    () => {
+                        wrongBookSearchBox.value = "";
+                        setWrongBookSearch("");
+                        syncWrongBookSearchClear();
+                        wrongBookSearchBox.focus();
+                    }
+                );
+            }
+
+            syncWrongBookSearchClear();
         }
 
         if (wrongBookSortBox) {
