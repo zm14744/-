@@ -11,15 +11,15 @@
 
 ```mermaid
 flowchart LR
-    B[浏览器] -->|JSON| C[/chat]
-    B -->|multipart| O[/ocr]
-    C --> TA[teaching.py]
-    TA --> KG[knowledge_graph.json]
-    C --> AI[ai.py / DeepSeek Text]
-    O --> OCR[ocr.py / PaddleOCR]
-    O --> VIS[ai.py / DeepSeek Vision]
-    B --> LS[localStorage]
-    B --> IDB[IndexedDB]
+    B["浏览器"] -->|JSON| C["POST /chat"]
+    B -->|multipart| O["POST /ocr"]
+    C --> TA["teaching.py"]
+    TA --> KG["knowledge_graph.json"]
+    C --> AI["ai.py · DeepSeek Text"]
+    O --> OCR["ocr.py · PaddleOCR"]
+    O --> VIS["ai.py · DeepSeek Vision"]
+    B --> LS["localStorage"]
+    B --> IDB["IndexedDB"]
 ```
 
 ## 2. 文本学习链路
