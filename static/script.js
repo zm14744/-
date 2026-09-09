@@ -8,6 +8,645 @@ const LEARNING_STORAGE_KEY = "discrete_math_ai_learning_v1";
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_WRONG_QUESTIONS = 80;
 
+
+// =========================================================
+// 外观系统（仅视觉状态，不读写学习/会话数据）
+// =========================================================
+const APPEARANCE_STORAGE_KEY = "discrete_math_ai_appearance_v1";
+const APPEARANCE_DB_NAME = "discrete_math_ai_appearance_assets_v1";
+const APPEARANCE_DB_STORE = "assets";
+const APPEARANCE_BACKGROUND_KEY = "global_background";
+const APPEARANCE_MAX_SOURCE_BYTES = 15 * 1024 * 1024;
+const APPEARANCE_MAX_IMAGE_SIDE = 1920;
+
+const APPEARANCE_DEFAULTS = Object.freeze({
+    mode: "dark",
+    accent: "blue",
+    fontSize: "standard",
+    backgroundFit: "cover",
+    mask: 35,
+    blur: 0,
+    panelOpacity: 100,
+    bubbleOpacity: 100
+});
+
+const APPEARANCE_ACCENTS = Object.freeze({
+    blue: {
+        main: "#3b82f6",
+        rgb: "59,130,246",
+        deep: "#2563eb",
+        deeper: "#1d4ed8",
+        soft: "#60a5fa",
+        pale: "#93c5fd"
+    },
+    purple: {
+        main: "#8b5cf6",
+        rgb: "139,92,246",
+        deep: "#7c3aed",
+        deeper: "#6d28d9",
+        soft: "#a78bfa",
+        pale: "#c4b5fd"
+    },
+    teal: {
+        main: "#14b8a6",
+        rgb: "20,184,166",
+        deep: "#0d9488",
+        deeper: "#0f766e",
+        soft: "#5eead4",
+        pale: "#99f6e4"
+    },
+    orange: {
+        main: "#f59e0b",
+        rgb: "245,158,11",
+        deep: "#d97706",
+        deeper: "#b45309",
+        soft: "#fbbf24",
+        pale: "#fde68a"
+    },
+    rose: {
+        main: "#f43f5e",
+        rgb: "244,63,94",
+        deep: "#e11d48",
+        deeper: "#be123c",
+        soft: "#fb7185",
+        pale: "#fda4af"
+    }
+});
+
+let appearanceSettings = { ...APPEARANCE_DEFAULTS };
+let appearanceBackgroundObjectUrl = "";
+let appearanceHasBackground = false;
+let appearanceSystemMedia = null;
+
+function clampAppearanceNumber(value, min, max, fallback) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number)) {
+        return fallback;
+    }
+
+    return Math.min(max, Math.max(min, number));
+}
+
+function normalizeAppearanceSettings(value) {
+    const source = value && typeof value === "object"
+        ? value
+        : {};
+
+    return {
+        mode: ["system", "light", "dark"].includes(source.mode)
+            ? source.mode
+            : APPEARANCE_DEFAULTS.mode,
+        accent: Object.prototype.hasOwnProperty.call(
+            APPEARANCE_ACCENTS,
+            source.accent
+        )
+            ? source.accent
+            : APPEARANCE_DEFAULTS.accent,
+        fontSize: ["small", "standard", "large"].includes(source.fontSize)
+            ? source.fontSize
+            : APPEARANCE_DEFAULTS.fontSize,
+        backgroundFit: ["cover", "contain"].includes(source.backgroundFit)
+            ? source.backgroundFit
+            : APPEARANCE_DEFAULTS.backgroundFit,
+        mask: clampAppearanceNumber(
+            source.mask,
+            0,
+            70,
+            APPEARANCE_DEFAULTS.mask
+        ),
+        blur: clampAppearanceNumber(
+            source.blur,
+            0,
+            12,
+            APPEARANCE_DEFAULTS.blur
+        ),
+        panelOpacity: clampAppearanceNumber(
+            source.panelOpacity,
+            75,
+            100,
+            APPEARANCE_DEFAULTS.panelOpacity
+        ),
+        bubbleOpacity: clampAppearanceNumber(
+            source.bubbleOpacity,
+            60,
+            100,
+            APPEARANCE_DEFAULTS.bubbleOpacity
+        )
+    };
+}
+
+function loadAppearanceSettings() {
+    try {
+        const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY);
+
+        if (!raw) {
+            return { ...APPEARANCE_DEFAULTS };
+        }
+
+        return normalizeAppearanceSettings(JSON.parse(raw));
+    } catch (_error) {
+        return { ...APPEARANCE_DEFAULTS };
+    }
+}
+
+function saveAppearanceSettings() {
+    try {
+        localStorage.setItem(
+            APPEARANCE_STORAGE_KEY,
+            JSON.stringify(appearanceSettings)
+        );
+    } catch (_error) {
+        // 外观保存失败不应影响学习系统本身。
+    }
+}
+
+function resolveAppearanceTheme() {
+    if (appearanceSettings.mode === "light") {
+        return "light";
+    }
+
+    if (appearanceSettings.mode === "dark") {
+        return "dark";
+    }
+
+    try {
+        return window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark";
+    } catch (_error) {
+        return "dark";
+    }
+}
+
+function fontScaleForAppearance(size) {
+    if (size === "small") return 0.92;
+    if (size === "large") return 1.08;
+    return 1;
+}
+
+function applyAppearanceSettings(options = {}) {
+    const root = document.documentElement;
+    const body = document.body;
+
+    if (!root || !body) return;
+
+    appearanceSettings = normalizeAppearanceSettings(appearanceSettings);
+
+    const accent = APPEARANCE_ACCENTS[appearanceSettings.accent]
+        || APPEARANCE_ACCENTS.blue;
+    const theme = resolveAppearanceTheme();
+
+    body.dataset.appearanceTheme = theme;
+    root.style.setProperty("--accent", accent.main);
+    root.style.setProperty("--accent-rgb", accent.rgb);
+    root.style.setProperty("--accent-deep", accent.deep);
+    root.style.setProperty("--accent-deeper", accent.deeper);
+    root.style.setProperty("--accent-soft", accent.soft);
+    root.style.setProperty("--accent-pale", accent.pale);
+    root.style.setProperty(
+        "--accent-bg",
+        `rgba(${accent.rgb},.22)`
+    );
+    root.style.setProperty(
+        "--panel-alpha",
+        String(appearanceSettings.panelOpacity / 100)
+    );
+    root.style.setProperty(
+        "--bubble-alpha",
+        String(appearanceSettings.bubbleOpacity / 100)
+    );
+    root.style.setProperty(
+        "--font-scale",
+        String(fontScaleForAppearance(appearanceSettings.fontSize))
+    );
+    root.style.setProperty(
+        "--background-mask-alpha",
+        String(appearanceSettings.mask / 100)
+    );
+    root.style.setProperty(
+        "--background-blur",
+        `${appearanceSettings.blur}px`
+    );
+    root.style.setProperty(
+        "--background-size",
+        appearanceSettings.backgroundFit
+    );
+
+    if (options.save !== false) {
+        saveAppearanceSettings();
+    }
+
+    syncAppearanceControls();
+}
+
+function syncAppearanceControls() {
+    document.querySelectorAll("[data-appearance-mode]").forEach(button => {
+        button.classList.toggle(
+            "active",
+            button.dataset.appearanceMode === appearanceSettings.mode
+        );
+    });
+
+    document.querySelectorAll("[data-appearance-accent]").forEach(button => {
+        button.classList.toggle(
+            "active",
+            button.dataset.appearanceAccent === appearanceSettings.accent
+        );
+    });
+
+    document.querySelectorAll("[data-appearance-font]").forEach(button => {
+        button.classList.toggle(
+            "active",
+            button.dataset.appearanceFont === appearanceSettings.fontSize
+        );
+    });
+
+    document.querySelectorAll("[data-appearance-fit]").forEach(button => {
+        button.classList.toggle(
+            "active",
+            button.dataset.appearanceFit === appearanceSettings.backgroundFit
+        );
+    });
+
+    const pairs = [
+        ["appearanceMaskRange", "appearanceMaskValue", appearanceSettings.mask, "%"],
+        ["appearanceBlurRange", "appearanceBlurValue", appearanceSettings.blur, "px"],
+        ["appearancePanelRange", "appearancePanelValue", appearanceSettings.panelOpacity, "%"],
+        ["appearanceBubbleRange", "appearanceBubbleValue", appearanceSettings.bubbleOpacity, "%"]
+    ];
+
+    for (const [rangeId, valueId, value, suffix] of pairs) {
+        const range = document.getElementById(rangeId);
+        const output = document.getElementById(valueId);
+
+        if (range) range.value = String(value);
+        if (output) output.textContent = `${value}${suffix}`;
+    }
+
+    updateAppearanceBackgroundUi();
+}
+
+function openAppearance() {
+    syncAppearanceControls();
+    document.getElementById("appearanceModal")?.classList.remove("hidden");
+}
+
+function closeAppearance() {
+    document.getElementById("appearanceModal")?.classList.add("hidden");
+}
+
+function openAppearanceDatabase() {
+    return new Promise((resolve, reject) => {
+        if (!("indexedDB" in window)) {
+            reject(new Error("IndexedDB unavailable"));
+            return;
+        }
+
+        const request = indexedDB.open(APPEARANCE_DB_NAME, 1);
+
+        request.onupgradeneeded = () => {
+            const db = request.result;
+
+            if (!db.objectStoreNames.contains(APPEARANCE_DB_STORE)) {
+                db.createObjectStore(APPEARANCE_DB_STORE);
+            }
+        };
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+    });
+}
+
+async function readAppearanceBackgroundBlob() {
+    const db = await openAppearanceDatabase();
+
+    try {
+        return await new Promise((resolve, reject) => {
+            const tx = db.transaction(APPEARANCE_DB_STORE, "readonly");
+            const store = tx.objectStore(APPEARANCE_DB_STORE);
+            const request = store.get(APPEARANCE_BACKGROUND_KEY);
+
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error || new Error("Background read failed"));
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function writeAppearanceBackgroundBlob(blob) {
+    const db = await openAppearanceDatabase();
+
+    try {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(APPEARANCE_DB_STORE, "readwrite");
+            tx.objectStore(APPEARANCE_DB_STORE).put(
+                blob,
+                APPEARANCE_BACKGROUND_KEY
+            );
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error || new Error("Background save failed"));
+            tx.onabort = () => reject(tx.error || new Error("Background save aborted"));
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function deleteAppearanceBackgroundBlob() {
+    const db = await openAppearanceDatabase();
+
+    try {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(APPEARANCE_DB_STORE, "readwrite");
+            tx.objectStore(APPEARANCE_DB_STORE).delete(
+                APPEARANCE_BACKGROUND_KEY
+            );
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error || new Error("Background delete failed"));
+            tx.onabort = () => reject(tx.error || new Error("Background delete aborted"));
+        });
+    } finally {
+        db.close();
+    }
+}
+
+function clearAppearanceBackgroundVisual() {
+    if (appearanceBackgroundObjectUrl) {
+        URL.revokeObjectURL(appearanceBackgroundObjectUrl);
+        appearanceBackgroundObjectUrl = "";
+    }
+
+    appearanceHasBackground = false;
+    document.body?.classList.remove("has-custom-background");
+
+    const layer = document.getElementById("appearanceBackgroundLayer");
+    if (layer) layer.style.backgroundImage = "none";
+
+    updateAppearanceBackgroundUi();
+}
+
+function setAppearanceBackgroundVisual(blob) {
+    clearAppearanceBackgroundVisual();
+
+    if (!(blob instanceof Blob)) {
+        return;
+    }
+
+    appearanceBackgroundObjectUrl = URL.createObjectURL(blob);
+    appearanceHasBackground = true;
+
+    const layer = document.getElementById("appearanceBackgroundLayer");
+    if (layer) {
+        layer.style.backgroundImage = `url("${appearanceBackgroundObjectUrl}")`;
+    }
+
+    document.body?.classList.add("has-custom-background");
+    updateAppearanceBackgroundUi();
+}
+
+function updateAppearanceBackgroundUi() {
+    const preview = document.getElementById("appearanceBackgroundPreview");
+    const remove = document.getElementById("appearanceBackgroundRemove");
+
+    if (preview) {
+        if (appearanceHasBackground && appearanceBackgroundObjectUrl) {
+            preview.textContent = "";
+            preview.style.backgroundImage = `url("${appearanceBackgroundObjectUrl}")`;
+        } else {
+            preview.textContent = "无背景";
+            preview.style.backgroundImage = "none";
+        }
+    }
+
+    if (remove) {
+        remove.disabled = !appearanceHasBackground;
+    }
+}
+
+async function loadAppearanceBackground() {
+    try {
+        const blob = await readAppearanceBackgroundBlob();
+
+        if (blob instanceof Blob) {
+            setAppearanceBackgroundVisual(blob);
+        } else {
+            clearAppearanceBackgroundVisual();
+        }
+    } catch (_error) {
+        clearAppearanceBackgroundVisual();
+    }
+}
+
+function loadImageElementFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const image = new Image();
+
+        image.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(image);
+        };
+
+        image.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error("Image decode failed"));
+        };
+
+        image.src = url;
+    });
+}
+
+async function prepareAppearanceBackgroundBlob(file) {
+    const supported = ["image/jpeg", "image/png", "image/webp"];
+
+    if (!(file instanceof Blob) || !supported.includes(file.type)) {
+        throw new Error("Unsupported image type");
+    }
+
+    if (file.size > APPEARANCE_MAX_SOURCE_BYTES) {
+        throw new Error("Image too large");
+    }
+
+    const image = await loadImageElementFromBlob(file);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+
+    if (!width || !height) {
+        throw new Error("Invalid image size");
+    }
+
+    const ratio = Math.min(
+        1,
+        APPEARANCE_MAX_IMAGE_SIDE / Math.max(width, height)
+    );
+    const targetWidth = Math.max(1, Math.round(width * ratio));
+    const targetHeight = Math.max(1, Math.round(height * ratio));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) {
+        throw new Error("Canvas unavailable");
+    }
+
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    const converted = await new Promise(resolve => {
+        canvas.toBlob(
+            blob => resolve(blob),
+            "image/webp",
+            0.88
+        );
+    });
+
+    return converted instanceof Blob && converted.size > 0
+        ? converted
+        : file;
+}
+
+async function handleAppearanceBackgroundSelected(event) {
+    const input = event?.target;
+    const file = input?.files?.[0] || null;
+
+    if (input) {
+        input.value = "";
+    }
+
+    if (!file) return;
+
+    try {
+        const blob = await prepareAppearanceBackgroundBlob(file);
+        await writeAppearanceBackgroundBlob(blob);
+        setAppearanceBackgroundVisual(blob);
+    } catch (_error) {
+        window.alert("背景图片处理失败，请换一张 JPG、PNG 或 WebP 图片。");
+    }
+}
+
+async function removeAppearanceBackground() {
+    try {
+        await deleteAppearanceBackgroundBlob();
+    } catch (_error) {
+        // 即使持久化删除失败，也先移除当前视觉背景，不影响主功能。
+    }
+
+    clearAppearanceBackgroundVisual();
+}
+
+async function resetAppearance() {
+    appearanceSettings = { ...APPEARANCE_DEFAULTS };
+    saveAppearanceSettings();
+
+    try {
+        await deleteAppearanceBackgroundBlob();
+    } catch (_error) {
+        // 无需阻断恢复默认。
+    }
+
+    clearAppearanceBackgroundVisual();
+    applyAppearanceSettings({ save: false });
+}
+
+function setupAppearanceSystemThemeListener() {
+    try {
+        appearanceSystemMedia = window.matchMedia("(prefers-color-scheme: light)");
+        const onChange = () => {
+            if (appearanceSettings.mode === "system") {
+                applyAppearanceSettings({ save: false });
+            }
+        };
+
+        if (typeof appearanceSystemMedia.addEventListener === "function") {
+            appearanceSystemMedia.addEventListener("change", onChange);
+        } else if (typeof appearanceSystemMedia.addListener === "function") {
+            appearanceSystemMedia.addListener(onChange);
+        }
+    } catch (_error) {
+        // 不支持系统主题监听时维持当前解析结果即可。
+    }
+}
+
+function bindAppearanceControls() {
+    const appearanceBtn = document.getElementById("appearanceBtn");
+    const appearanceClose = document.getElementById("appearanceClose");
+    const appearanceDone = document.getElementById("appearanceDone");
+    const appearanceReset = document.getElementById("appearanceReset");
+    const appearanceModal = document.getElementById("appearanceModal");
+    const upload = document.getElementById("appearanceBackgroundUpload");
+    const remove = document.getElementById("appearanceBackgroundRemove");
+    const input = document.getElementById("appearanceBackgroundInput");
+
+    appearanceBtn?.addEventListener("click", openAppearance);
+    appearanceClose?.addEventListener("click", closeAppearance);
+    appearanceDone?.addEventListener("click", closeAppearance);
+    appearanceReset?.addEventListener("click", resetAppearance);
+
+    appearanceModal?.addEventListener("click", event => {
+        if (event.target === appearanceModal) {
+            closeAppearance();
+        }
+    });
+
+    upload?.addEventListener("click", () => input?.click());
+    remove?.addEventListener("click", removeAppearanceBackground);
+    input?.addEventListener("change", handleAppearanceBackgroundSelected);
+
+    document.querySelectorAll("[data-appearance-mode]").forEach(button => {
+        button.addEventListener("click", () => {
+            appearanceSettings.mode = button.dataset.appearanceMode;
+            applyAppearanceSettings();
+        });
+    });
+
+    document.querySelectorAll("[data-appearance-accent]").forEach(button => {
+        button.addEventListener("click", () => {
+            appearanceSettings.accent = button.dataset.appearanceAccent;
+            applyAppearanceSettings();
+        });
+    });
+
+    document.querySelectorAll("[data-appearance-font]").forEach(button => {
+        button.addEventListener("click", () => {
+            appearanceSettings.fontSize = button.dataset.appearanceFont;
+            applyAppearanceSettings();
+        });
+    });
+
+    document.querySelectorAll("[data-appearance-fit]").forEach(button => {
+        button.addEventListener("click", () => {
+            appearanceSettings.backgroundFit = button.dataset.appearanceFit;
+            applyAppearanceSettings();
+        });
+    });
+
+    const sliders = [
+        ["appearanceMaskRange", "mask"],
+        ["appearanceBlurRange", "blur"],
+        ["appearancePanelRange", "panelOpacity"],
+        ["appearanceBubbleRange", "bubbleOpacity"]
+    ];
+
+    for (const [id, key] of sliders) {
+        document.getElementById(id)?.addEventListener("input", event => {
+            appearanceSettings[key] = Number(event.target.value);
+            applyAppearanceSettings();
+        });
+    }
+}
+
+function initAppearanceSystem() {
+    appearanceSettings = loadAppearanceSettings();
+    applyAppearanceSettings({ save: false });
+    bindAppearanceControls();
+    setupAppearanceSystemThemeListener();
+    loadAppearanceBackground();
+}
+
+
 let wrongBookFilter = "all";
 let wrongBookSearch = "";
 let wrongBookSort = "recent";
@@ -10521,6 +11160,8 @@ function renderAll() {
 document.addEventListener(
     "DOMContentLoaded",
     () => {
+        initAppearanceSystem();
+
         const input = document.getElementById("text");
         const chat = document.getElementById("chat");
         const imageBtn = document.getElementById("imageBtn");
