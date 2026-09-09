@@ -680,6 +680,59 @@ def _is_previous_question_followup(text):
     ))
 
 
+def _question_ordinal_reference(text):
+    """识别“第一道题/第2题”等会话题目序号；完整新题题干不在这里处理。"""
+    value = re.sub(r"\s+", "", str(text or "").strip())
+    if not value or len(value) > 60:
+        return None
+
+    match = re.search(
+        r"第(一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题",
+        value,
+    )
+    if not match:
+        return None
+
+    chinese = {
+        "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+        "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+    }
+    raw = match.group(1)
+    number = chinese.get(raw)
+    if number is None:
+        try:
+            number = int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    return number if number >= 1 else None
+
+
+def _is_ordinal_question_followup(text):
+    value = re.sub(r"\s+", "", str(text or "").strip())
+    ordinal = _question_ordinal_reference(value)
+    if ordinal is None or len(value) > 42:
+        return False
+
+    return bool(
+        re.search(
+            r"(?:还记得|回到|返回|再讲|讲一下|解释|提示|不会|不懂|没懂|还是不会|继续|完整解析|答案|怎么做|如何做|看一下)",
+            value,
+        )
+        or re.fullmatch(
+            r"第(?:一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题(?:呢|吗)?",
+            value,
+        )
+    )
+
+
+def _is_question_navigation_followup(text):
+    return (
+        _is_previous_question_followup(text)
+        or _is_ordinal_question_followup(text)
+    )
+
+
 def _looks_like_explicit_generated_question(text):
     """只把带明确题目标题的 assistant 内容视为 AI 生成题，避免把普通分步讲解误判为新题。"""
     value = str(text or "").strip()
@@ -704,7 +757,7 @@ def _looks_like_user_question_for_context(text):
     if not value:
         return False
 
-    if _is_previous_question_followup(value) or _looks_like_exercise_request_text(value):
+    if _is_question_navigation_followup(value) or _looks_like_exercise_request_text(value):
         return False
 
     if _detect_mode(value) == "check_answer":
@@ -785,11 +838,18 @@ def _active_question_from_messages(messages):
                     explicit_active = (explicit_target, classified)
                 continue
 
-            if _is_previous_question_followup(content):
+            if _is_question_navigation_followup(content):
                 if history:
-                    if active_pos is None:
-                        active_pos = len(history) - 1
-                    active_pos = max(0, active_pos - 1)
+                    ordinal = _question_ordinal_reference(content)
+                    if ordinal is not None:
+                        active_pos = min(
+                            len(history) - 1,
+                            max(0, ordinal - 1),
+                        )
+                    else:
+                        if active_pos is None:
+                            active_pos = len(history) - 1
+                        active_pos = max(0, active_pos - 1)
                 continue
 
         is_question = False
