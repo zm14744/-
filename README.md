@@ -122,15 +122,15 @@ MathJax 使用 `fontCache: 'none'`，PDF 导出前还会处理 MathJax SVG 与�
 
 ```mermaid
 flowchart TD
-    U[浏览器用户] --> F[前端交互层\nHTML + JavaScript]
-    F -->|/chat| A[Flask 服务编排层]
-    F -->|/ocr| A
-    A --> T[教学理解层\nteaching.py]
-    A --> L[DeepSeek 文本生成\ndeepseek-v4-flash]
-    A --> O[PaddleOCR\n文字 + 公式]
-    A --> V[DeepSeek Vision\ndeepseek-v4-flash-vision-exp]
-    T --> K[knowledge_graph.json\n10 模块 / 64 节点]
-    F --> S[浏览器学习状态\nlocalStorage + IndexedDB]
+    U["浏览器用户"] --> F["前端交互层<br/>HTML + JavaScript"]
+    F -->|POST /chat| A["Flask 服务编排层"]
+    F -->|POST /ocr| A
+    A --> T["教学理解层<br/>teaching.py"]
+    A --> L["DeepSeek 文本生成<br/>deepseek-v4-flash"]
+    A --> O["PaddleOCR<br/>文字 + 公式"]
+    A --> V["DeepSeek Vision<br/>deepseek-v4-flash-vision-exp"]
+    T --> K["knowledge_graph.json<br/>10 模块 · 64 节点"]
+    F --> S["浏览器学习状态<br/>localStorage + IndexedDB"]
 ```
 
 更详细的架构说明见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
