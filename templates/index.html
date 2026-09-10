@@ -306,6 +306,45 @@ body {
 
 .modal.hidden { display:none; }
 
+.ocr-review-dialog {
+    width:min(1160px, 94vw);
+    max-height:92vh;
+    padding:24px;
+    box-sizing:border-box;
+    overflow:auto;
+    border:1px solid var(--border-strong);
+    border-radius:14px;
+    background:var(--surface-2);
+    color:var(--text-primary);
+}
+.ocr-review-dialog::backdrop { background:rgba(2,6,23,.72); }
+.ocr-review-dialog h2 { margin:0 0 8px; font-size:1.35em; }
+.ocr-review-dialog p { margin:8px 0 16px; line-height:1.6; }
+.ocr-review-body { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+.ocr-review-preview { overflow:auto; max-height:65vh; background:var(--surface-0); border-radius:8px; }
+.ocr-review-preview img { display:block; width:100%; height:auto; }
+.ocr-review-zoom { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.ocr-review-zoom input { flex:1; }
+.ocr-review-fields { min-width:0; }
+.ocr-review-fields label { display:block; margin:0 0 8px; font-weight:600; }
+.ocr-review-fields textarea {
+    width:100%; box-sizing:border-box; resize:vertical; min-height:100px;
+    padding:12px; margin:0 0 16px; font:inherit; line-height:1.6;
+    background:var(--surface-0); color:var(--text-primary);
+    border:1px solid var(--border-strong); border-radius:8px;
+}
+.ocr-review-fields pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; font-size:.9em; }
+.ocr-review-notice { white-space:pre-wrap; padding:12px; background:var(--surface-3); border-radius:8px; }
+.ocr-review-actions { display:flex; justify-content:flex-end; gap:12px; margin-top:18px; }
+.ocr-review-actions button { padding:10px 18px; font:inherit; border:1px solid var(--border-strong); border-radius:8px; cursor:pointer; background:var(--surface-3); color:var(--text-primary); }
+.ocr-review-actions .primary { background:var(--accent); color:#fff; }
+#ocrReviewError { color:var(--text-primary); font-weight:600; }
+@media(max-width:760px) {
+    .ocr-review-body { grid-template-columns:1fr; gap:16px; }
+    .ocr-review-preview { max-height:35vh; }
+    .ocr-review-dialog { padding:16px; }
+}
+
 .modal-card {
     width:min(760px, 92vw);
     max-height:82vh;
@@ -2138,6 +2177,30 @@ window.MathJax = {
 
 
 
+<dialog id="ocrReviewDialog" class="ocr-review-dialog" aria-labelledby="ocrReviewTitle" aria-describedby="ocrReviewHelp">
+    <h2 id="ocrReviewTitle">核对图片里的题目</h2>
+    <p id="ocrReviewHelp">请对照原图检查小问、上下标和连线。有识别错误，可以直接修改右侧文字。</p>
+    <p id="ocrReviewNotice" class="ocr-review-notice" hidden></p>
+    <div class="ocr-review-body">
+        <div>
+            <label class="ocr-review-zoom" for="ocrReviewZoom">放大原图<input id="ocrReviewZoom" type="range" min="100" max="300" step="25" value="100"></label>
+            <div class="ocr-review-preview"><img id="ocrReviewImage" alt="本次上传的题目原图"></div>
+        </div>
+        <div class="ocr-review-fields">
+            <label for="ocrReviewQuestion">题目文字</label>
+            <textarea id="ocrReviewQuestion" rows="8" spellcheck="false"></textarea>
+            <label for="ocrReviewGraph">图形信息（没有图形可留空）</label>
+            <textarea id="ocrReviewGraph" rows="4" spellcheck="false"></textarea>
+            <details><summary>查看另一份文字识别结果</summary><pre id="ocrReviewOriginal"></pre></details>
+        </div>
+    </div>
+    <p id="ocrReviewError" role="alert"></p>
+    <div class="ocr-review-actions">
+        <button id="ocrReviewCancel" type="button">取消</button>
+        <button id="ocrReviewConfirm" class="primary" type="button">确认题目，开始讲解</button>
+    </div>
+</dialog>
+
 <div id="appearanceModal" class="modal hidden">
     <div class="modal-card appearance-card">
         <div class="modal-head">
@@ -2410,7 +2473,7 @@ window.MathJax = {
 </div>
 
 <script id="knowledgeGraphData" type="application/json">{{ knowledge_graph_data | tojson }}</script>
-<script src="/static/script.js?v=math-audit-v16-1"></script>
+<script src="/static/script.js?v=ocr-context-fix-20260910"></script>
 
 </body>
 </html>
