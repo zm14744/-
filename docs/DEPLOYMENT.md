@@ -6,9 +6,21 @@
 - WSGI Server：Gunicorn 23.0.0
 - 容器基础镜像：`python:3.10-slim`
 - OCR：PaddlePaddle / PaddleOCR CPU 推理
-- 部署平台：Zeabur
+- 当前部署平台：Zeabur
+- 部署历程：Render → Zeabur
 - 当前在线域名：https://discrete-math-tutor.zeabur.app
-- 当前服务器配置：2 vCPU / 4 GB RAM
+- 当前服务器：Tencent Seoul 2C 4GB
+- 当前服务器配置：2 核 CPU / 4 GB 内存
+- 当前服务器费用：US$4/月
+- 当前区域：Seoul, KR
+
+### 部署迁移记录
+
+项目早期曾部署于 Render，后迁移至 Zeabur。当前文档以 Zeabur 线上环境为准。
+
+### 当前外部模型费用记录
+
+截至 2026-09-10，项目 DeepSeek API 累计实际支出为 **¥101.56**。该数字用于记录项目真实开发、调试和运行投入，不等同于单用户成本或规模化商业成本。
 
 ## 2. Dockerfile 行为
 
