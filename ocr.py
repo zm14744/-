@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import threading
 import time
 
@@ -28,6 +29,9 @@ TEXT_REC_MODEL = "PP-OCRv6_small_rec"
 FORMULA_MODEL = "PP-FormulaNet_plus-S"
 
 MAX_IMAGE_SIDE = 2200
+SMALL_IMAGE_SIDE = 1000
+SMALL_IMAGE_TARGET_SIDE = 1400
+MAX_UPSCALE = 3.0
 MIN_TEXT_SCORE = 0.45
 FORMULA_RETRY_SECONDS = 300
 
@@ -207,24 +211,65 @@ def _decode_image(image_data):
 
 def _resize_if_needed(image):
     """
-    图片过大时只缩小，不强制放大、模糊或二值化，
-    尽量保留数学符号、上下标和细线。
+    小图最多放大三倍，帮助检测题干小字；大图限制最长边。
+    不二值化、不锐化，保留上下标和图中的细线。放大不能恢复缺失细节。
     """
     height, width = image.shape[:2]
     longest = max(height, width)
 
-    if longest <= MAX_IMAGE_SIDE:
+    if SMALL_IMAGE_SIDE <= longest <= MAX_IMAGE_SIDE:
         return image
 
-    scale = MAX_IMAGE_SIDE / float(longest)
+    if longest < SMALL_IMAGE_SIDE:
+        scale = min(MAX_UPSCALE, SMALL_IMAGE_TARGET_SIDE / float(longest))
+    else:
+        scale = MAX_IMAGE_SIDE / float(longest)
     new_width = max(1, int(width * scale))
     new_height = max(1, int(height * scale))
 
     return cv2.resize(
         image,
         (new_width, new_height),
-        interpolation=cv2.INTER_AREA
+        interpolation=cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA
     )
+
+
+def _review_regions(text_items, image_width, image_height):
+    """用文字坐标定位题干，供 Vision 查看放大的局部；不传识别出的字符。
+
+    优先保留带小问编号的文字行，忽略散落的顶点/边标签。
+    最多合为四个区域，坐标归一化到已经按 EXIF 转正的整张图片。
+    """
+    candidates = []
+    for item in text_items:
+        content = item.get("content", "")
+        numbered = bool(re.match(r"^\s*(?:[（(]\s*\d{1,2}\s*[）)]|\d{1,2}[.．、])", content))
+        chinese_count = len(re.findall(r"[\u4e00-\u9fff]", content))
+        if numbered or chinese_count >= 6:
+            candidates.append((numbered, item["box"]))
+    numbered_boxes = [box for numbered, box in candidates if numbered]
+    boxes = numbered_boxes or [box for _, box in candidates]
+    boxes.sort(key=lambda box: (box[1], box[0]))
+    if not boxes:
+        return []
+
+    # 多于四行时按阅读顺序分组，避免只看前四问而漏掉后面的题。
+    group_size = max(1, (len(boxes) + 3) // 4)
+    regions = []
+    for start in range(0, len(boxes), group_size):
+        group = boxes[start:start + group_size]
+        x1 = min(box[0] for box in group)
+        y1 = min(box[1] for box in group)
+        x2 = max(box[2] for box in group)
+        y2 = max(box[3] for box in group)
+        padding = max(6.0, (y2 - y1) * 0.3)
+        regions.append([
+            max(0.0, (x1 - padding) / image_width),
+            max(0.0, (y1 - padding) / image_height),
+            min(1.0, (x2 + padding) / image_width),
+            min(1.0, (y2 + padding) / image_height),
+        ])
+    return regions
 
 
 def _result_json(result):
@@ -538,7 +583,8 @@ def recognize_image(image_data):
             "text": "Markdown + LaTeX",
             "text_count": 普通文字区域数量,
             "formula_count": 公式区域数量,
-            "warning": 公式模块降级时的中文提示，否则为 None
+            "warning": 公式模块降级时的中文提示，否则为 None,
+            "review_regions": 最多四个归一化题干区域，仅供服务端 Vision 使用
         }
 
     只负责识题，不调用 DeepSeek，也不生成答案。
@@ -577,6 +623,7 @@ def recognize_image(image_data):
                         "请检查识别结果。"
                     )
 
+        review_regions = _review_regions(text_items, image.shape[1], image.shape[0])
         text_items = _remove_text_inside_formulas(
             text_items,
             formula_items
@@ -600,6 +647,7 @@ def recognize_image(image_data):
             "text_count": len(text_items),
             "formula_count": len(formula_items),
             "warning": formula_warning,
+            "review_regions": review_regions,
         }
 
     except OCRError:
