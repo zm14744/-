@@ -2380,6 +2380,43 @@ function isExerciseRequestText(text) {
     );
 }
 
+function exerciseTopicReference(text) {
+    const value = String(text || "");
+    const topics = [
+        ["数论", /数论|整除|素数|质数|同余|最大公(?:约|因)数|欧几里得/],
+        ["图论", /图论|邻接矩阵|欧拉(?:图|通路|回路)|哈密顿|最短路|生成树/],
+        ["集合", /集合|子集|幂集|交集|并集/],
+        ["关系", /二元关系|偏序|等价关系|关系闭包|哈斯图/],
+        ["逻辑", /逻辑|命题|真值表|范式|量词/],
+        ["组合", /组合|排列|鸽巢|容斥|计数/],
+        ["代数", /代数|子群|同态|同构/],
+        ["函数", /函数|映射|单射|满射|双射/],
+        ["递推", /递推|递归|生成函数/],
+        ["归纳", /归纳|反证|直接证明/]
+    ];
+    return topics.find(([, pattern]) => pattern.test(value))?.[0] || "";
+}
+
+function isContextualExerciseRequest(text) {
+    if (!isExerciseRequestText(text)) return false;
+    const value = String(text || "").replace(/\s+/g, "");
+    if (/(?:同(?:样|一)?|相同)(?:的)?知识点|同类|同类型|类似|相似|这(?:个|道|一)?题|那(?:个|道|一)?题|这(?:个|道)题目/.test(value)) return true;
+    if (questionOrdinalReference(value) || isPreviousQuestionFollowUp(value)) return true;
+    // “再来一道数论题”已经指定新主题；只有省略主题时才沿用当前题。
+    return !exerciseTopicReference(value)
+        && /再(?:来|出|给)|换(?:一道|一题|个)|下一题/.test(value);
+}
+
+function resolveExerciseReference(session, text) {
+    if (!isContextualExerciseRequest(text)) return null;
+    if (questionOrdinalReference(text)) return resolveOrdinalQuestionCandidate(session, text);
+    if (isPreviousQuestionFollowUp(text)) return resolvePreviousQuestionCandidate(session);
+    const topic = exerciseTopicReference(text);
+    if (topic) return resolveNamedQuestionCandidate(session, `${topic}那道题`);
+    return activeQuestionCandidateFromHistory(session)
+        || currentQuestionCandidateFromLearningState(session);
+}
+
 function extractAiGeneratedExerciseText(reply) {
     let text = String(reply || "").trim();
 
@@ -6418,6 +6455,7 @@ function resolveNamedQuestionCandidate(session, text) {
     if (!candidates.length) return null;
 
     const aliases = {
+        数论: ["数论", "整除", "素数", "质数", "因数", "约数", "同余", "欧几里得"],
         图论: ["图论", "图", "顶点", "边", "欧拉", "邻接", "路径"],
         集合: ["集合", "全集", "子集", "补集", "并集", "交集"],
         关系: ["关系", "自反", "对称", "传递", "偏序", "等价"],
@@ -6567,13 +6605,17 @@ function buildApiMessages(session, targetCandidate = null) {
         return content;
     };
 
-    // “出一道集合题 / 再来一道图论题”是一个新的出题请求，不属于
-    // 当前旧题的追问。必须原样作为唯一 user 请求发给后端，否则把旧题
-    // 锚点一起包进去会让 app.py 无法识别 exercise 模式。
+    // 同知识点练习必须携带它引用的题目；指定新主题的独立出题不带旧题。
+    // 出题模式由结构化 request_kind 指定，不再为了短句分类而丢弃上下文。
     if (isExerciseRequestText(latestUser.text)) {
+        const reference = isContextualExerciseRequest(latestUser.text)
+            ? (targetCandidate || resolveExerciseReference(session, latestUser.text))
+            : null;
         return [{
             role: "user",
-            content: messageContent(latestUser)
+            content: reference
+                ? buildTargetQuestionApiText(latestUser.text, reference)
+                : messageContent(latestUser)
         }];
     }
 
@@ -6775,12 +6817,18 @@ async function requestAiReply(session) {
         )
     );
 
-    const requestTargetCandidate = (
-        latestIsExerciseRequest
-        || latestIsFreshQuestion
-    )
-        ? null
-        : (
+    const exerciseReference = latestIsExerciseRequest
+        ? resolveExerciseReference(session, latestUserBeforeRequest?.text || "")
+        : null;
+    if (latestIsExerciseRequest
+        && isContextualExerciseRequest(latestUserBeforeRequest?.text || "")
+        && !exerciseReference) {
+        showAssistantMessage(session, "还没找到要参照的题目，请先选定一道题，或直接说明要练习的知识点。", { isError: true });
+        return;
+    }
+    const requestTargetCandidate = latestIsExerciseRequest
+        ? exerciseReference
+        : latestIsFreshQuestion ? null : (
             activeQuestionCandidateFromHistory(session)
             || currentQuestionCandidateFromLearningState(session)
         );
@@ -6831,7 +6879,10 @@ async function requestAiReply(session) {
                 // 不再只靠自然语言二次猜测“这是不是出题”。
                 request_kind: latestIsExerciseRequest
                     ? "exercise"
-                    : "chat"
+                    : "chat",
+                exercise_reference: exerciseReference
+                    ? { question: exerciseReference.text }
+                    : undefined
             })
         });
 
@@ -7212,9 +7263,92 @@ function cleanOcrTextForVisual(rawText, hasVisualStructure) {
 // -----------------------------
 // OCR 图片识题
 // -----------------------------
+let ocrReviewInProgress = false;
+
+function reviewRecognizedQuestion(file, data) {
+    const dialog = document.getElementById("ocrReviewDialog");
+    const preview = document.getElementById("ocrReviewImage");
+    const question = document.getElementById("ocrReviewQuestion");
+    const graph = document.getElementById("ocrReviewGraph");
+    const notice = document.getElementById("ocrReviewNotice");
+    const error = document.getElementById("ocrReviewError");
+    const confirm = document.getElementById("ocrReviewConfirm");
+    const cancel = document.getElementById("ocrReviewCancel");
+    const original = document.getElementById("ocrReviewOriginal");
+    const zoom = document.getElementById("ocrReviewZoom");
+    if (!dialog || !preview || !question || !graph || !confirm || !cancel) {
+        throw new Error("图片核对界面未加载，请刷新页面。");
+    }
+
+    return new Promise((resolve, reject) => {
+        const imageUrl = URL.createObjectURL(file);
+        let result = null;
+        preview.src = imageUrl;
+        preview.style.width = "100%";
+        if (zoom) zoom.value = "100";
+        question.value = typeof data.text === "string" ? data.text.trim() : "";
+        graph.value = typeof data.visual_text === "string" ? data.visual_text.trim() : "";
+        original.textContent = data.raw_ocr_text || data.text || "";
+        original.parentElement.open = false;
+        error.textContent = "";
+        const reasons = Array.isArray(data.review?.reasons) ? data.review.reasons : [];
+        notice.textContent = [data.warning, ...reasons].filter(x => typeof x === "string" && x.trim()).join("\n");
+        notice.hidden = !notice.textContent;
+
+        const resizePreview = () => { preview.style.width = `${zoom.value}%`; };
+        const cleanup = () => {
+            dialog.removeEventListener("close", finish);
+            confirm.removeEventListener("click", submit);
+            cancel.removeEventListener("click", dismiss);
+            if (zoom) zoom.removeEventListener("input", resizePreview);
+            preview.removeAttribute("src");
+            URL.revokeObjectURL(imageUrl);
+            question.value = "";
+            graph.value = "";
+            original.textContent = "";
+        };
+        const finish = () => {
+            cleanup();
+            resolve(result);
+        };
+        const dismiss = () => dialog.close();
+        const submit = () => {
+            const text = question.value.trim();
+            const visualText = graph.value.trim();
+            if (!text) {
+                error.textContent = "请先填写题目文字。";
+                question.focus();
+                return;
+            }
+            if (/\[(?:待核对|不清楚)\]/.test(text + visualText)) {
+                error.textContent = "请对照原图补全标为“待核对”的内容；看不清时可以取消并重新上传。";
+                return;
+            }
+            if (text.length + visualText.length > 5800) {
+                error.textContent = "题目过长，请只保留本次要讨论的题目和图形信息。";
+                return;
+            }
+            result = { text, visualText };
+            dialog.close();
+        };
+        confirm.addEventListener("click", submit);
+        cancel.addEventListener("click", dismiss);
+        if (zoom) zoom.addEventListener("input", resizePreview);
+        dialog.addEventListener("close", finish);
+        try {
+            dialog.showModal();
+            question.focus();
+        } catch (exception) {
+            cleanup();
+            reject(exception);
+        }
+    });
+}
+
 function openImagePicker() {
     if (
-        isCurrentSessionTyping()
+        ocrReviewInProgress
+        || isCurrentSessionTyping()
         || isSessionBusy(currentId)
     ) {
         return;
@@ -7239,6 +7373,7 @@ async function handleImageSelected(event) {
 
     if (
         !file
+        || ocrReviewInProgress
         || isCurrentSessionTyping()
         || isSessionBusy(currentId)
     ) {
@@ -7269,6 +7404,7 @@ async function handleImageSelected(event) {
     const session = getCurrent();
     if (!session) return;
 
+    ocrReviewInProgress = true;
     setSessionBusy(session.id, true);
 
     try {
@@ -7292,20 +7428,7 @@ async function handleImageSelected(event) {
             return;
         }
 
-        const rawText = typeof data.text === "string"
-            ? data.text.trim()
-            : "";
-
-        const visualText = typeof data.visual_text === "string"
-            ? data.visual_text.trim()
-            : "";
-
-        const text = cleanOcrTextForVisual(
-            rawText,
-            Boolean(visualText)
-        );
-
-        if (!text && !visualText) {
+        if (!data.text && !data.visual_text) {
             showAssistantMessage(
                 session,
                 "没有识别到有效的题目内容，请重新拍摄或裁剪图片。",
@@ -7313,6 +7436,12 @@ async function handleImageSelected(event) {
             );
             return;
         }
+
+        // 对照原图修改后再登记为题目；取消、Esc 均不产生聊天/错题记录。
+        // 这里不再自动删除题干片段，避免把真实条件当成图形噪声删掉。
+        const reviewed = await reviewRecognizedQuestion(file, data);
+        if (!reviewed || !sessions.some(item => item.id === session.id)) return;
+        const { text, visualText } = reviewed;
 
         const parts = [];
 
@@ -7338,17 +7467,6 @@ async function handleImageSelected(event) {
             "ocr"
         );
 
-        if (
-            typeof data.warning === "string"
-            && data.warning.trim()
-        ) {
-            session.messages.push({
-                role: "ai",
-                text: `识别提示：${data.warning.trim()}`,
-                isNotice: true
-            });
-        }
-
         saveState();
         renderChat();
         renderSessions();
@@ -7365,10 +7483,11 @@ async function handleImageSelected(event) {
         return;
 
     } finally {
+        ocrReviewInProgress = false;
         setSessionBusy(session.id, false);
     }
 
-    // OCR 完成后自动把识别结果交给 AI。
+    // 只把用户核对后的题目交给 AI。
     // 后端 SYSTEM_PROMPT 会把“图片识题”默认处理为提示优先。
     await requestAiReply(session);
 }
