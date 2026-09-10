@@ -15,13 +15,16 @@ Content-Type：`application/json`
 ```json
 {
   "messages": [
-    {"role": "user", "content": "什么是欧拉图？"}
+    {"role": "user", "content": "给我一道和上一题同知识点的练习题"}
   ],
-  "request_kind": ""
+  "request_kind": "exercise",
+  "exercise_reference": {
+    "question": "上一道已定位题目的完整题干"
+  }
 }
 ```
 
-`request_kind="exercise"` 表示前端明确声明本轮为出题请求。
+`request_kind="exercise"` 表示前端明确声明本轮为出题请求。`exercise_reference` 为可选字段，仅用于需要参照某一道已有题生成同知识点题/复测题的场景；普通聊天和不需要参照题的独立出题可以省略。
 
 ### 输入规则
 
@@ -30,6 +33,9 @@ Content-Type：`application/json`
 - 单次最多保留最近 32 条；
 - 单条消息最多 6000 字符；
 - 空内容会被忽略；
+- `exercise_reference` 若存在，则必须同时满足 `request_kind="exercise"`，且格式为包含非空 `question` 字符串的对象；参照题题干同样受 6000 字符上限约束；
+- 后端不会信任前端传入的知识分类，而会对 `exercise_reference.question` 重新执行 `analyze_question()`；
+- 使用参照题时，后端把模型上下文收束为“当前指向题目 + 本轮唯一需要执行的用户请求”，减少其他历史题干扰；
 - 聊天限流：20 次 / 60 秒 / 客户端IP。
 
 ### 普通成功响应
@@ -58,11 +64,11 @@ Content-Type：`application/json`
 }
 ```
 
-`generated_answer` 是后端从模型输出中分离出的参考答案信息；初次展示给学生的 `reply` 仅包含题目。
+`generated_answer` 是后端从模型输出中分离出的参考答案信息；初次展示给学生的 `reply` 仅包含题目。错题复测流程会把该字段保存在复测会话内部，用于后续核验学生对本次复测题的作答，但不会在出题阶段直接展示给学生。
 
 ### 主要错误状态
 
-- 400：请求格式错误、无有效消息、单条消息超过6000字符；
+- 400：请求格式错误、无有效消息、单条消息超过6000字符、练习参照题格式错误或参照题与本轮要求组合过长；
 - 429：请求频率超过限制；
 - 500：服务编排或生成题登记异常；
 - 502：模型返回空内容或生成题缺少有效题干；
