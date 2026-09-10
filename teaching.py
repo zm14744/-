@@ -179,6 +179,7 @@ CATEGORY_RULES = {
     },
     "初等数论": {
         "keywords": [
+            "数论",
             "整除", "素数", "质数", "合数", "因数", "约数", "最大公因数", "最大公约数",
             "最小公倍数", "欧几里得算法", "辗转相除", "同余", "模运算", "mod",
             "线性同余", "一次同余", "欧拉函数", "欧拉定理", "费马小定理", "rsa", "公钥密码",
@@ -853,6 +854,13 @@ def _looks_like_user_question_for_context(text):
     return len(value) >= 60
 
 
+def extract_current_request(text):
+    """题目锚点用于定位；教学模式只读取其中的本轮请求。"""
+    value = str(text or "")
+    match = re.search(r"【本轮唯一需要执行的用户请求】\s*([\s\S]*?)\s*【本轮请求结束】", value)
+    return match.group(1).strip() if match else value.strip()
+
+
 def _extract_explicit_target_question(text):
     """读取前端为“上一道题”导航附带的明确目标题干。"""
     value = str(text or "")
@@ -967,7 +975,7 @@ def analyze_messages(messages):
         return analyze_question("")
 
     latest = user_messages[-1]
-    mode = _detect_mode(latest)
+    mode = _detect_mode(extract_current_request(latest))
 
     active = _active_question_from_messages(messages)
 
@@ -1049,6 +1057,8 @@ def teaching_prompt(context):
         ),
         "exercise": (
             "学生要求生成练习。用户可见部分必须严格只包含题目本身。"
+            "如果请求附有【当前指向题目】，以这道题作为同知识点练习的唯一参照，"
+            "保持其核心考点，变换条件或数值；不要取用会话里另一道题的考点，也不要回答原题。"
             "固定使用“【题目】”作为题干标题；标题前不要写“好的、给你一道题”等开场白。"
             "题目后绝对不要附提示、思路提示、解题思路、思路、关键点、引导问题、解题方向、答案、解析、"
             "‘你先试试/卡住再告诉我’等任何教学话术。"
