@@ -826,8 +826,14 @@ function normalizeRetestSession(value) {
                 .map(item => item.trim())
                 .slice(0, 2)
             : [],
+        referenceQuestion: typeof value.referenceQuestion === "string"
+            ? value.referenceQuestion.trim().slice(0, 3000)
+            : "",
         generatedQuestion: typeof value.generatedQuestion === "string"
             ? value.generatedQuestion.trim().slice(0, 3000)
+            : "",
+        generatedAnswer: typeof value.generatedAnswer === "string"
+            ? value.generatedAnswer.trim().slice(0, 1200)
             : "",
         startedAt: Number.isFinite(value.startedAt)
             ? value.startedAt
@@ -1419,36 +1425,43 @@ function getLatestUserMessage(session) {
     return null;
 }
 
-function isPreviousQuestionFollowUp(text) {
-    const value = String(text || "")
+function normalizeQuestionReferenceText(text) {
+    return String(text || "")
         .trim()
         .replace(/\s+/g, "");
+}
 
-    if (!value || value.length > 60) {
+function hasExplicitExerciseGenerationCue(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!value || value.length > 140) {
         return false;
     }
 
-    return /(?:上一道题|上一题|前一道题|前一题|前面那道题|前面那题|刚才上一道题|刚才上一题)/.test(
-        value
+    return Boolean(
+        /(?:出|生成|来|安排|准备).{0,10}(?:题目|题|练习)/.test(value)
+        || /给我(?:来|出|生成)?(?:一|两|二|几|个|道|\d){1,3}.{0,10}(?:题目|题|练习)/.test(value)
+        || /(?:再来|再出|再给|换)(?:一|两|二|几|个|道|\d){0,3}(?:题目|题|练习)/.test(value)
+        || /(?:想|要|想要|可以|能不能).{0,8}(?:做|练|刷).{0,16}(?:题目|题|练习)/.test(value)
+        || /^(?:请)?给我(?:下一道题|下一题|下一个题)$/.test(value)
     );
 }
 
-function questionOrdinalReference(text) {
-    const value = String(text || "")
-        .trim()
-        .replace(/\s+/g, "");
+function parseQuestionReferenceNumber(raw) {
+    const value = String(raw || "").trim();
 
-    if (!value || value.length > 60) {
-        return null;
+    if (!value) return null;
+
+    if (/^\d{1,3}$/.test(value)) {
+        const number = Number(value);
+        return Number.isInteger(number) && number >= 1
+            ? number
+            : null;
     }
 
-    const match = value.match(
-        /第(一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题/
-    );
-
-    if (!match) return null;
-
-    const chinese = {
+    const normalized = value.replace(/两/g, "二");
+    const digits = {
+        零: 0,
         一: 1,
         二: 2,
         三: 3,
@@ -1457,75 +1470,407 @@ function questionOrdinalReference(text) {
         六: 6,
         七: 7,
         八: 8,
-        九: 9,
-        十: 10
+        九: 9
     };
 
-    const number = Object.prototype.hasOwnProperty.call(
-        chinese,
-        match[1]
-    )
-        ? chinese[match[1]]
-        : Number(match[1]);
+    if (Object.prototype.hasOwnProperty.call(digits, normalized)) {
+        return digits[normalized] || null;
+    }
 
-    if (!Number.isInteger(number) || number < 1) {
+    // 会话里的题目数量通常不会很大，这里稳定支持 1~99 的中文序号：
+    // 十、十一、二十、二十三……
+    if (/^[一二三四五六七八九]?十[一二三四五六七八九]?$/.test(normalized)) {
+        const [left, right = ""] = normalized.split("十");
+        const tens = left ? digits[left] : 1;
+        const ones = right ? digits[right] : 0;
+        const number = tens * 10 + ones;
+        return number >= 1 ? number : null;
+    }
+
+    return null;
+}
+
+function questionOrdinalReference(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!value || value.length > 90) {
         return null;
     }
 
-    return number;
-}
+    // “倒数第二题”必须走倒序题号逻辑；不能误抽成“第二题”。
+    if (/倒数第[零一二三四五六七八九十两\d]{1,4}/.test(value)) {
+        return null;
+    }
 
-function isOrdinalQuestionFollowUp(text) {
-    const value = String(text || "")
-        .trim()
-        .replace(/\s+/g, "");
-
-    const ordinal = questionOrdinalReference(value);
-    if (!ordinal) return false;
-
-    // “第2题：已知……”这种完整题干不是导航命令；只有短句式的
-    // “第一道题再讲一下 / 第二道题不会做”才切换当前题。
-    if (value.length > 42) return false;
-
-    return Boolean(
-        /(?:还记得|回到|返回|再讲|讲一下|解释|提示|不会|不懂|没懂|还是不会|继续|完整解析|答案|怎么做|如何做|看一下)/.test(value)
-        || /第(?:一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题(?:呢|吗)?$/.test(value)
+    // 注意：这里故意不把“第2小题”当成会话历史第2题。
+    // “第2小题 / 第2问”应继续留在当前大题内部，由模型回答当前题的小问。
+    const match = value.match(
+        /第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?/
     );
+
+    if (!match) return null;
+
+    return parseQuestionReferenceNumber(match[1]);
 }
 
-function namedQuestionTopicReference(text) {
-    const value = String(text || "")
-        .trim()
-        .replace(/\s+/g, "");
+function questionReverseOrdinalReference(text) {
+    const value = normalizeQuestionReferenceText(text);
 
-    if (!value || value.length > 60) {
-        return "";
+    if (!value || value.length > 90) {
+        return null;
     }
 
     const match = value.match(
-        /(?:还记得|回到|返回|刚才|之前|前面)?(?:关于)?(.{1,12}?)(?:的)?(?:那道题|那题)(?:呢|吗|吧|再讲一下|讲一下|不会做|不会|不懂|没懂|还是不会|怎么做|如何做)?$/
+        /倒数第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?/
+    );
+
+    if (!match) return null;
+
+    return parseQuestionReferenceNumber(match[1]);
+}
+
+function questionBoundaryReference(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!value || value.length > 90) {
+        return "";
+    }
+
+    if (
+        /(?:最开始|最早|开头|起初)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?/.test(value)
+    ) {
+        return "first";
+    }
+
+    if (
+        /(?:最后|最末|最晚|最新)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?/.test(value)
+    ) {
+        return "last";
+    }
+
+    if (
+        /(?:当前|现在|目前|正在讲|刚才|刚刚)(?:的)?(?:这|那|一)?(?:道|个)?(?:大|练习)?题(?:目)?/.test(value)
+        || /^(?:这|那|本)(?:一)?(?:道|个)?(?:大)?题(?:目)?(?:呢|吗|啊|呀|吧|不(?:太|怎么)?会|不会|怎么做|如何做|再讲一下|讲一下|继续|提示一下)?$/.test(value)
+    ) {
+        return "current";
+    }
+
+    return "";
+}
+
+function parseRelativeQuestionOffset(value) {
+    const text = normalizeQuestionReferenceText(value);
+    if (!text) return null;
+
+    // “最后一道题”里包含字面子串“后一道题”，必须先排除边界指代。
+    if (
+        /(?:最后|最末|最晚|最新|最开始|最早|开头|起初)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?/.test(text)
+    ) {
+        return null;
+    }
+
+    if (/(?:上上|前前)(?:一)?(?:道|个)?(?:大|练习)?题/.test(text)) {
+        return -2;
+    }
+
+    if (/(?:下下|后后)(?:一)?(?:道|个)?(?:大|练习)?题/.test(text)) {
+        return 2;
+    }
+
+    if (/(?:再|又)(?:往|向)?(?:上|前)(?:一)?(?:道|个)?(?:大|练习)?题/.test(text)) {
+        return -2;
+    }
+
+    if (/(?:再|又)(?:往|向)?(?:下|后)(?:一)?(?:道|个)?(?:大|练习)?题/.test(text)) {
+        return 2;
+    }
+
+    let match = text.match(
+        /(?:往|向)(?:前|上)([零一二三四五六七八九十两\d]{1,4})(?:道|个)?(?:大|练习)?题/
+    );
+    if (match) {
+        const steps = parseQuestionReferenceNumber(match[1]);
+        return steps ? -steps : null;
+    }
+
+    match = text.match(
+        /(?:往|向)(?:后|下)([零一二三四五六七八九十两\d]{1,4})(?:道|个)?(?:大|练习)?题/
+    );
+    if (match) {
+        const steps = parseQuestionReferenceNumber(match[1]);
+        return steps || null;
+    }
+
+    if (
+        /(?:上一道(?:大|练习)?题|上一(?:大|练习)?题|上一个(?:大|练习)?题|前一道(?:大|练习)?题|前一(?:大|练习)?题|前一个(?:大|练习)?题|前面(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题|刚才上一道(?:大|练习)?题|刚才上一(?:大|练习)?题)/.test(text)
+    ) {
+        return -1;
+    }
+
+    if (
+        /(?:下一道(?:大|练习)?题|下一(?:大|练习)?题|下一个(?:大|练习)?题|后一道(?:大|练习)?题|后一(?:大|练习)?题|后一个(?:大|练习)?题|后面(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题)/.test(text)
+    ) {
+        return 1;
+    }
+
+    return null;
+}
+
+function relativeQuestionReference(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!value || value.length > 110) {
+        return null;
+    }
+
+    // 当前大题内部的“第2小题 / 第2问”及其前后小问，不参与会话题目导航。
+    if (/第[零一二三四五六七八九十两\d]{1,4}(?:个|道)?小题|第[零一二三四五六七八九十两\d]{1,4}问/.test(value)) {
+        return null;
+    }
+
+    const normalOrdinalPattern = /第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?/;
+    const reverseOrdinalPattern = /倒数第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?/;
+
+    const reverseMatch = value.match(reverseOrdinalPattern);
+    if (reverseMatch) {
+        const anchorReverseOrdinal = parseQuestionReferenceNumber(
+            reverseMatch[1]
+        );
+        const suffix = value.slice(
+            (reverseMatch.index || 0) + reverseMatch[0].length
+        );
+        const offset = parseRelativeQuestionOffset(suffix);
+
+        if (anchorReverseOrdinal && offset) {
+            return {
+                offset,
+                anchorOrdinal: null,
+                anchorReverseOrdinal,
+                anchorBoundary: ""
+            };
+        }
+    }
+
+    const normalMatch = value.match(normalOrdinalPattern);
+    if (normalMatch && !value.includes("倒数第")) {
+        const anchorOrdinal = parseQuestionReferenceNumber(
+            normalMatch[1]
+        );
+        const suffix = value.slice(
+            (normalMatch.index || 0) + normalMatch[0].length
+        );
+        const offset = parseRelativeQuestionOffset(suffix);
+
+        if (anchorOrdinal && offset) {
+            return {
+                offset,
+                anchorOrdinal,
+                anchorReverseOrdinal: null,
+                anchorBoundary: ""
+            };
+        }
+    }
+
+    const boundaryAnchors = [
+        ["first", /(?:最开始|最早|开头|起初)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?/],
+        ["last", /(?:最后|最末|最晚|最新)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?/],
+        ["current", /(?:当前|现在|目前|正在讲|刚才|刚刚)(?:的)?(?:这|那|一)?(?:道|个)?(?:大|练习)?题(?:目)?/]
+    ];
+
+    for (const [anchorBoundary, pattern] of boundaryAnchors) {
+        const match = value.match(pattern);
+        if (!match) continue;
+
+        const suffix = value.slice(
+            (match.index || 0) + match[0].length
+        );
+        const offset = parseRelativeQuestionOffset(suffix);
+
+        if (offset) {
+            return {
+                offset,
+                anchorOrdinal: null,
+                anchorReverseOrdinal: null,
+                anchorBoundary
+            };
+        }
+    }
+
+    const offset = parseRelativeQuestionOffset(value);
+    if (!offset) return null;
+
+    return {
+        offset,
+        anchorOrdinal: null,
+        anchorReverseOrdinal: null,
+        anchorBoundary: ""
+    };
+}
+
+function isPreviousQuestionFollowUp(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!value || value.length > 100) {
+        return false;
+    }
+
+    // “给我一道和上一题类似的题”是出题请求，不是切换当前题。
+    if (hasExplicitExerciseGenerationCue(value)) {
+        return false;
+    }
+
+    const reference = relativeQuestionReference(value);
+    return Boolean(reference && reference.offset < 0);
+}
+
+function isNextQuestionFollowUp(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!value || value.length > 100) {
+        return false;
+    }
+
+    // “给我下一道题 / 出下一题”应继续走出题逻辑。
+    if (hasExplicitExerciseGenerationCue(value)) {
+        return false;
+    }
+
+    const reference = relativeQuestionReference(value);
+    return Boolean(reference && reference.offset > 0);
+}
+
+function isOrdinalQuestionFollowUp(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    const ordinal = questionOrdinalReference(value);
+    if (!ordinal || value.length > 90) return false;
+
+    if (hasExplicitExerciseGenerationCue(value)) {
+        return false;
+    }
+
+    // “第2题：已知……”这种完整题干不是导航命令。
+    const freshProblemAfterReference = /第[零一二三四五六七八九十两\d]{1,4}(?:个|道)?(?:大|练习|例|习)?题(?:目)?[：:]?(?:已知|设|给定|若|求|证明|计算|判断|写出|列出)/.test(
+        value
+    );
+
+    if (freshProblemAfterReference) {
+        return false;
+    }
+
+    // “第2题的下一题”属于相对导航，由 relativeQuestionReference 处理。
+    if (relativeQuestionReference(value)) {
+        return false;
+    }
+
+    if (
+        /(?:还记得|回到|返回|切到|跳到|再讲|讲一下|解释|提示|不(?:太|怎么)?会|不会|有点不会|做不来|没思路|没头绪|卡住|不懂|没懂|还是不会|继续|完整解析|答案|怎么做|如何做|看一下)/.test(
+            value
+        )
+    ) {
+        return true;
+    }
+
+    return /^第[零一二三四五六七八九十两\d]{1,4}(?:个|道)?(?:大|练习|例|习)?题(?:目)?(?:呢|吗|啊|呀|吧)?$/.test(
+        value
+    );
+}
+
+function isReverseOrdinalQuestionFollowUp(text) {
+    const value = normalizeQuestionReferenceText(text);
+    const ordinal = questionReverseOrdinalReference(value);
+
+    if (!ordinal || value.length > 90) {
+        return false;
+    }
+
+    if (hasExplicitExerciseGenerationCue(value)) {
+        return false;
+    }
+
+    return true;
+}
+
+function isBoundaryQuestionFollowUp(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!questionBoundaryReference(value)) {
+        return false;
+    }
+
+    if (hasExplicitExerciseGenerationCue(value)) {
+        return false;
+    }
+
+    return true;
+}
+
+function namedQuestionTopicReference(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    if (!value || value.length > 100) {
+        return "";
+    }
+
+    // 优先保留更精确的课程模块名称，避免“谓词逻辑那道题”被降成笼统的“逻辑”。
+    const preciseTopics = [
+        ["谓词逻辑", /谓词逻辑|谓词|量词|个体域|辖域|前束范式/],
+        ["命题逻辑", /命题逻辑|命题|真值表|逻辑联结词|主析取|主合取|范式/],
+        ["证明与归纳", /证明与归纳|数学归纳|强归纳|反证法|反证|直接证明/],
+        ["初等数论", /初等数论|数论|整除|素数|质数|同余|最大公(?:约|因)数|欧几里得/],
+        ["计数与组合", /计数与组合|组合|排列|鸽巢|容斥|计数/],
+        ["递推关系", /递推关系|递推|递归|生成函数/],
+        ["图论", /图论|邻接矩阵|欧拉(?:图|通路|回路)|哈密顿|最短路|生成树|顶点|边/],
+        ["代数结构", /代数结构|群|子群|半群|幺半群|同态|同构|环|域|格|布尔代数/],
+        ["函数", /函数|映射|单射|满射|双射|逆函数|复合函数/],
+        ["集合与关系", /集合与关系/],
+        ["关系", /二元关系|关系|偏序|等价关系|关系闭包|哈斯图|自反|对称|传递/],
+        ["集合", /集合|子集|幂集|交集|并集|补集/]
+    ];
+
+    const hasReferenceCue = /(?:那|这)(?:一)?(?:道|个)?(?:大|练习)?题|(?:刚才|之前|前面|上面)(?:的)?[^，。！？!?]{0,24}题|[^，。！？!?]{1,24}(?:的)?那(?:一)?(?:道|个)?(?:大|练习)?题/.test(
+        value
+    );
+
+    if (hasReferenceCue) {
+        const matched = preciseTopics.find(([, pattern]) => pattern.test(value));
+        if (matched) {
+            return matched[0];
+        }
+    }
+
+    const match = value.match(
+        /(?:还记得|回到|返回|切到|跳到|刚才|之前|前面|上面)?(?:关于)?(.{1,24}?)(?:的)?(?:那|这)(?:一)?(?:道|个)?(?:大|练习)?题(?:目)?(?:呢|吗|吧|啊|呀|再讲一下|讲一下|不(?:太|怎么)?会|不会|有点不会|做不来|没思路|不懂|没懂|还是不会|怎么做|如何做)?$/
     );
 
     if (!match) return "";
 
     return String(match[1] || "")
-        .replace(/^(?:关于|刚才|之前|前面)/, "")
+        .replace(/^(?:关于|刚才|之前|前面|上面)/, "")
         .replace(/(?:相关|方面)$/, "")
         .trim();
 }
 
 function isNamedQuestionFollowUp(text) {
-    return Boolean(namedQuestionTopicReference(text));
+    const value = normalizeQuestionReferenceText(text);
+
+    if (hasExplicitExerciseGenerationCue(value)) {
+        return false;
+    }
+
+    return Boolean(namedQuestionTopicReference(value));
 }
 
 function isQuestionNavigationFollowUp(text) {
     return (
         isPreviousQuestionFollowUp(text)
+        || isNextQuestionFollowUp(text)
         || isOrdinalQuestionFollowUp(text)
+        || isReverseOrdinalQuestionFollowUp(text)
+        || isBoundaryQuestionFollowUp(text)
         || isNamedQuestionFollowUp(text)
     );
 }
-
 
 function isShortLearningFollowUp(text) {
     const value = String(text || "")
@@ -1574,8 +1919,8 @@ function isShortLearningFollowUp(text) {
         /用.+(?:列|写|表示|展开)一下$/,
         /(?:再|重新).+(?:讲|写|列|解释|说明)一下$/,
         /(?:换|改).+(?:写法|表示|形式)$/,
-        /^(?:这个|这里|这一步|上面|刚才).{0,12}(?:怎么|为什么|什么意思|看不懂|不明白)/,
-        /(?:怎么写|怎么表示|怎么列|什么意思|看不懂|不明白)$/
+        /^(?:这个|这里|这一步|上面|刚才).{0,12}(?:怎么|为什么|什么意思|看不懂|不明白|不(?:太|怎么)?会|不会|没思路|卡住)/,
+        /(?:怎么写|怎么表示|怎么列|什么意思|看不懂|不明白|不(?:太|怎么)?会|不会|没思路|没头绪|卡住)$/
     ];
 
     if (
@@ -2354,65 +2699,130 @@ function splitQuestionBankText(text) {
 }
 
 function isExerciseRequestText(text) {
-    const value = String(text || "")
-        .trim()
-        .replace(/\s+/g, "");
+    const value = normalizeQuestionReferenceText(text);
 
     if (
         !value
-        || value.length > 120
+        || value.length > 140
         || /^(?:不要|别|不用|无需).{0,18}(?:出|生成|来|给).{0,8}(?:题目|题|练习)/.test(value)
     ) {
         return false;
     }
 
-    // 出题属于结构化动作，宁可多覆盖自然说法，也不要让 AI 已经出了题
-    // 但前端没有把它登记成 generatedQuestion。只要同时出现“生成动作”
-    // 和“题/练习”目标，就视为明确出题请求。
-    const hasGenerateAction = /(?:出|生成|来|给我|给个|来个|安排|准备)/.test(value);
-    const hasExerciseTarget = /(?:题目|题|练习)/.test(value);
-    const wantsPractice = /(?:想|要|想要|可以|能不能).{0,8}(?:做|练|刷).{0,16}(?:题目|题|练习)/.test(value);
-
     return Boolean(
-        (hasGenerateAction && hasExerciseTarget)
-        || wantsPractice
-        || /(?:再来一个|再来一道|换一道|换一题|下一题)$/.test(value)
+        hasExplicitExerciseGenerationCue(value)
+        || /^(?:再来一个|再来一道|换一道|换一题|下一题|下一道题|下一道|下一个题)$/.test(value)
     );
 }
 
 function exerciseTopicReference(text) {
     const value = String(text || "");
     const topics = [
-        ["数论", /数论|整除|素数|质数|同余|最大公(?:约|因)数|欧几里得/],
-        ["图论", /图论|邻接矩阵|欧拉(?:图|通路|回路)|哈密顿|最短路|生成树/],
-        ["集合", /集合|子集|幂集|交集|并集/],
-        ["关系", /二元关系|偏序|等价关系|关系闭包|哈斯图/],
-        ["逻辑", /逻辑|命题|真值表|范式|量词/],
-        ["组合", /组合|排列|鸽巢|容斥|计数/],
-        ["代数", /代数|子群|同态|同构/],
-        ["函数", /函数|映射|单射|满射|双射/],
-        ["递推", /递推|递归|生成函数/],
-        ["归纳", /归纳|反证|直接证明/]
+        ["谓词逻辑", /谓词逻辑|谓词|量词|个体域|辖域|前束范式/],
+        ["命题逻辑", /命题逻辑|命题|真值表|逻辑联结词|主析取|主合取|范式/],
+        ["证明与归纳", /证明与归纳|数学归纳|强归纳|反证法|反证|直接证明/],
+        ["初等数论", /初等数论|数论|整除|素数|质数|同余|最大公(?:约|因)数|欧几里得|RSA/],
+        ["计数与组合", /计数与组合|组合|排列|鸽巢|容斥|计数/],
+        ["递推关系", /递推关系|递推|递归|生成函数/],
+        ["图论", /图论|邻接矩阵|欧拉(?:图|通路|回路)|哈密顿|最短路|生成树|顶点|边/],
+        ["代数结构", /代数结构|半群|幺半群|子群|同态|同构|布尔代数|环|域|格/],
+        ["函数", /函数|映射|单射|满射|双射|逆函数|复合函数/],
+        ["关系", /二元关系|偏序|等价关系|关系闭包|哈斯图|自反|反自反|对称|反对称|传递/],
+        ["集合", /集合|子集|幂集|交集|并集|补集/]
     ];
     return topics.find(([, pattern]) => pattern.test(value))?.[0] || "";
 }
 
+function hasExplicitExerciseReferenceCue(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    return Boolean(
+        /(?:和|与|根据|基于|参考|按照|照着|仿照).{0,24}(?:第[零一二三四五六七八九十两\d]+题|倒数第|上一|下一|前一|后一|最后|最开始|最早)/.test(value)
+        || /(?:第[零一二三四五六七八九十两\d]+题|倒数第[零一二三四五六七八九十两\d]+题|上一道题|上一题|下一道题|下一题|最后一道题|最后一题).{0,10}(?:的)?(?:同知识点|同类|同类型|类似|相似|复测)/.test(value)
+    );
+}
+
+function isNextExerciseContinuationRequest(text) {
+    const value = normalizeQuestionReferenceText(text);
+
+    return /^(?:请|麻烦)?(?:给我|帮我)?(?:出|生成|来)?(?:下一道题|下一题|下一个题)$/.test(
+        value
+    );
+}
+
 function isContextualExerciseRequest(text) {
     if (!isExerciseRequestText(text)) return false;
-    const value = String(text || "").replace(/\s+/g, "");
-    if (/(?:同(?:样|一)?|相同)(?:的)?知识点|同类|同类型|类似|相似|这(?:个|道|一)?题|那(?:个|道|一)?题|这(?:个|道)题目/.test(value)) return true;
-    if (questionOrdinalReference(value) || isPreviousQuestionFollowUp(value)) return true;
-    // “再来一道数论题”已经指定新主题；只有省略主题时才沿用当前题。
-    return !exerciseTopicReference(value)
-        && /再(?:来|出|给)|换(?:一道|一题|个)|下一题/.test(value);
+
+    const value = normalizeQuestionReferenceText(text);
+
+    const structural = structuralQuestionReference(value);
+
+    if (structural && hasExplicitExerciseReferenceCue(value)) {
+        return true;
+    }
+
+    if (namedQuestionTopicReference(value)) {
+        return true;
+    }
+
+    const deicticQuestion = /(?:这|那)(?:一)?(?:道|个)?(?:大)?题(?:目)?|(?:刚才|之前|前面|上面)(?:的)?(?:这|那|一)?(?:道|个)?(?:大)?题(?:目)?/.test(
+        value
+    );
+
+    if (deicticQuestion) {
+        return true;
+    }
+
+    // 用户已经明确给出新主题/知识点时，直接按新主题出题，
+    // 不因为“同知识点”这几个字就强行寻找旧题。
+    if (exerciseTopicReference(value)) {
+        return false;
+    }
+
+    if (/(?:同(?:样|一)?|相同)(?:的)?知识点|同类|同类型|类似|相似/.test(value)) {
+        return true;
+    }
+
+    // “给我下一道题 / 出下一题 / 下一题”都属于继续当前练习序列；
+    // 若是裸“下一题”且历史里确实存在后一道题，send() 会优先导航，不会走出题。
+    if (
+        isNextExerciseContinuationRequest(value)
+        || /^(?:下一道)$/.test(value)
+    ) {
+        return true;
+    }
+
+    return /^(?:再来一个|再来一道|换一道|换一题)$/.test(value);
 }
 
 function resolveExerciseReference(session, text) {
     if (!isContextualExerciseRequest(text)) return null;
-    if (questionOrdinalReference(text)) return resolveOrdinalQuestionCandidate(session, text);
-    if (isPreviousQuestionFollowUp(text)) return resolvePreviousQuestionCandidate(session);
-    const topic = exerciseTopicReference(text);
-    if (topic) return resolveNamedQuestionCandidate(session, `${topic}那道题`);
+
+    const value = normalizeQuestionReferenceText(text);
+    const structural = structuralQuestionReference(value);
+
+    if (structural && hasExplicitExerciseReferenceCue(value)) {
+        return resolveStructuralQuestionCandidate(
+            session,
+            value
+        );
+    }
+
+    const named = resolveNamedQuestionCandidate(session, value);
+    if (named) {
+        return named;
+    }
+
+    // “给我下一道题 / 出下一题 / 裸下一题”都以当前题作为继续练习的参照；
+    // “下一题不太会/讲下一题”则属于导航，不会进入这个分支。
+    if (
+        isNextExerciseContinuationRequest(value)
+        || /^(?:下一道)$/.test(value)
+    ) {
+        return activeQuestionCandidateFromHistory(session)
+            || currentQuestionCandidateFromLearningState(session);
+    }
+
     return activeQuestionCandidateFromHistory(session)
         || currentQuestionCandidateFromLearningState(session);
 }
@@ -4047,17 +4457,18 @@ function buildRetestPrompt(entry) {
             || "这道题涉及的核心知识点"
         );
 
+    // 原错题通过 exercise_reference 单独、结构化地发给后端。
+    // 这里仅保留“本轮动作”，避免原题在 prompt 里重复两遍，
+    // 也避免把“原错题正文”误当成本轮要回答的题。
     return [
         "【错题复测】",
         `请围绕知识点“${targetText}”生成 1 道新的离散数学复测题。`,
         "要求：",
-        "1. 与下面原错题考查同一核心能力，但题面、数字或结构必须明显不同；",
+        "1. 与当前指向的原错题考查同一核心能力，但题面、数字或结构必须明显不同；",
         "2. 难度与原题大致相当，不要故意变难；",
         "3. 只给复测题目，不给答案、提示、解析或解题步骤；",
         "4. 题目必须信息完整、可独立作答；",
-        "",
-        "原错题：",
-        entry.question
+        "5. 不要回答原错题，只生成新的复测题。"
     ].join("\n");
 }
 
@@ -4104,7 +4515,9 @@ function startWrongQuestionRetest(id) {
             wrongQuestionId: entry.id,
             stage: "generating",
             targetPoints,
+            referenceQuestion: entry.question,
             generatedQuestion: "",
+            generatedAnswer: "",
             startedAt: Date.now(),
             result: ""
         }
@@ -4124,7 +4537,12 @@ function startWrongQuestionRetest(id) {
     requestAiReply(session);
 }
 
-function processWrongQuestionRetestReply(session, reply) {
+function processWrongQuestionRetestReply(
+    session,
+    reply,
+    generatedQuestion = "",
+    generatedAnswer = ""
+) {
     const retest = normalizeRetestSession(session?.retest);
 
     if (!session || !retest || !retest.wrongQuestionId) {
@@ -4142,9 +4560,25 @@ function processWrongQuestionRetestReply(session, reply) {
     }
 
     if (retest.stage === "generating") {
-        retest.generatedQuestion = String(reply || "")
+        const cleanQuestion = sanitizeStoredWrongQuestionText(
+            generatedQuestion
+            || extractAiGeneratedExerciseText(reply)
+            || reply
+        );
+
+        if (!cleanQuestion) {
+            return false;
+        }
+
+        retest.referenceQuestion = (
+            retest.referenceQuestion
+            || entry.question
+            || ""
+        ).slice(0, 3000);
+        retest.generatedQuestion = cleanQuestion.slice(0, 3000);
+        retest.generatedAnswer = String(generatedAnswer || "")
             .trim()
-            .slice(0, 3000);
+            .slice(0, 1200);
         retest.stage = "awaiting_answer";
         session.retest = retest;
 
@@ -6395,40 +6829,183 @@ function currentQuestionCandidateFromLearningState(session) {
     );
 }
 
-function resolvePreviousQuestionCandidate(session) {
+function structuralQuestionReference(text) {
+    const value = normalizeQuestionReferenceText(text);
+    if (!value) return null;
+
+    const relative = relativeQuestionReference(value);
+    if (relative) {
+        return {
+            kind: "relative",
+            offset: relative.offset,
+            anchorOrdinal: relative.anchorOrdinal,
+            anchorReverseOrdinal: relative.anchorReverseOrdinal,
+            anchorBoundary: relative.anchorBoundary
+        };
+    }
+
+    const reverseOrdinal = questionReverseOrdinalReference(value);
+    if (reverseOrdinal) {
+        return {
+            kind: "reverse_ordinal",
+            ordinal: reverseOrdinal
+        };
+    }
+
+    const ordinal = questionOrdinalReference(value);
+    if (ordinal) {
+        return {
+            kind: "ordinal",
+            ordinal
+        };
+    }
+
+    const boundary = questionBoundaryReference(value);
+    if (boundary) {
+        return {
+            kind: boundary
+        };
+    }
+
+    return null;
+}
+
+function currentQuestionPositionInCandidates(session, candidates) {
+    if (!Array.isArray(candidates) || !candidates.length) {
+        return -1;
+    }
+
+    const current = currentQuestionCandidateFromLearningState(
+        session
+    );
+
+    if (current) {
+        const fingerprint = questionCandidateFingerprint(current);
+        const position = candidates.findIndex(candidate => (
+            questionCandidateFingerprint(candidate) === fingerprint
+        ));
+
+        if (position >= 0) {
+            return position;
+        }
+    }
+
+    return candidates.length - 1;
+}
+
+function resolveStructuralQuestionPosition(
+    reference,
+    candidateCount,
+    currentPosition
+) {
+    if (!reference || candidateCount <= 0) {
+        return -1;
+    }
+
+    let position = -1;
+
+    if (reference.kind === "relative") {
+        let basePosition = currentPosition;
+
+        if (reference.anchorOrdinal) {
+            basePosition = reference.anchorOrdinal - 1;
+        } else if (reference.anchorReverseOrdinal) {
+            basePosition = candidateCount - reference.anchorReverseOrdinal;
+        } else if (reference.anchorBoundary === "first") {
+            basePosition = 0;
+        } else if (reference.anchorBoundary === "last") {
+            basePosition = candidateCount - 1;
+        } else if (reference.anchorBoundary === "current") {
+            basePosition = currentPosition;
+        }
+
+        if (basePosition < 0 || basePosition >= candidateCount) {
+            return -1;
+        }
+
+        position = basePosition + reference.offset;
+    } else if (reference.kind === "ordinal") {
+        position = reference.ordinal - 1;
+    } else if (reference.kind === "reverse_ordinal") {
+        position = candidateCount - reference.ordinal;
+    } else if (reference.kind === "first") {
+        position = 0;
+    } else if (reference.kind === "last") {
+        position = candidateCount - 1;
+    } else if (reference.kind === "current") {
+        position = currentPosition;
+    }
+
+    return (
+        Number.isInteger(position)
+        && position >= 0
+        && position < candidateCount
+    )
+        ? position
+        : -1;
+}
+
+function resolveStructuralQuestionCandidate(session, text) {
+    const reference = structuralQuestionReference(text);
+    if (!reference) return null;
+
     const candidates = collectConversationQuestionCandidates(
         session
     );
 
     if (!candidates.length) return null;
 
-    // 当前题优先以 learningQuestion 为准。这样 A -> B 后，
-    // “上一道题”明确从 B 往前退到 A，而不是重新猜最近主题。
-    const current = currentQuestionCandidateFromLearningState(
+    const currentPosition = currentQuestionPositionInCandidates(
+        session,
+        candidates
+    );
+    const position = resolveStructuralQuestionPosition(
+        reference,
+        candidates.length,
+        currentPosition
+    );
+
+    return position >= 0
+        ? candidates[position]
+        : null;
+}
+
+function resolvePreviousQuestionCandidate(session, steps = 1) {
+    const candidates = collectConversationQuestionCandidates(
         session
     );
 
-    if (current) {
-        const position = candidates.findIndex(
-            candidate => (
-                questionCandidateFingerprint(candidate)
-                === questionCandidateFingerprint(current)
-            )
-        );
+    if (!candidates.length) return null;
 
-        if (position > 0) {
-            return candidates[position - 1];
-        }
+    const currentPosition = currentQuestionPositionInCandidates(
+        session,
+        candidates
+    );
+    const offset = -Math.max(1, Number(steps) || 1);
+    const position = currentPosition + offset;
 
-        if (position === 0) {
-            return candidates[0];
-        }
-    }
+    return position >= 0
+        ? candidates[position]
+        : null;
+}
 
-    // 兼容旧会话：若还没有 learningQuestion，就退到时间上倒数第二道。
-    return candidates.length >= 2
-        ? candidates[candidates.length - 2]
-        : candidates[0];
+function resolveNextQuestionCandidate(session, steps = 1) {
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+
+    if (!candidates.length) return null;
+
+    const currentPosition = currentQuestionPositionInCandidates(
+        session,
+        candidates
+    );
+    const offset = Math.max(1, Number(steps) || 1);
+    const position = currentPosition + offset;
+
+    return position < candidates.length
+        ? candidates[position]
+        : null;
 }
 
 function resolveOrdinalQuestionCandidate(session, text) {
@@ -6444,6 +7021,19 @@ function resolveOrdinalQuestionCandidate(session, text) {
     return candidates[ordinal - 1] || null;
 }
 
+function resolveReverseOrdinalQuestionCandidate(session, text) {
+    const ordinal = questionReverseOrdinalReference(text);
+    if (!ordinal) return null;
+
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+
+    if (!candidates.length) return null;
+
+    return candidates[candidates.length - ordinal] || null;
+}
+
 function resolveNamedQuestionCandidate(session, text) {
     const topic = namedQuestionTopicReference(text);
     if (!topic) return null;
@@ -6455,19 +7045,34 @@ function resolveNamedQuestionCandidate(session, text) {
     if (!candidates.length) return null;
 
     const aliases = {
-        数论: ["数论", "整除", "素数", "质数", "因数", "约数", "同余", "欧几里得"],
-        图论: ["图论", "图", "顶点", "边", "欧拉", "邻接", "路径"],
-        集合: ["集合", "全集", "子集", "补集", "并集", "交集"],
-        关系: ["关系", "自反", "对称", "传递", "偏序", "等价"],
-        逻辑: ["逻辑", "命题", "真值", "范式", "量词"],
-        组合: ["组合", "排列", "鸽巢", "容斥", "递推"],
-        代数: ["代数", "群", "子群", "同态", "同构"]
+        命题逻辑: ["命题逻辑", "命题", "真值", "真值表", "逻辑联结词", "范式", "主析取", "主合取"],
+        谓词逻辑: ["谓词逻辑", "谓词", "量词", "个体域", "辖域", "前束范式"],
+        证明与归纳: ["证明与归纳", "直接证明", "反证", "反证法", "数学归纳", "强归纳"],
+        集合与关系: ["集合与关系", "集合", "关系", "偏序", "等价关系", "闭包"],
+        集合: ["集合", "全集", "子集", "补集", "并集", "交集", "幂集"],
+        关系: ["关系", "二元关系", "自反", "对称", "传递", "偏序", "等价", "哈斯图", "闭包"],
+        函数: ["函数", "映射", "单射", "满射", "双射", "逆函数", "复合函数"],
+        初等数论: ["初等数论", "数论", "整除", "素数", "质数", "因数", "约数", "同余", "欧几里得", "RSA"],
+        数论: ["初等数论", "数论", "整除", "素数", "质数", "因数", "约数", "同余", "欧几里得", "RSA"],
+        计数与组合: ["计数与组合", "组合", "排列", "鸽巢", "容斥", "计数"],
+        组合: ["计数与组合", "组合", "排列", "鸽巢", "容斥", "计数"],
+        递推关系: ["递推关系", "递推", "递归", "生成函数"],
+        递推: ["递推关系", "递推", "递归", "生成函数"],
+        图论: ["图论", "图", "顶点", "边", "欧拉", "邻接", "路径", "哈密顿", "生成树", "最短路"],
+        代数结构: ["代数结构", "代数", "群", "子群", "半群", "幺半群", "同态", "同构", "环", "域", "格", "布尔代数"],
+        代数: ["代数结构", "代数", "群", "子群", "半群", "幺半群", "同态", "同构", "环", "域", "格", "布尔代数"],
+        逻辑: ["命题逻辑", "谓词逻辑", "逻辑", "命题", "真值", "量词", "谓词", "范式"],
+        归纳: ["证明与归纳", "数学归纳", "强归纳", "反证", "直接证明"]
     };
 
     let terms = [topic];
 
     for (const [name, values] of Object.entries(aliases)) {
-        if (topic.includes(name) || name.includes(topic)) {
+        if (
+            topic === name
+            || topic.includes(name)
+            || name.includes(topic)
+        ) {
             terms = [...new Set([...terms, ...values])];
         }
     }
@@ -6492,13 +7097,30 @@ function resolveNamedQuestionCandidate(session, text) {
 
         for (const term of terms) {
             if (term && haystack.includes(term)) {
-                score += term === topic ? 5 : 1;
+                // 精确模块/主题名称权重更高，避免“谓词逻辑”被最近的命题逻辑题抢走。
+                score += term === topic ? 8 : 1;
             }
         }
 
         if (
+            teaching?.category
+            && (
+                teaching.category === topic
+                || topic.includes(teaching.category)
+                || teaching.category.includes(topic)
+            )
+        ) {
+            score += 12;
+        }
+
+        if (
             score > bestScore
-            || (score === bestScore && score > 0 && best && candidate.index > best.index)
+            || (
+                score === bestScore
+                && score > 0
+                && best
+                && candidate.index > best.index
+            )
         ) {
             best = candidate;
             bestScore = score;
@@ -6509,25 +7131,74 @@ function resolveNamedQuestionCandidate(session, text) {
 }
 
 function resolveQuestionNavigationCandidate(session, text) {
-    const ordinal = resolveOrdinalQuestionCandidate(
-        session,
-        text
-    );
+    const structural = structuralQuestionReference(text);
 
-    if (ordinal) return ordinal;
-
-    const named = resolveNamedQuestionCandidate(
-        session,
-        text
-    );
-
-    if (named) return named;
-
-    if (isPreviousQuestionFollowUp(text)) {
-        return resolvePreviousQuestionCandidate(session);
+    if (structural) {
+        return resolveStructuralQuestionCandidate(
+            session,
+            text
+        );
     }
 
-    return null;
+    return resolveNamedQuestionCandidate(
+        session,
+        text
+    );
+}
+
+function questionNavigationFailureMessage(session, text) {
+    const candidates = collectConversationQuestionCandidates(
+        session
+    );
+    const count = candidates.length;
+
+    if (!count) {
+        return "当前会话还没有识别到可引用的题目，请先输入或生成一道题。";
+    }
+
+    const structural = structuralQuestionReference(text);
+
+    if (structural?.kind === "relative") {
+        const currentPosition = currentQuestionPositionInCandidates(
+            session,
+            candidates
+        );
+        let basePosition = currentPosition;
+
+        if (structural.anchorOrdinal) {
+            basePosition = structural.anchorOrdinal - 1;
+        } else if (structural.anchorReverseOrdinal) {
+            basePosition = count - structural.anchorReverseOrdinal;
+        } else if (structural.anchorBoundary === "first") {
+            basePosition = 0;
+        } else if (structural.anchorBoundary === "last") {
+            basePosition = count - 1;
+        }
+
+        const targetPosition = basePosition + structural.offset;
+
+        if (targetPosition < 0) {
+            return "前面已经没有更早的题目了；当前指代已经到第一道已识别题。";
+        }
+
+        if (targetPosition >= count) {
+            return "后面还没有可切换的已识别题目；当前指代已经到最后一道题。";
+        }
+    }
+
+    if (structural?.kind === "ordinal") {
+        return `当前会话共识别到 ${count} 道题，找不到第 ${structural.ordinal} 题。`;
+    }
+
+    if (structural?.kind === "reverse_ordinal") {
+        return `当前会话共识别到 ${count} 道题，找不到倒数第 ${structural.ordinal} 题。`;
+    }
+
+    if (namedQuestionTopicReference(text)) {
+        return "没找到你指的那一道主题题目。可以改说“第2题”“上一道题”“下一道题”或更具体的知识点名称。";
+    }
+
+    return "没找到你指的那一道题。可以改说“第2题”“上一道题”“下一道题”“最后一道题”或具体知识点名称。";
 }
 
 function buildTargetQuestionApiText(userText, candidate) {
@@ -6606,8 +7277,18 @@ function buildApiMessages(session, targetCandidate = null) {
     };
 
     // 同知识点练习必须携带它引用的题目；指定新主题的独立出题不带旧题。
-    // 出题模式由结构化 request_kind 指定，不再为了短句分类而丢弃上下文。
-    if (isExerciseRequestText(latestUser.text)) {
+    // 注意：裸“下一题”在历史中确实存在后一道题时，会被 send() 解析为
+    // 导航并写入 targetQuestionFingerprint，此时不能再误走出题分支。
+    const latestIsResolvedNavigation = Boolean(
+        isQuestionNavigationFollowUp(latestUser.text)
+        && latestUser.targetQuestionFingerprint
+        && !hasExplicitExerciseGenerationCue(latestUser.text)
+    );
+
+    if (
+        isExerciseRequestText(latestUser.text)
+        && !latestIsResolvedNavigation
+    ) {
         const reference = isContextualExerciseRequest(latestUser.text)
             ? (targetCandidate || resolveExerciseReference(session, latestUser.text))
             : null;
@@ -6804,32 +7485,135 @@ async function requestAiReply(session) {
     const latestUserBeforeRequest = getLatestUserMessage(
         session
     );
-    const latestIsExerciseRequest = isExerciseRequestText(
-        latestUserBeforeRequest?.text || ""
+    const retestBeforeRequest = normalizeRetestSession(
+        session.retest
     );
+    const latestIsRetestGeneration = Boolean(
+        latestUserBeforeRequest?.isRetestPrompt
+        && retestBeforeRequest?.stage === "generating"
+    );
+
+    const latestText = latestUserBeforeRequest?.text || "";
+    const latestIsNavigationRequest = Boolean(
+        latestUserBeforeRequest
+        && isQuestionNavigationFollowUp(latestText)
+    );
+
+    // send() 已经解析过导航时，优先使用它写入的强指纹；
+    // 兼容旧会话/旧消息时，再现场解析一次。避免“下一题”被解析两次而跳两格。
+    let navigationCandidate = null;
+
+    if (latestIsNavigationRequest) {
+        navigationCandidate = latestUserBeforeRequest?.targetQuestionFingerprint
+            ? findQuestionCandidateByFingerprint(
+                session,
+                latestUserBeforeRequest.targetQuestionFingerprint
+            )
+            : resolveQuestionNavigationCandidate(
+                session,
+                latestText
+            );
+    }
+
+    const rawExerciseRequest = isExerciseRequestText(latestText);
+    const latestIsExerciseRequest = Boolean(
+        latestIsRetestGeneration
+        || (
+            rawExerciseRequest
+            && !(
+                navigationCandidate
+                && !hasExplicitExerciseGenerationCue(latestText)
+            )
+        )
+    );
+
     const latestIsFreshQuestion = Boolean(
         latestUserBeforeRequest
         && looksLikeActualLearningProblem(
             latestUserBeforeRequest
         )
-        && !isQuestionNavigationFollowUp(
-            latestUserBeforeRequest.text
-        )
+        && !latestIsNavigationRequest
     );
 
-    const exerciseReference = latestIsExerciseRequest
-        ? resolveExerciseReference(session, latestUserBeforeRequest?.text || "")
-        : null;
-    if (latestIsExerciseRequest
-        && isContextualExerciseRequest(latestUserBeforeRequest?.text || "")
-        && !exerciseReference) {
-        showAssistantMessage(session, "还没找到要参照的题目，请先选定一道题，或直接说明要练习的知识点。", { isError: true });
+    // 明确说“第99题 / 下一题不太会 / 某主题那道题”却找不到目标时，
+    // 不能悄悄回落到当前题，否则就是用户截图里那类“答错题”的根源。
+    // 裸“下一题”在已经位于最后一题时仍允许走“继续出题”快捷逻辑。
+    if (
+        latestIsNavigationRequest
+        && !navigationCandidate
+        && !latestIsExerciseRequest
+    ) {
+        showAssistantMessage(
+            session,
+            questionNavigationFailureMessage(
+                session,
+                latestText
+            ),
+            { isError: true }
+        );
         return;
     }
+
+    // 普通“同知识点出题”从当前会话里找参照题；
+    // 错题复测则直接使用错题本保存的原题，不能再去新建的复测会话里找。
+    const exerciseReference = (
+        latestIsExerciseRequest
+        && !latestIsRetestGeneration
+    )
+        ? resolveExerciseReference(
+            session,
+            latestUserBeforeRequest?.text || ""
+        )
+        : null;
+
+    let retestReferenceQuestion = "";
+
+    if (latestIsRetestGeneration && retestBeforeRequest) {
+        const entry = learningState.wrongQuestions.find(
+            item => item.id === retestBeforeRequest.wrongQuestionId
+        );
+
+        retestReferenceQuestion = String(
+            retestBeforeRequest.referenceQuestion
+            || entry?.question
+            || ""
+        ).trim().slice(0, 3000);
+    }
+
+    if (
+        latestIsExerciseRequest
+        && !latestIsRetestGeneration
+        && isContextualExerciseRequest(
+            latestUserBeforeRequest?.text || ""
+        )
+        && !exerciseReference
+    ) {
+        showAssistantMessage(
+            session,
+            "还没找到要参照的题目。你可以说“第一道题 / 上一道题 / 数论那道题”，也可以直接说明要练习的知识点。",
+            { isError: true }
+        );
+        return;
+    }
+
+    if (
+        latestIsRetestGeneration
+        && !retestReferenceQuestion
+    ) {
+        rollbackRetestAfterRequestFailure(session);
+        showAssistantMessage(
+            session,
+            "复测原题已经丢失，请回到错题本重新发起复测。",
+            { isError: true }
+        );
+        return;
+    }
+
     const requestTargetCandidate = latestIsExerciseRequest
         ? exerciseReference
         : latestIsFreshQuestion ? null : (
-            activeQuestionCandidateFromHistory(session)
+            navigationCandidate
+            || activeQuestionCandidateFromHistory(session)
             || currentQuestionCandidateFromLearningState(session)
         );
     const requestTargetFingerprint = questionCandidateFingerprint(
@@ -6880,9 +7664,11 @@ async function requestAiReply(session) {
                 request_kind: latestIsExerciseRequest
                     ? "exercise"
                     : "chat",
-                exercise_reference: exerciseReference
-                    ? { question: exerciseReference.text }
-                    : undefined
+                exercise_reference: retestReferenceQuestion
+                    ? { question: retestReferenceQuestion }
+                    : exerciseReference
+                        ? { question: exerciseReference.text }
+                        : undefined
             })
         });
 
@@ -7039,7 +7825,9 @@ async function requestAiReply(session) {
 
         const retestHandled = processWrongQuestionRetestReply(
             session,
-            data.reply
+            data.reply,
+            localGeneratedQuestion,
+            data.generated_answer || ""
         );
 
         if (!retestHandled) {
@@ -7135,14 +7923,33 @@ function send() {
     const retest = normalizeRetestSession(session.retest);
 
     if (retest && retest.stage === "awaiting_answer") {
-        message.apiText = [
+        const retestCheckParts = [
             "【错题复测回答】",
-            "这是我的答案，请严格检查是否正确。",
+            "请只检查下面这道复测题的学生作答，不要把它和原错题或会话里的其他题混在一起。",
             "如果全部正确，请明确说“这次作答正确”；",
-            "如果存在任何实质错误，请明确说“这次作答有错误”。",
+            "如果存在任何实质错误，请明确说“这次作答有错误”；",
+            "如果信息不足，请明确说“现有信息不足以判断”。",
             "",
+            "【复测题目】",
+            retest.generatedQuestion || "（题目缺失）"
+        ];
+
+        if (retest.generatedAnswer) {
+            retestCheckParts.push(
+                "",
+                "【系统参考答案，仅用于核验】",
+                retest.generatedAnswer,
+                "不要直接向学生泄露这段系统参考答案；应先判断学生作答，再按教学模式给纠正方向。"
+            );
+        }
+
+        retestCheckParts.push(
+            "",
+            "【学生作答】",
             text
-        ].join("\n");
+        );
+
+        message.apiText = retestCheckParts.join("\n");
         message.isRetestAnswer = true;
 
         retest.stage = "checking";
@@ -9030,24 +9837,23 @@ function activeQuestionCandidateFromHistory(session) {
             )
         ) {
             if (history.length) {
-                const ordinal = questionOrdinalReference(
+                const structural = structuralQuestionReference(
                     message.text
                 );
 
-                if (ordinal) {
-                    activePos = Math.min(
-                        history.length - 1,
-                        Math.max(0, ordinal - 1)
+                if (structural) {
+                    const basePosition = activePos === null
+                        ? history.length - 1
+                        : activePos;
+                    const resolvedPosition = resolveStructuralQuestionPosition(
+                        structural,
+                        history.length,
+                        basePosition
                     );
-                } else {
-                    if (activePos === null) {
-                        activePos = history.length - 1;
-                    }
 
-                    activePos = Math.max(
-                        0,
-                        activePos - 1
-                    );
+                    if (resolvedPosition >= 0) {
+                        activePos = resolvedPosition;
+                    }
                 }
             }
 
