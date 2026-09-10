@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from flask import Flask, jsonify, render_template, request
 
 from ai import ask_ai, analyze_image_structure
-from teaching import analyze_messages, analyze_question
+from teaching import analyze_messages, analyze_question, extract_current_request
 
 
 # -----------------------------
@@ -530,12 +530,34 @@ def chat():
             "error": "没有检测到有效消息内容。"
         }), 400
 
+    # 同知识点出题的参照题由前端显式提交。只接收题干，分类由后端重新计算。
+    reference = data.get("exercise_reference")
+    reference_teaching = None
+    if reference is not None:
+        if (not client_requires_exercise or not isinstance(reference, dict)
+                or not isinstance(reference.get("question"), str)
+                or not reference["question"].strip()
+                or len(reference["question"]) > MAX_MESSAGE_CHARS):
+            return jsonify({"error": "练习参照题格式不正确，请重新选择题目。"}), 400
+        reference_text = reference["question"].strip()
+        reference_teaching = analyze_question(reference_text)
+        # 无论客户端是否已打包锚点，后端都统一为一份参照题和一个当前动作。
+        latest_user = next((item for item in reversed(cleaned) if item["role"] == "user"), None)
+        if latest_user is None:
+            return jsonify({"error": "缺少本次出题请求。"}), 400
+        latest_action = extract_current_request(latest_user["content"])
+        content = ("【当前指向题目】\n" + reference_text + "\n【当前指向题目结束】\n"
+                   "【本轮唯一需要执行的用户请求】\n" + latest_action + "\n【本轮请求结束】")
+        if len(content) > MAX_MESSAGE_CHARS:
+            return jsonify({"error": "参照题和出题要求过长，请精简后重试。"}), 400
+        cleaned = [{"role": "user", "content": content}]
+
     teaching = analyze_messages(cleaned)
 
     # 前端明确声明本轮是“出题”时，模式以该结构化信号为准，
     # 不再依赖自然语言分类是否恰好命中。这样 AI 一定收到练习出题提示词。
     if client_requires_exercise:
-        teaching = dict(teaching or {})
+        teaching = dict(reference_teaching or teaching or {})
         teaching["mode"] = "exercise"
         teaching["mode_label"] = "练习出题"
         teaching["question_type"] = teaching.get("question_type") or "出题请求"
@@ -632,6 +654,17 @@ def chat():
                     "teaching": teaching
                 }), 500
 
+            # 阻止已能明确分类的跨课程串题进入聊天和错题本。
+            # 分类不能替代数学核验；分类未知时不据此断言模型出错。
+            if reference_teaching:
+                expected = reference_teaching.get("category")
+                actual = generated_teaching.get("category")
+                if expected not in (None, "", "待识别") and actual not in (None, "", "待识别", expected):
+                    return jsonify({
+                        "error": "生成的练习偏离了参照题的知识点，请重新生成。",
+                        "teaching": teaching,
+                    }), 502
+
             # 只有题干和题目分类都完成登记后，才把题目展示给前端。
             reply = (
                 "【题目】\n\n"
@@ -712,6 +745,49 @@ def analyze_questions_batch():
     })
 
 
+def _numbered_ocr_questions(text):
+    """只比较正文的小问，不让图中散落的顶点标签参与题干校验。"""
+    matches = list(re.finditer(
+        r"(?m)^\s*(?:[（(]\s*(\d{1,2})\s*[）)]|([0-9]{1,2})[.．、])\s*",
+        str(text or ""),
+    ))
+    questions = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        questions[match.group(1) or match.group(2)] = text[match.end():end].strip()
+    return questions
+
+
+def _ocr_math_tokens(text):
+    """统一 v3 / v_3 / v_{3} / v₃ 等写法；不更改数字的值。"""
+    value = str(text).translate(str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789"))
+    value = re.sub(r"([A-Za-z])\s*_\s*\{?\s*(\d+)\s*\}?", r"\1\2", value)
+    return re.findall(r"[A-Za-z]\s*\d+|\d+(?:\.\d+)?", value)
+
+
+def _prepare_ocr_review(ocr_text, corrected_text, uncertain_fields=None):
+    """Vision 是待核对候选。漏问时保留 OCR，数字变化明确列出。"""
+    original = _numbered_ocr_questions(ocr_text)
+    candidate = _numbered_ocr_questions(corrected_text)
+    missing = sorted(set(original) - set(candidate), key=int) if corrected_text else []
+    reasons = []
+    changes = []
+    if missing:
+        reasons.append("另一份识别结果缺少第 " + "、".join(missing) + " 问，已保留原文字结果。")
+        corrected_text = ""
+    else:
+        for number in sorted(set(original) & set(candidate), key=int):
+            before, after = _ocr_math_tokens(original[number]), _ocr_math_tokens(candidate[number])
+            if before != after:
+                changes.append({"question": number, "ocr": "、".join(before), "vision": "、".join(after)})
+        if changes:
+            reasons.append("第 " + "、".join(x["question"] for x in changes) + " 问的数字或下标识别不一致，请对照原图。")
+    for field in uncertain_fields or []:
+        if isinstance(field, str) and field.strip():
+            reasons.append(field.strip()[:240])
+    return corrected_text or ocr_text, {"required": True, "reasons": reasons, "critical_changes": changes}
+
+
 @app.route("/ocr", methods=["POST"])
 def ocr():
     if not OCR_AVAILABLE or recognize_image is None:
@@ -763,16 +839,20 @@ def ocr():
 
         ocr_text = result.get("text", "")
 
-        # OCR 负责题干与公式；Vision 只补充图、树、哈斯图、箭头、
-        # 二维表格等 OCR 难以表达的结构。Vision 失败时 OCR 仍可继续使用。
-        vision_result = analyze_image_structure(
-            raw,
-            ocr_text=ocr_text
-        )
+        # Vision 独立读取整图及题干局部。两种识别结果保留到核对页，
+        # 不把模型改写后的题干直接送去解题。
+        try:
+            vision_result = analyze_image_structure(
+                raw, review_regions=result.get("review_regions", [])
+            )
+        except Exception as exc:
+            print(f"Vision 增强层异常，保留 OCR：{type(exc).__name__}")
+            vision_result = {"ok": False, "error": "图片复核暂时不可用，请对照原图检查文字。"}
 
         corrected_text = ""
         visual_text = ""
         vision_warning = None
+        uncertain_fields = []
 
         if (
             isinstance(vision_result, dict)
@@ -791,6 +871,9 @@ def ocr():
 
             if visual_text == "未发现需要补充的图形结构。":
                 visual_text = ""
+            uncertain_fields = vision_result.get("uncertain_fields", [])
+            if not isinstance(uncertain_fields, list):
+                uncertain_fields = []
         else:
             if isinstance(vision_result, dict):
                 vision_warning = vision_result.get("error")
@@ -805,13 +888,13 @@ def ocr():
         if vision_warning:
             warnings.append(str(vision_warning))
 
-        # Vision 校对成功时优先给前端干净题干；
-        # 若校对失败/为空，则完全回退普通 OCR，不影响基本识题。
-        display_text = corrected_text or ocr_text
+        display_text, review = _prepare_ocr_review(ocr_text, corrected_text, uncertain_fields)
 
         return jsonify({
             "text": display_text,
             "visual_text": visual_text,
+            "raw_ocr_text": ocr_text,
+            "review": review,
             "text_count": result.get(
                 "text_count",
                 0
@@ -820,7 +903,7 @@ def ocr():
                 "formula_count",
                 0
             ),
-            "vision_used": bool(visual_text),
+            "vision_used": bool(vision_result.get("ok")) if isinstance(vision_result, dict) else False,
             "warning": "；".join(warnings) if warnings else None,
         })
 
