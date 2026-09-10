@@ -5,6 +5,10 @@ import random
 import base64
 import json
 import re
+import io
+import math
+
+from PIL import Image, ImageOps
 
 from teaching import teaching_prompt
 
@@ -88,12 +92,12 @@ SYSTEM_PROMPT = r"""你是离散数学智能辅学系统中的教学助手。
 
 
 
-# 图像理解模型：只负责补充 OCR 无法提取的图形/结构信息，不直接解题。
+# 图像理解模型：独立读取题干并解析图形结构，不直接解题。
 VISION_MODEL = os.environ.get(
     "DEEPSEEK_VISION_MODEL",
     "deepseek-v4-flash-vision-exp"
 )
-VISION_MAX_OUTPUT_TOKENS = 1800
+VISION_MAX_OUTPUT_TOKENS = 3000
 VISION_ENABLED = os.environ.get(
     "VISION_ANALYSIS_ENABLED",
     "1"
@@ -101,17 +105,20 @@ VISION_ENABLED = os.environ.get(
 
 VISION_PROMPT = """你是离散数学题目的“图片文字校对 + 图形结构解析器”。
 
-你会同时看到原始题目图片和普通 OCR 结果。你的任务不是解题，而是把图片整理成两部分：
+第一张图是完整题目，后续图片是同一张图的题干局部放大，不是新题。
+请先独立逐行读取图片，再整理图形。你的任务不是解题，而是把图片整理成两部分：
 1. corrected_text：干净、可读的题目文字；
 2. visual_text：OCR 难以表达的图形结构信息。
 
 【corrected_text 要求】
-- 直接根据原图校对 OCR，不要机械照抄 OCR。
+- 只根据图片逐字转录题干，每道小问单独一行，不改写问法。
 - 保留题目标题、题干、(1)(2)(3)…等小问及数学符号。
-- 重点修正 v1、v2、v3、v4、v5 等下标/编号被 OCR 拆坏的问题。
+- 逐问核对顶点下标、指数、数字、起点和终点；相邻小问可能使用不同顶点。
+- 不得把上一问的顶点复制到下一问，也不得根据图中哪个点居中、出现频率或解题便利性猜题干。
+- 先看局部放大图中的字符，再对照整图定位；局部图有重复内容时只保留一次。
 - 删除“夹在题干和小问之间”的图形 OCR 噪声，例如图中的 v1、e1、e2、线段附近乱码等。
 - 不要把图中边名、顶点名的散落标签重复塞进题目正文。
-- 看不清的正文不要编造；必要时保留最接近原图的写法并在该处标“[不清楚]”。
+- 看不清的数字/符号在原位置写“[待核对]”，并写入 uncertain_fields；禁止选一个猜测值冒充确定结果。
 
 【visual_text 要求】
 - 图论优先确认：有向/无向、是否带权、顶点、边连接关系、箭头、自环、重边。
@@ -120,13 +127,15 @@ VISION_PROMPT = """你是离散数学题目的“图片文字校对 + 图形结�
 - 不要根据 OCR 的乱码猜出 22、86 之类的权值。
 - 如果是树、哈斯图、状态图、矩阵、真值表等，也要按结构描述。
 - 只写能从图中确认的信息；不确定的地方标“可能/不确定”。
+- 每条边逐一核对两个端点；只有确实连接同一对顶点的两条边才叫重边。
 - 不要解题，不要给答案。
 
 请只返回一个 JSON 对象，不要 Markdown 代码块，不要额外解释：
 {
   "corrected_text": "校对后的完整题目文字",
   "visual_text": "图形结构描述；若没有需要补充的图形结构则为空字符串",
-  "has_visual_structure": true
+  "has_visual_structure": true,
+  "uncertain_fields": ["看不清的位置和符号；若没有则返回空数组"]
 }
 其中 has_visual_structure 只能是 true 或 false。
 """
@@ -924,39 +933,91 @@ def _extract_vision_json(content):
     else:
         has_visual = bool(raw_has_visual)
 
-    if not isinstance(corrected_text, str):
-        corrected_text = str(corrected_text or "")
-    if not isinstance(visual_text, str):
-        visual_text = str(visual_text or "")
+    if not isinstance(corrected_text, str) or not isinstance(visual_text, str):
+        return None
 
     corrected_text = corrected_text.strip()
     visual_text = visual_text.strip()
 
-    # 结果长度保险，避免实验模型异常长输出。
-    if len(corrected_text) > 5000:
-        corrected_text = corrected_text[:5000] + "\n[题目文字过长，已截断]"
-    if len(visual_text) > 3000:
-        visual_text = visual_text[:3000] + "\n[图形信息过长，已截断]"
+    # 截断会丢题目条件；异常长输出交由调用方重试/回退，不使用半道题。
+    if len(corrected_text) > 5000 or len(visual_text) > 3000:
+        return None
+    if not corrected_text and not visual_text:
+        return None
+    uncertain_fields = data.get("uncertain_fields", [])
+    if not isinstance(uncertain_fields, list):
+        return None
+    uncertain_fields = [x.strip()[:240] for x in uncertain_fields[:12]
+                        if isinstance(x, str) and x.strip()]
 
     return {
         "corrected_text": corrected_text,
         "visual_text": visual_text if bool(has_visual) else "",
         "has_visual_structure": bool(has_visual and visual_text),
+        "uncertain_fields": uncertain_fields,
     }
 
 
-def _vision_success(corrected_text, visual_text):
+def _vision_success(corrected_text, visual_text, uncertain_fields=None):
     return {
         "ok": True,
         # 保留 reply 字段，兼容已有 app.py / 旧代码。
         "reply": visual_text,
         "corrected_text": corrected_text,
         "visual_text": visual_text,
+        "uncertain_fields": uncertain_fields or [],
     }
 
-def analyze_image_structure(image_bytes, ocr_text="", retries=1):
+
+def _prepare_vision_images(image_bytes, review_regions=None):
+    """返回整图和最多四张题干局部 PNG；所有图片使用同一个 EXIF 方向。
+
+    区域来自 OCR 的坐标，字符本身不传给 Vision，避免先入为主地照抄误读。
+    无可用区域时附上有重叠的上下两部分，兼容旧版 OCR 返回值。
     """
-    使用 DeepSeek Vision 补充离散数学图片中的图形结构。
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        original = ImageOps.exif_transpose(source).convert("RGB")
+    width, height = original.size
+
+    def encode(image, max_side, enlarge=False):
+        longest = max(image.size)
+        scale = min(3.0 if enlarge else 1.0, max_side / longest)
+        if scale != 1.0:
+            image = image.resize(
+                (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        return "data:image/png;base64," + encoded
+
+    crops = []
+    for region in (review_regions or [])[:4]:
+        try:
+            if len(region) != 4:
+                continue
+            values = [float(x) for x in region]
+            if not all(math.isfinite(x) and 0 <= x <= 1 for x in values):
+                continue
+            x1, y1, x2, y2 = values
+            if x2 <= x1 or y2 <= y1:
+                continue
+            box = (math.floor(x1 * width), math.floor(y1 * height),
+                   math.ceil(x2 * width), math.ceil(y2 * height))
+            crops.append(original.crop(box))
+        except (TypeError, ValueError, OverflowError):
+            continue
+    if not crops:
+        crops = [original.crop((0, 0, width, math.ceil(height * 0.6))),
+                 original.crop((0, math.floor(height * 0.4), width, height))]
+    return [encode(original, 2200)] + [encode(crop, 1600, True) for crop in crops]
+
+
+def analyze_image_structure(image_bytes, ocr_text="", retries=1, review_regions=None):
+    """
+    使用整图与局部放大图独立转录题干、解析图形结构。
+    ocr_text 参数为兼容旧调用保留，不发送给视觉模型；由 app.py 比较两个结果。
 
     这是 OCR 的增强层：
     - OCR 失败不依赖这里；
@@ -976,16 +1037,15 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
     if not mime:
         return _failure("该图片格式暂不支持图形理解，请使用 JPG、PNG、GIF 或 WebP。")
 
-    ocr_context = str(ocr_text or "").strip()
-    if len(ocr_context) > 3500:
-        ocr_context = ocr_context[:3500] + "\n[OCR 题干过长，已截断]"
-
-    text_prompt = VISION_PROMPT
-    if ocr_context:
-        text_prompt += f"\n\n已提取的 OCR 题干（仅供校对和定位）：\n{ocr_context}"
-
-    encoded = base64.b64encode(bytes(image_bytes)).decode("ascii")
-    data_url = f"data:{mime};base64,{encoded}"
+    try:
+        image_urls = _prepare_vision_images(image_bytes, review_regions)
+    except Exception as exc:
+        print(f"Vision 图片预处理失败：{type(exc).__name__}")
+        return _failure("图片局部放大失败，已保留文字识别结果。")
+    content_parts = [{"type": "text", "text": VISION_PROMPT}]
+    for index, data_url in enumerate(image_urls):
+        content_parts.append({"type": "text", "text": "完整题目" if index == 0 else f"题干局部 {index}"})
+        content_parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "high"}})
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -997,16 +1057,7 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": text_prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": data_url,
-                            "detail": "high"
-                        }
-                    }
-                ]
+                "content": content_parts
             }
         ],
         # 图形结构提取是短输出任务，不需要思考模式。
@@ -1104,7 +1155,8 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
                     "图形结构理解没有返回有效结果，已保留文字识别结果。"
                 )
 
-            parsed = _extract_vision_json(content)
+            # 输出用尽预算时，即便是可解析 JSON，也可能漏掉后面的小问。
+            parsed = None if choice.get("finish_reason") == "length" else _extract_vision_json(content)
 
             if parsed is None:
                 print(
@@ -1134,7 +1186,8 @@ def analyze_image_structure(image_bytes, ocr_text="", retries=1):
 
             return _vision_success(
                 corrected_text,
-                visual_text
+                visual_text,
+                parsed["uncertain_fields"],
             )
 
         except requests.exceptions.Timeout as exc:
