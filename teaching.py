@@ -731,70 +731,389 @@ def analyze_question(text):
     return _enrich_with_graph(result)
 
 
-def _is_previous_question_followup(text):
-    """识别“上一道题/上一题再讲一下”这类明确的题目回退指令。"""
-    value = re.sub(r"\s+", "", str(text or "").strip())
-    if not value or len(value) > 60:
+def _normalize_question_reference_text(text):
+    return re.sub(r"\s+", "", str(text or "").strip())
+
+
+def _has_explicit_exercise_generation_cue(text):
+    value = _normalize_question_reference_text(text)
+    if not value or len(value) > 140:
         return False
 
-    return bool(re.search(
-        r"(?:上一道题|上一题|前一道题|前一题|前面那道题|前面那题|刚才上一道题|刚才上一题)",
-        value,
-    ))
+    return bool(
+        re.search(r"(?:出|生成|来|安排|准备).{0,10}(?:题目|题|练习)", value)
+        or re.search(r"给我(?:来|出|生成)?(?:一|两|二|几|个|道|\d){1,3}.{0,10}(?:题目|题|练习)", value)
+        or re.search(r"(?:再来|再出|再给|换)(?:一|两|二|几|个|道|\d){0,3}(?:题目|题|练习)", value)
+        or re.search(r"(?:想|要|想要|可以|能不能).{0,8}(?:做|练|刷).{0,16}(?:题目|题|练习)", value)
+        or re.fullmatch(r"(?:请)?给我(?:下一道题|下一题|下一个题)", value)
+    )
+
+
+def _parse_question_reference_number(raw):
+    """把 1~99 的阿拉伯/中文题号转换为整数。"""
+    value = str(raw or "").strip().replace("两", "二")
+    if not value:
+        return None
+
+    if re.fullmatch(r"\d{1,3}", value):
+        number = int(value)
+        return number if number >= 1 else None
+
+    digits = {
+        "零": 0, "一": 1, "二": 2, "三": 3, "四": 4,
+        "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+    }
+
+    if value in digits:
+        return digits[value] or None
+
+    if re.fullmatch(r"[一二三四五六七八九]?十[一二三四五六七八九]?", value):
+        left, _, right = value.partition("十")
+        tens = digits[left] if left else 1
+        ones = digits[right] if right else 0
+        number = tens * 10 + ones
+        return number if number >= 1 else None
+
+    return None
 
 
 def _question_ordinal_reference(text):
-    """识别“第一道题/第2题”等会话题目序号；完整新题题干不在这里处理。"""
-    value = re.sub(r"\s+", "", str(text or "").strip())
-    if not value or len(value) > 60:
+    """识别会话历史的“第一题 / 第一大题 / 第2个练习题”。
+
+    故意不识别“第2小题 / 第2问”：那是当前大题内部的小问，不是历史第2题。
+    """
+    value = _normalize_question_reference_text(text)
+    if not value or len(value) > 90:
+        return None
+
+    if re.search(r"倒数第[零一二三四五六七八九十两\d]{1,4}", value):
         return None
 
     match = re.search(
-        r"第(一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题",
+        r"第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?",
         value,
     )
     if not match:
         return None
 
-    chinese = {
-        "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-        "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-    }
-    raw = match.group(1)
-    number = chinese.get(raw)
-    if number is None:
-        try:
-            number = int(raw)
-        except (TypeError, ValueError):
-            return None
+    return _parse_question_reference_number(match.group(1))
 
-    return number if number >= 1 else None
+
+def _question_reverse_ordinal_reference(text):
+    value = _normalize_question_reference_text(text)
+    if not value or len(value) > 90:
+        return None
+
+    match = re.search(
+        r"倒数第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?",
+        value,
+    )
+    if not match:
+        return None
+
+    return _parse_question_reference_number(match.group(1))
+
+
+def _question_boundary_reference(text):
+    value = _normalize_question_reference_text(text)
+    if not value or len(value) > 90:
+        return ""
+
+    if re.search(r"(?:最开始|最早|开头|起初)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?", value):
+        return "first"
+
+    if re.search(r"(?:最后|最末|最晚|最新)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?", value):
+        return "last"
+
+    if (
+        re.search(r"(?:当前|现在|目前|正在讲|刚才|刚刚)(?:的)?(?:这|那|一)?(?:道|个)?(?:大|练习)?题(?:目)?", value)
+        or re.fullmatch(r"(?:这|那|本)(?:一)?(?:道|个)?(?:大)?题(?:目)?(?:呢|吗|啊|呀|吧|不(?:太|怎么)?会|不会|怎么做|如何做|再讲一下|讲一下|继续|提示一下)?", value)
+    ):
+        return "current"
+
+    return ""
+
+
+def _parse_relative_question_offset(text):
+    value = _normalize_question_reference_text(text)
+    if not value:
+        return None
+
+    # “最后一道题”包含“后一道题”字面子串，先排除边界指代。
+    if re.search(
+        r"(?:最后|最末|最晚|最新|最开始|最早|开头|起初)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?",
+        value,
+    ):
+        return None
+
+    if re.search(r"(?:上上|前前)(?:一)?(?:道|个)?(?:大|练习)?题", value):
+        return -2
+    if re.search(r"(?:下下|后后)(?:一)?(?:道|个)?(?:大|练习)?题", value):
+        return 2
+    if re.search(r"(?:再|又)(?:往|向)?(?:上|前)(?:一)?(?:道|个)?(?:大|练习)?题", value):
+        return -2
+    if re.search(r"(?:再|又)(?:往|向)?(?:下|后)(?:一)?(?:道|个)?(?:大|练习)?题", value):
+        return 2
+
+    match = re.search(
+        r"(?:往|向)(?:前|上)([零一二三四五六七八九十两\d]{1,4})(?:道|个)?(?:大|练习)?题",
+        value,
+    )
+    if match:
+        steps = _parse_question_reference_number(match.group(1))
+        return -steps if steps else None
+
+    match = re.search(
+        r"(?:往|向)(?:后|下)([零一二三四五六七八九十两\d]{1,4})(?:道|个)?(?:大|练习)?题",
+        value,
+    )
+    if match:
+        steps = _parse_question_reference_number(match.group(1))
+        return steps if steps else None
+
+    if re.search(
+        r"(?:上一道(?:大|练习)?题|上一(?:大|练习)?题|上一个(?:大|练习)?题|"
+        r"前一道(?:大|练习)?题|前一(?:大|练习)?题|前一个(?:大|练习)?题|"
+        r"前面(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题|"
+        r"刚才上一道(?:大|练习)?题|刚才上一(?:大|练习)?题)",
+        value,
+    ):
+        return -1
+
+    if re.search(
+        r"(?:下一道(?:大|练习)?题|下一(?:大|练习)?题|下一个(?:大|练习)?题|"
+        r"后一道(?:大|练习)?题|后一(?:大|练习)?题|后一个(?:大|练习)?题|"
+        r"后面(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题)",
+        value,
+    ):
+        return 1
+
+    return None
+
+
+def _relative_question_reference(text):
+    value = _normalize_question_reference_text(text)
+    if not value or len(value) > 110:
+        return None
+
+    # 当前大题内部的“第2小题 / 第2问”及其前后小问，不参与会话题目导航。
+    if re.search(
+        r"第[零一二三四五六七八九十两\d]{1,4}(?:个|道)?小题|第[零一二三四五六七八九十两\d]{1,4}问",
+        value,
+    ):
+        return None
+
+    reverse_match = re.search(
+        r"倒数第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?",
+        value,
+    )
+    if reverse_match:
+        anchor_reverse_ordinal = _parse_question_reference_number(reverse_match.group(1))
+        suffix = value[reverse_match.end():]
+        offset = _parse_relative_question_offset(suffix)
+        if anchor_reverse_ordinal and offset:
+            return {
+                "offset": offset,
+                "anchor_ordinal": None,
+                "anchor_reverse_ordinal": anchor_reverse_ordinal,
+                "anchor_boundary": "",
+            }
+
+    normal_match = re.search(
+        r"第([零一二三四五六七八九十两\d]{1,4})(?:个|道)?(?:大|练习|例|习)?题(?:目)?",
+        value,
+    )
+    if normal_match and "倒数第" not in value:
+        anchor_ordinal = _parse_question_reference_number(normal_match.group(1))
+        suffix = value[normal_match.end():]
+        offset = _parse_relative_question_offset(suffix)
+        if anchor_ordinal and offset:
+            return {
+                "offset": offset,
+                "anchor_ordinal": anchor_ordinal,
+                "anchor_reverse_ordinal": None,
+                "anchor_boundary": "",
+            }
+
+    boundary_anchors = (
+        ("first", r"(?:最开始|最早|开头|起初)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?"),
+        ("last", r"(?:最后|最末|最晚|最新)(?:的)?(?:那|这|一)?(?:道|个)?(?:大|练习)?题(?:目)?"),
+        ("current", r"(?:当前|现在|目前|正在讲|刚才|刚刚)(?:的)?(?:这|那|一)?(?:道|个)?(?:大|练习)?题(?:目)?"),
+    )
+
+    for anchor_boundary, pattern in boundary_anchors:
+        match = re.search(pattern, value)
+        if not match:
+            continue
+        suffix = value[match.end():]
+        offset = _parse_relative_question_offset(suffix)
+        if offset:
+            return {
+                "offset": offset,
+                "anchor_ordinal": None,
+                "anchor_reverse_ordinal": None,
+                "anchor_boundary": anchor_boundary,
+            }
+
+    offset = _parse_relative_question_offset(value)
+    if not offset:
+        return None
+
+    return {
+        "offset": offset,
+        "anchor_ordinal": None,
+        "anchor_reverse_ordinal": None,
+        "anchor_boundary": "",
+    }
+
+def _is_previous_question_followup(text):
+    value = _normalize_question_reference_text(text)
+    if not value or len(value) > 100 or _has_explicit_exercise_generation_cue(value):
+        return False
+
+    reference = _relative_question_reference(value)
+    return bool(reference and reference["offset"] < 0)
+
+
+def _is_next_question_followup(text):
+    value = _normalize_question_reference_text(text)
+    if not value or len(value) > 100 or _has_explicit_exercise_generation_cue(value):
+        return False
+
+    reference = _relative_question_reference(value)
+    return bool(reference and reference["offset"] > 0)
 
 
 def _is_ordinal_question_followup(text):
-    value = re.sub(r"\s+", "", str(text or "").strip())
+    value = _normalize_question_reference_text(text)
     ordinal = _question_ordinal_reference(value)
-    if ordinal is None or len(value) > 42:
+    if ordinal is None or len(value) > 90:
         return False
 
+    if _has_explicit_exercise_generation_cue(value):
+        return False
+
+    if re.search(
+        r"第[零一二三四五六七八九十两\d]{1,4}(?:个|道)?(?:大|练习|例|习)?题(?:目)?[：:]?"
+        r"(?:已知|设|给定|若|求|证明|计算|判断|写出|列出)",
+        value,
+    ):
+        return False
+
+    if _relative_question_reference(value):
+        return False
+
+    if re.search(
+        r"(?:还记得|回到|返回|切到|跳到|再讲|讲一下|解释|提示|不(?:太|怎么)?会|不会|有点不会|"
+        r"做不来|没思路|没头绪|卡住|不懂|没懂|还是不会|继续|完整解析|答案|怎么做|如何做|看一下)",
+        value,
+    ):
+        return True
+
+    return bool(re.fullmatch(
+        r"第[零一二三四五六七八九十两\d]{1,4}(?:个|道)?(?:大|练习|例|习)?题(?:目)?(?:呢|吗|啊|呀|吧)?",
+        value,
+    ))
+
+
+def _is_reverse_ordinal_question_followup(text):
+    value = _normalize_question_reference_text(text)
     return bool(
-        re.search(
-            r"(?:还记得|回到|返回|再讲|讲一下|解释|提示|不会|不懂|没懂|还是不会|继续|完整解析|答案|怎么做|如何做|看一下)",
-            value,
-        )
-        or re.fullmatch(
-            r"第(?:一|二|三|四|五|六|七|八|九|十|\d{1,2})(?:道)?题(?:呢|吗)?",
-            value,
-        )
+        _question_reverse_ordinal_reference(value)
+        and len(value) <= 90
+        and not _has_explicit_exercise_generation_cue(value)
+    )
+
+
+def _is_boundary_question_followup(text):
+    value = _normalize_question_reference_text(text)
+    return bool(
+        _question_boundary_reference(value)
+        and not _has_explicit_exercise_generation_cue(value)
     )
 
 
 def _is_question_navigation_followup(text):
     return (
         _is_previous_question_followup(text)
+        or _is_next_question_followup(text)
         or _is_ordinal_question_followup(text)
+        or _is_reverse_ordinal_question_followup(text)
+        or _is_boundary_question_followup(text)
     )
 
+
+def _structural_question_reference(text):
+    value = _normalize_question_reference_text(text)
+    if not value:
+        return None
+
+    relative = _relative_question_reference(value)
+    if relative:
+        return {
+            "kind": "relative",
+            "offset": relative["offset"],
+            "anchor_ordinal": relative["anchor_ordinal"],
+            "anchor_reverse_ordinal": relative["anchor_reverse_ordinal"],
+            "anchor_boundary": relative["anchor_boundary"],
+        }
+
+    reverse_ordinal = _question_reverse_ordinal_reference(value)
+    if reverse_ordinal:
+        return {"kind": "reverse_ordinal", "ordinal": reverse_ordinal}
+
+    ordinal = _question_ordinal_reference(value)
+    if ordinal:
+        return {"kind": "ordinal", "ordinal": ordinal}
+
+    boundary = _question_boundary_reference(value)
+    if boundary:
+        return {"kind": boundary}
+
+    return None
+
+
+def _resolve_structural_history_position(reference, count, current_pos):
+    if not reference or count <= 0:
+        return None
+
+    kind = reference.get("kind")
+    position = None
+
+    if kind == "relative":
+        anchor = reference.get("anchor_ordinal")
+        reverse_anchor = reference.get("anchor_reverse_ordinal")
+        boundary_anchor = reference.get("anchor_boundary")
+
+        if anchor:
+            base = anchor - 1
+        elif reverse_anchor:
+            base = count - reverse_anchor
+        elif boundary_anchor == "first":
+            base = 0
+        elif boundary_anchor == "last":
+            base = count - 1
+        else:
+            base = current_pos
+
+        if base is None or base < 0 or base >= count:
+            return None
+        position = base + int(reference.get("offset") or 0)
+    elif kind == "ordinal":
+        position = int(reference.get("ordinal") or 0) - 1
+    elif kind == "reverse_ordinal":
+        position = count - int(reference.get("ordinal") or 0)
+    elif kind == "first":
+        position = 0
+    elif kind == "last":
+        position = count - 1
+    elif kind == "current":
+        position = current_pos
+
+    if position is None or position < 0 or position >= count:
+        return None
+
+    return position
 
 def _looks_like_explicit_generated_question(text):
     """只把带明确题目标题的 assistant 内容视为 AI 生成题，避免把普通分步讲解误判为新题。"""
@@ -881,8 +1200,9 @@ def _active_question_from_messages(messages):
     """按对话顺序恢复当前所指题目。
 
     新题会把当前题切到自己；普通“继续/再解释”保持当前题；
-    “上一道题”会把当前题向前回退一题。若前端已经显式附带
-    “【当前指向题目】”，则优先采用该题，避免最近消息窗口截断后猜错。
+    支持“第几题 / 倒数第几题 / 上一道 / 下一道 / 第一题 / 最后一题 / 当前题”等导航。
+    若前端已经显式附带“【当前指向题目】”，则优先采用该题，
+    避免最近消息窗口截断或相对导航重复计算后猜错。
     """
     history = []
     active_pos = None
@@ -910,16 +1230,19 @@ def _active_question_from_messages(messages):
 
             if _is_question_navigation_followup(content):
                 if history:
-                    ordinal = _question_ordinal_reference(content)
-                    if ordinal is not None:
-                        active_pos = min(
-                            len(history) - 1,
-                            max(0, ordinal - 1),
-                        )
-                    else:
-                        if active_pos is None:
-                            active_pos = len(history) - 1
-                        active_pos = max(0, active_pos - 1)
+                    reference = _structural_question_reference(content)
+                    base_pos = (
+                        len(history) - 1
+                        if active_pos is None
+                        else active_pos
+                    )
+                    resolved = _resolve_structural_history_position(
+                        reference,
+                        len(history),
+                        base_pos,
+                    )
+                    if resolved is not None:
+                        active_pos = resolved
                 continue
 
         is_question = False
@@ -955,7 +1278,8 @@ def analyze_messages(messages):
     关键点：
     - “教学模式”只看学生本轮最新要求，避免历史里的“给我答案”污染当前意图；
     - 新题出现时切换到新题；普通短追问保持当前题；
-    - 用户明确说“上一道题/上一题”时，当前题向前回退一题，后续“继续”仍保持在回退后的题目。
+    - 支持绝对题号、倒序题号、上一道/下一道、第一道/最后一道/当前题等会话题目导航；
+    - “第2小题 / 第2问”保留为当前大题内部小问，不误当成会话历史第2题。
     """
     if not isinstance(messages, list):
         return analyze_question("")
