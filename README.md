@@ -14,6 +14,11 @@
 - 团队形式：单人项目
 - 指导教师：宋宁
 - 在线地址：https://discrete-math-tutor.zeabur.app
+- 当前部署平台：Zeabur
+- 部署历程：Render → Zeabur
+- 当前服务器：Tencent Seoul 2C 4GB（2 核 CPU / 4 GB 内存）
+- 当前服务器费用：US$4/月
+- 截至 2026-09-10，DeepSeek API 累计实际支出：¥101.56
 
 ## 核心功能
 
