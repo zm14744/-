@@ -13,8 +13,19 @@
 | 指导教师 | 宋宁 |
 | 系统形态 | Web智能辅学系统 |
 | 在线地址 | https://discrete-math-tutor.zeabur.app |
-| 部署平台 | Zeabur |
-| 当前服务器配置 | 2 vCPU / 4 GB RAM |
+| 当前部署平台 | Zeabur |
+| 部署历程 | Render → Zeabur |
+| 当前服务器 | Tencent Seoul 2C 4GB |
+| 当前服务器配置 | 2 核 CPU / 4 GB 内存 |
+| 当前服务器费用 | US$4/月 |
+| DeepSeek API 累计实际支出 | ¥101.56（截至 2026-09-10） |
+
+## 运行与投入记录
+
+- 项目早期曾部署于 Render，后迁移至 Zeabur；当前线上服务运行于 Tencent Seoul 2C 4GB。
+- 当前服务器费用为 US$4/月。
+- 截至 2026-09-10，DeepSeek API 累计实际支出为 ¥101.56。
+- Git 提交次数、部署次数等持续变化的数据不在本说明中写死，以仓库和部署平台的最新记录为准。
 
 ## 项目定位
 
